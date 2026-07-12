@@ -11,7 +11,10 @@
 --
 -- Run this whole file once in the Supabase SQL editor (Dashboard > SQL
 -- Editor > New query) against your project. It is written to be safely
--- re-run (DROP POLICY IF EXISTS before each CREATE POLICY).
+-- re-run (DROP POLICY IF EXISTS before each CREATE POLICY), and it SKIPS
+-- (with a NOTICE, not an error) any of the 8 expected tables that don't
+-- actually exist in your database yet, so one missing/renamed table can't
+-- abort the whole script and leave nothing applied.
 --
 -- ASSUMPTIONS (matching what index.html actually queries):
 --   - profiles.id            = auth.users.id (one row per logged-in user)
@@ -25,8 +28,32 @@
 --     INSERT/UPDATE/DELETE policy below. If you don't have that Edge
 --     Function yet, build it before relying on this file for user mgmt.
 --
--- If your actual column/table names differ, adjust before running.
+-- If a table listed below shows up as SKIPPED when you run this, check the
+-- NOTICE output for the exact list of tables that really exist in your
+-- project (printed first), and either rename the table to match what
+-- index.html expects, or tell me the real name so I can update index.html
+-- and this file to match.
 -- ============================================================================
+
+
+-- ----------------------------------------------------------------------------
+-- 0. Diagnostic: list every table that actually exists in `public`
+-- ----------------------------------------------------------------------------
+-- This always runs and never fails — check the NOTICE output after running
+-- to see what's really in your database.
+do $$
+declare
+  r record;
+  found_tables text := '';
+begin
+  for r in select table_name from information_schema.tables
+           where table_schema='public' and table_type='BASE TABLE'
+           order by table_name
+  loop
+    found_tables := found_tables || r.table_name || ', ';
+  end loop;
+  raise notice 'Tables that actually exist in public schema: %', found_tables;
+end $$;
 
 
 -- ----------------------------------------------------------------------------
@@ -37,59 +64,74 @@
 -- causing "infinite recursion detected in policy" errors. A SECURITY DEFINER
 -- function runs with the privileges of its owner (bypassing RLS internally),
 -- so it can safely look up the caller's own row.
+-- These are only created if `profiles` exists — everything downstream
+-- depends on it.
 
-create or replace function public.current_user_role()
-returns text
-language sql
-stable
-security definer
-set search_path = public
-as $$
-  select role from public.profiles where id = auth.uid();
-$$;
+do $$
+begin
+  if to_regclass('public.profiles') is null then
+    raise notice 'SKIPPED: public.profiles does not exist — cannot create helper functions or any policy below. Fix this first.';
+    return;
+  end if;
 
-create or replace function public.current_user_clinic_id()
-returns uuid
-language sql
-stable
-security definer
-set search_path = public
-as $$
-  select clinic_id from public.profiles where id = auth.uid();
-$$;
+  create or replace function public.current_user_role()
+  returns text
+  language sql
+  stable
+  security definer
+  set search_path = public
+  as $f$
+    select role from public.profiles where id = auth.uid();
+  $f$;
 
-create or replace function public.is_super_admin()
-returns boolean
-language sql
-stable
-security definer
-set search_path = public
-as $$
-  select coalesce(public.current_user_role() = 'super_admin', false);
-$$;
+  create or replace function public.current_user_clinic_id()
+  returns uuid
+  language sql
+  stable
+  security definer
+  set search_path = public
+  as $f$
+    select clinic_id from public.profiles where id = auth.uid();
+  $f$;
 
-create or replace function public.is_clinic_admin()
-returns boolean
-language sql
-stable
-security definer
-set search_path = public
-as $$
-  select coalesce(public.current_user_role() = 'clinic_admin', false);
-$$;
+  create or replace function public.is_super_admin()
+  returns boolean
+  language sql
+  stable
+  security definer
+  set search_path = public
+  as $f$
+    select coalesce(public.current_user_role() = 'super_admin', false);
+  $f$;
+
+  create or replace function public.is_clinic_admin()
+  returns boolean
+  language sql
+  stable
+  security definer
+  set search_path = public
+  as $f$
+    select coalesce(public.current_user_role() = 'clinic_admin', false);
+  $f$;
+end $$;
 
 
 -- ----------------------------------------------------------------------------
--- 2. Enable RLS on every table the app queries
+-- 2. Enable RLS on every table the app queries (only if it exists)
 -- ----------------------------------------------------------------------------
-alter table public.profiles enable row level security;
-alter table public.clinics enable row level security;
-alter table public.patients enable row level security;
-alter table public.appointments enable row level security;
-alter table public.laser_forms enable row level security;
-alter table public.pipeline_leads enable row level security;
-alter table public.sms_log enable row level security;
-alter table public.service_consent_templates enable row level security;
+do $$
+declare
+  t text;
+begin
+  foreach t in array array['profiles','clinics','patients','appointments','laser_forms','pipeline_leads','sms_log','service_consent_templates']
+  loop
+    if to_regclass('public.' || t) is null then
+      raise notice 'SKIPPED (table does not exist): %', t;
+    else
+      execute format('alter table public.%I enable row level security', t);
+    end if;
+  end loop;
+end $$;
 
 
 -- ----------------------------------------------------------------------------
@@ -101,13 +143,21 @@ alter table public.service_consent_templates enable row level security;
 -- No INSERT/UPDATE/DELETE policy for the authenticated role on purpose —
 -- user creation/role changes must go through a service_role Edge Function.
 
-drop policy if exists "profiles_select" on public.profiles;
-create policy "profiles_select" on public.profiles
-  for select
-  using (
-    public.is_super_admin()
-    or clinic_id = public.current_user_clinic_id()
-  );
+do $$
+begin
+  if to_regclass('public.profiles') is null then
+    raise notice 'SKIPPED: public.profiles does not exist';
+    return;
+  end if;
+
+  drop policy if exists "profiles_select" on public.profiles;
+  create policy "profiles_select" on public.profiles
+    for select
+    using (
+      public.is_super_admin()
+      or clinic_id = public.current_user_clinic_id()
+    );
+end $$;
 
 
 -- ----------------------------------------------------------------------------
@@ -120,34 +170,42 @@ create policy "profiles_select" on public.profiles
 -- No DELETE policy — deleting a clinic is destructive and isn't exposed in
 -- the app; do it manually with elevated access if ever needed.
 
-drop policy if exists "clinics_select" on public.clinics;
-create policy "clinics_select" on public.clinics
-  for select
-  using (
-    public.is_super_admin()
-    or id = public.current_user_clinic_id()
-  );
+do $$
+begin
+  if to_regclass('public.clinics') is null then
+    raise notice 'SKIPPED: public.clinics does not exist';
+    return;
+  end if;
 
-drop policy if exists "clinics_insert" on public.clinics;
-create policy "clinics_insert" on public.clinics
-  for insert
-  with check (public.is_super_admin());
+  drop policy if exists "clinics_select" on public.clinics;
+  create policy "clinics_select" on public.clinics
+    for select
+    using (
+      public.is_super_admin()
+      or id = public.current_user_clinic_id()
+    );
 
-drop policy if exists "clinics_update" on public.clinics;
-create policy "clinics_update" on public.clinics
-  for update
-  using (
-    public.is_super_admin()
-    or (public.is_clinic_admin() and id = public.current_user_clinic_id())
-  )
-  with check (
-    public.is_super_admin()
-    or (public.is_clinic_admin() and id = public.current_user_clinic_id())
-  );
+  drop policy if exists "clinics_insert" on public.clinics;
+  create policy "clinics_insert" on public.clinics
+    for insert
+    with check (public.is_super_admin());
+
+  drop policy if exists "clinics_update" on public.clinics;
+  create policy "clinics_update" on public.clinics
+    for update
+    using (
+      public.is_super_admin()
+      or (public.is_clinic_admin() and id = public.current_user_clinic_id())
+    )
+    with check (
+      public.is_super_admin()
+      or (public.is_clinic_admin() and id = public.current_user_clinic_id())
+    );
+end $$;
 
 
 -- ----------------------------------------------------------------------------
--- 5. Generic clinic-scoped tables
+-- 5. Generic clinic-scoped tables (only the ones that actually exist)
 -- ----------------------------------------------------------------------------
 -- patients, appointments, laser_forms, pipeline_leads, sms_log,
 -- service_consent_templates: every role in a clinic can read/write rows that
@@ -167,6 +225,11 @@ declare
 begin
   foreach t in array array['patients','appointments','laser_forms','pipeline_leads','sms_log','service_consent_templates']
   loop
+    if to_regclass('public.' || t) is null then
+      raise notice 'SKIPPED (table does not exist): %', t;
+      continue;
+    end if;
+
     execute format('drop policy if exists "%s_select" on public.%I', t, t);
     execute format($f$
       create policy "%s_select" on public.%I
@@ -219,12 +282,16 @@ end $$;
 -- ============================================================================
 -- RLS is easy to get "technically on" but still leaky. Actually test it:
 --
--- [ ] Confirm RLS is enabled on every table:
+-- [ ] Check the NOTICE output from this run (Supabase SQL editor shows it
+--     below the results, or in "Logs") for any "SKIPPED" lines — those
+--     tables got NO policies at all and are either missing or misnamed.
+--
+-- [ ] Confirm RLS is enabled on every table that exists:
 --       select relname, relrowsecurity from pg_class
 --       where relname in ('profiles','clinics','patients','appointments',
 --                         'laser_forms','pipeline_leads','sms_log',
 --                         'service_consent_templates');
---     relrowsecurity must be `t` for all 8 rows.
+--     relrowsecurity must be `t` for every row returned.
 --
 -- [ ] Confirm the anon key alone (no session) gets ZERO rows back:
 --       Using curl/Postman with only the anon apikey header (no user JWT),
