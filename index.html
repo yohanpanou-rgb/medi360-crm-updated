@@ -172,6 +172,10 @@ tr{cursor:pointer}
 .empty-state{text-align:center;padding:48px 20px;color:var(--text-2)}
 .empty-icon{font-size:32px;margin-bottom:10px;opacity:.35}
 
+/* LOADING */
+.spinner{width:26px;height:26px;border-radius:50%;border:3px solid var(--border);border-top-color:var(--blue);animation:spin .7s linear infinite;margin:0 auto 12px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
 /* PIPELINE */
 .pipeline-col{background:var(--surface);border-radius:10px;padding:12px;min-width:220px;flex:1}
 .pipeline-card{background:var(--white);border-radius:8px;border:1px solid var(--border-2);padding:12px;margin-bottom:8px;box-shadow:var(--shadow-sm);cursor:pointer}
@@ -307,6 +311,16 @@ async function createUserSecurely({ name, email, password, role, clinic_id }) {
 
 // ── DATA ──
 async function loadPageData() {
+  S.loading = true;
+  try {
+    await loadPageDataInner();
+  } finally {
+    S.loading = false;
+    render();
+  }
+}
+
+async function loadPageDataInner() {
   const cid = clinicId();
   if (S.page==='clinics' && isSuperAdmin()) {
     const {data} = await sb.from('clinics').select('*').order('name');
@@ -352,27 +366,35 @@ async function loadPageData() {
     const {data:tmpl} = await sb.from('service_consent_templates').select('*').eq('clinic_id',cid).order('created_at',{ascending:false});
     S.consentTemplates = tmpl||[];
   }
-  render();
 }
 
 async function loadPatientDetail(id) {
-  const {data:p} = await sb.from('patients').select('*').eq('id',id).single();
-  if (!p) { S.patientDetail = null; set({page:'patient-detail'}); return; }
-  const {data:a} = await sb.from('appointments').select('*').eq('patient_id',id).order('start_time',{ascending:false}).limit(20);
-  const {data:lf} = await sb.from('laser_forms').select('*').eq('patient_id',id).order('created_at',{ascending:false});
-  S.patientDetail = {...p, appointments: a||[]};
-  S.laserForms = lf||[];
-  S.patConsultations = [];
-  S.patTab = 'overview';
-  set({page:'patient-detail'});
+  S.loading = true; render();
+  try {
+    const {data:p} = await sb.from('patients').select('*').eq('id',id).single();
+    if (!p) { S.patientDetail = null; return; }
+    const {data:a} = await sb.from('appointments').select('*').eq('patient_id',id).order('start_time',{ascending:false}).limit(20);
+    const {data:lf} = await sb.from('laser_forms').select('*').eq('patient_id',id).order('created_at',{ascending:false});
+    S.patientDetail = {...p, appointments: a||[]};
+    S.laserForms = lf||[];
+    S.patConsultations = [];
+    S.patTab = 'overview';
+  } finally {
+    S.loading = false;
+    set({page:'patient-detail'});
+  }
 }
 
 // ── RENDER ──
+function renderPageLoading() {
+  return '<div class="page"><div class="empty-state"><div class="spinner"></div><div>Φόρτωση...</div></div></div>';
+}
 function render() {
   document.getElementById('app').innerHTML =
     !S.user ? renderLogin() :
-    S.page==='patient-detail' ? renderShell(renderPatientDetail()) :
+    S.page==='patient-detail' ? renderShell(S.loading ? renderPageLoading() : renderPatientDetail()) :
     renderShell(
+      S.loading ? renderPageLoading() :
       S.page==='dashboard' ? renderDashboard() :
       S.page==='patients' ? renderPatients() :
       S.page==='appointments' ? renderAppointments() :
