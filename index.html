@@ -875,7 +875,7 @@ function renderPatientDetail() {
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px" class="dash-grid">
       <div class="card">
         <div class="card-header"><span class="card-title">Στοιχεία Ασθενή</span>
-          <button class="btn btn-ghost btn-sm" id="edit-patient-btn">✏ Επεξεργασία</button>
+          <button class="btn btn-ghost btn-sm" id="edit-patient-btn" data-modal="edit-patient">✏ Επεξεργασία</button>
         </div>
         <div style="padding:16px">
           ${[
@@ -1996,6 +1996,7 @@ function renderModal() {
   div.className = 'modal-overlay';
   const content = {
     'new-patient': modalNewPatient,
+    'edit-patient': modalEditPatient,
     'new-appt': modalNewAppt,
     'new-lead': modalNewLead,
     'new-clinic': modalNewClinic,
@@ -2035,6 +2036,49 @@ function modalNewPatient() {
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Ακύρωση</button>
       <button class="btn btn-primary" id="save-patient">Αποθήκευση</button>
+    </div>
+  </div>`;
+}
+
+function modalEditPatient() {
+  const p = S.patientDetail||{};
+  return `<div class="modal">
+    <div class="modal-header"><span class="modal-title">Επεξεργασία Ασθενή</span><button class="modal-close" onclick="closeModal()">×</button></div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Ονοματεπώνυμο *</label><input class="form-control" id="ep-name" value="${esc(p.full_name)}" placeholder="Ονοματεπώνυμο"/></div>
+        <div class="form-group"><label class="form-label">Τηλέφωνο *</label><input class="form-control" id="ep-phone" value="${esc(p.phone)}" placeholder="69XXXXXXXX"/></div>
+      </div>
+      <div class="form-group"><label class="form-label">Email</label><input class="form-control" id="ep-email" type="email" value="${esc(p.email)}" placeholder="email@example.gr"/></div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Ημ. Γέννησης</label><input class="form-control" id="ep-dob" type="date" value="${p.dob||''}"/></div>
+        <div class="form-group"><label class="form-label">Πόλη</label><input class="form-control" id="ep-city" value="${esc(p.city)}"/></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Φύλο</label>
+          <select class="form-control" id="ep-gender">
+            <option value="female" ${p.gender==='female'?'selected':''}>Γυναίκα</option>
+            <option value="male" ${p.gender==='male'?'selected':''}>Άνδρας</option>
+            <option value="other" ${p.gender==='other'?'selected':''}>Άλλο</option>
+          </select></div>
+        <div class="form-group"><label class="form-label">Κατάσταση</label>
+          <select class="form-control" id="ep-status">
+            <option value="lead" ${p.status==='lead'?'selected':''}>Lead</option>
+            <option value="active" ${p.status==='active'?'selected':''}>Ενεργός</option>
+            <option value="vip" ${p.status==='vip'?'selected':''}>VIP</option>
+            <option value="inactive" ${p.status==='inactive'?'selected':''}>Ανενεργός</option>
+          </select></div>
+      </div>
+      <div class="form-group"><label class="form-label">Πηγή</label>
+        <select class="form-control" id="ep-source">
+          <option value="">—</option>
+          ${['Instagram','Referral','Google','Website','Walk-in','Booking'].map(s=>`<option value="${s.toLowerCase()}" ${p.source===s.toLowerCase()?'selected':''}>${s}</option>`).join('')}
+        </select></div>
+      <div class="form-group"><label class="form-label">Σημειώσεις</label><textarea class="form-control" id="ep-notes" rows="3">${esc(p.notes)}</textarea></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Ακύρωση</button>
+      <button class="btn btn-primary" id="save-edit-patient">Αποθήκευση</button>
     </div>
   </div>`;
 }
@@ -2974,6 +3018,28 @@ function bindModalEvents() {
     });
     if (error) { alert(error.message); btn.textContent='Αποθήκευση'; btn.disabled=false; return; }
     closeModal(); await loadPageData();
+  });
+
+  // Save edit patient
+  const _sep=document.getElementById('save-edit-patient');if(_sep)_sep.addEventListener('click', async () => {
+    if (!S.patientDetail) return;
+    const name = document.getElementById('ep-name').value.trim();
+    const phone = document.getElementById('ep-phone').value.trim();
+    if (!name||!phone) return alert('Συμπλήρωσε υποχρεωτικά πεδία');
+    const btn = document.getElementById('save-edit-patient');
+    btn.textContent='Αποθήκευση...'; btn.disabled=true;
+    const {error} = await sb.from('patients').update({
+      full_name:name, phone:normalizePhone(phone),
+      email:document.getElementById('ep-email').value,
+      dob:document.getElementById('ep-dob').value||null,
+      city:document.getElementById('ep-city').value,
+      gender:document.getElementById('ep-gender').value,
+      status:document.getElementById('ep-status').value,
+      source:document.getElementById('ep-source').value,
+      notes:document.getElementById('ep-notes').value,
+    }).eq('id', S.patientDetail.id);
+    if (error) { alert(error.message); btn.textContent='Αποθήκευση'; btn.disabled=false; return; }
+    closeModal(); await loadPatientDetail(S.patientDetail.id);
   });
 
   // Patient search for appointment
