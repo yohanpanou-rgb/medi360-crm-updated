@@ -20,7 +20,7 @@
 --   - profiles.id            = auth.users.id (one row per logged-in user)
 --   - profiles.role           in ('super_admin','clinic_admin','therapist','receptionist')
 --   - profiles.clinic_id      references clinics.id
---   - patients / appointments / laser_forms / pipeline_leads / sms_log /
+--   - patients / appointments / laser_forms / pipeline_deals / sms_log /
 --     service_consent_templates all have a clinic_id column
 --   - User creation/role changes go through a Supabase Edge Function using
 --     the service_role key (per the comment already in index.html), NOT
@@ -123,7 +123,7 @@ do $$
 declare
   t text;
 begin
-  foreach t in array array['profiles','clinics','patients','appointments','laser_forms','pipeline_leads','sms_log','service_consent_templates']
+  foreach t in array array['profiles','clinics','patients','appointments','laser_forms','pipeline_deals','sms_log','service_consent_templates']
   loop
     if to_regclass('public.' || t) is null then
       raise notice 'SKIPPED (table does not exist): %', t;
@@ -207,7 +207,7 @@ end $$;
 -- ----------------------------------------------------------------------------
 -- 5. Generic clinic-scoped tables (only the ones that actually exist)
 -- ----------------------------------------------------------------------------
--- patients, appointments, laser_forms, pipeline_leads, sms_log,
+-- patients, appointments, laser_forms, pipeline_deals, sms_log,
 -- service_consent_templates: every role in a clinic can read/write rows that
 -- belong to their own clinic_id (matches how the app already lets
 -- therapist/receptionist/clinic_admin all create patients, appointments,
@@ -223,7 +223,7 @@ do $$
 declare
   t text;
 begin
-  foreach t in array array['patients','appointments','laser_forms','pipeline_leads','sms_log','service_consent_templates']
+  foreach t in array array['patients','appointments','laser_forms','pipeline_deals','sms_log','service_consent_templates']
   loop
     if to_regclass('public.' || t) is null then
       raise notice 'SKIPPED (table does not exist): %', t;
@@ -289,7 +289,7 @@ end $$;
 -- [ ] Confirm RLS is enabled on every table that exists:
 --       select relname, relrowsecurity from pg_class
 --       where relname in ('profiles','clinics','patients','appointments',
---                         'laser_forms','pipeline_leads','sms_log',
+--                         'laser_forms','pipeline_deals','sms_log',
 --                         'service_consent_templates');
 --     relrowsecurity must be `t` for every row returned.
 --

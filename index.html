@@ -340,7 +340,7 @@ async function loadPageDataInner() {
     S.staff = staff||[];
   }
   if (S.page==='pipeline' || S.page==='dashboard') {
-    const {data} = await sb.from('pipeline_leads').select('*').eq('clinic_id',cid).order('created_at',{ascending:false});
+    const {data} = await sb.from('pipeline_deals').select('*').eq('clinic_id',cid).order('created_at',{ascending:false});
     S.pipeline = data||[];
   }
   if (S.page==='laser') {
@@ -1093,10 +1093,10 @@ function renderPipeline() {
             <span>${STAGE_LABELS[stage]}</span><span style="background:var(--surface-2);padding:1px 7px;border-radius:99px">${leads.length}</span>
           </div>
           ${leads.map(l=>`<div class="pipeline-card">
-            <div style="font-size:13px;font-weight:500;margin-bottom:4px">${esc(l.name)}</div>
+            <div style="font-size:13px;font-weight:500;margin-bottom:4px">${esc(l.patient_name)}</div>
             ${l.phone?`<div style="font-size:11px;color:var(--text-2);margin-bottom:6px">${esc(l.phone)}</div>`:''}
-            ${l.service?`<span style="font-size:10px;background:#E6F1FB;color:#185FA5;padding:2px 7px;border-radius:99px">${esc(l.service)}</span>`:''}
-            ${l.estimated_value?`<div style="font-size:12px;color:#0F6E56;font-weight:500;margin-top:4px">${euro(l.estimated_value)}</div>`:''}
+            ${l.service_name?`<span style="font-size:10px;background:#E6F1FB;color:#185FA5;padding:2px 7px;border-radius:99px">${esc(l.service_name)}</span>`:''}
+            ${l.value?`<div style="font-size:12px;color:#0F6E56;font-weight:500;margin-top:4px">${euro(l.value)}</div>`:''}
           </div>`).join('')}
         </div>`;
       }).join('')}
@@ -3021,11 +3021,11 @@ function bindModalEvents() {
     if (!name) return alert('Συμπλήρωσε όνομα');
     const btn = document.getElementById('save-lead');
     btn.textContent='Αποθήκευση...'; btn.disabled=true;
-    const {error} = await sb.from('pipeline_leads').insert({
-      clinic_id:clinicId(), name,
+    const {error} = await sb.from('pipeline_deals').insert({
+      clinic_id:clinicId(), patient_name:name,
       phone:document.getElementById('l-phone').value,
-      service:document.getElementById('l-service').value,
-      estimated_value:parseFloat(document.getElementById('l-value').value)||null,
+      service_name:document.getElementById('l-service').value,
+      value:parseFloat(document.getElementById('l-value').value)||null,
       stage:document.getElementById('l-stage').value
     });
     if (error) { alert(error.message); btn.textContent='Αποθήκευση'; btn.disabled=false; return; }
