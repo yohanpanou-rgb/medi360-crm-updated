@@ -114,6 +114,11 @@ tr{cursor:pointer}
 
 /* BADGE */
 .badge{display:inline-flex;align-items:center;font-size:11px;font-weight:500;padding:2px 8px;border-radius:99px;white-space:nowrap}
+.badge-green{background:var(--green-soft);color:var(--green-dark)}
+.badge-red{background:var(--red-soft);color:var(--red-dark)}
+.badge-amber{background:var(--amber-soft);color:var(--amber-dark)}
+.badge-navy{background:var(--surface-2);color:var(--navy)}
+.badge-gray{background:var(--surface-2);color:var(--text-2)}
 
 /* BUTTONS */
 .btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:8px;font-size:13px;font-weight:500;line-height:1;white-space:nowrap;transition:.15s}
@@ -225,7 +230,7 @@ let S = {
 function set(patch) { Object.assign(S, patch); render(); }
 
 // ── HELPERS ──
-const esc = s => (s||'').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const esc = s => (s===null||s===undefined?'':s).toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 const initials = n => (n||'').split(' ').map(x=>x[0]).join('').toUpperCase().slice(0,2)||'?';
 const fmt = d => d ? new Date(d).toLocaleDateString('el-GR',{day:'2-digit',month:'2-digit',year:'numeric'}) : '—';
 const fmtDt = d => d ? new Date(d).toLocaleDateString('el-GR',{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '—';
@@ -246,7 +251,8 @@ async function init() {
   const { data:{session} } = await sb.auth.getSession();
   if (session&&session.user) await loadProfile(session.user);
   else { set({page:'login',loading:false}); }
-  sb.auth.onAuthStateChange((_,session) => {
+  sb.auth.onAuthStateChange((event,session) => {
+    if (event==='INITIAL_SESSION') return; // already handled via getSession() above
     if (session&&session.user) loadProfile(session.user);
     else set({user:null,profile:null,clinic:null,allClinics:[],page:'login'});
   });
@@ -302,6 +308,10 @@ async function createUserSecurely({ name, email, password, role, clinic_id }) {
 // ── DATA ──
 async function loadPageData() {
   const cid = clinicId();
+  if (S.page==='clinics' && isSuperAdmin()) {
+    const {data} = await sb.from('clinics').select('*').order('name');
+    S.clinics = data||[];
+  }
   if (!cid) return;
   if (S.page==='patients' || S.page==='dashboard') {
     const {data} = await sb.from('patients').select('*').eq('clinic_id',cid).order('created_at',{ascending:false});
@@ -318,10 +328,6 @@ async function loadPageData() {
   if (S.page==='pipeline' || S.page==='dashboard') {
     const {data} = await sb.from('pipeline_leads').select('*').eq('clinic_id',cid).order('created_at',{ascending:false});
     S.pipeline = data||[];
-  }
-  if (S.page==='clinics' && isSuperAdmin()) {
-    const {data} = await sb.from('clinics').select('*').order('name');
-    S.clinics = data||[];
   }
   if (S.page==='laser') {
     const {data} = await sb.from('laser_forms').select('*, patients(full_name,phone)').eq('clinic_id',cid).order('created_at',{ascending:false});
@@ -351,6 +357,7 @@ async function loadPageData() {
 
 async function loadPatientDetail(id) {
   const {data:p} = await sb.from('patients').select('*').eq('id',id).single();
+  if (!p) { S.patientDetail = null; set({page:'patient-detail'}); return; }
   const {data:a} = await sb.from('appointments').select('*').eq('patient_id',id).order('start_time',{ascending:false}).limit(20);
   const {data:lf} = await sb.from('laser_forms').select('*').eq('patient_id',id).order('created_at',{ascending:false});
   S.patientDetail = {...p, appointments: a||[]};
@@ -526,7 +533,7 @@ function renderDashboard() {
   const todayApts = apts.filter(a=>new Date(a.start_time).toDateString()===today);
   const upcomingApts = apts.filter(a=>new Date(a.start_time)>now&&a.status!=='cancelled').sort((a,b)=>new Date(a.start_time)-new Date(b.start_time));
   const thisMonth = apts.filter(a=>{const d=new Date(a.start_time);return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();});
-  const revenue30 = apts.filter(a=>{const d=new Date(a.start_time);return (now-d)<30*86400000&&(a.status==='paid'||a.status==='completed');}).reduce((s,a)=>s+(a.price||0),0);
+  const revenue30 = apts.filter(a=>{const d=new Date(a.start_time);return d<=now&&(now-d)<30*86400000&&(a.status==='paid'||a.status==='completed');}).reduce((s,a)=>s+(a.price||0),0);
   const wonLeads = (S.pipeline||[]).filter(l=>l.stage==='won').length;
   const totalLeads = (S.pipeline||[]).length;
   const conversionRate = totalLeads ? Math.round((wonLeads/totalLeads)*100) : 0;
@@ -538,7 +545,7 @@ function renderDashboard() {
   const completedToday = todayApts.filter(a=>a.status==='completed'||a.status==='paid').length;
   const pendingToday = todayApts.filter(a=>a.status==='pending'||a.status==='confirmed').length;
   const noGdpr = pts.filter(p=>!p.gdpr_signed).length;
-  const newPts30 = pts.filter(p=>(now-new Date(p.created_at))<30*86400000).length;
+  const newPts30 = pts.filter(p=>{const d=new Date(p.created_at);return d<=now&&(now-d)<30*86400000;}).length;
 
   // Next appointment
   const nextApt = upcomingApts[0];
@@ -754,7 +761,7 @@ function renderPatients() {
 // ── PATIENT DETAIL ──
 function renderPatientDetail() {
   const p = S.patientDetail;
-  if (!p) return '<div class="page"><div class="empty-state"><div>Φόρτωση...</div></div></div>';
+  if (!p) return '<div class="page"><div class="empty-state"><div>Ο ασθενής δεν βρέθηκε.</div></div></div>';
   const patTab = S.patTab||'overview';
   const laserForms = (S.laserForms||[]).filter(f=>f.patient_id===p.id);
   const consultations = (S.patConsultations||[]);
@@ -1141,7 +1148,8 @@ function renderCalendar() {
   // Date navigation helpers
   const dateStr = calDate.toLocaleDateString('el-GR',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
   const weekStart = new Date(calDate);
-  weekStart.setDate(calDate.getDate() - calDate.getDay() + 1); // Monday
+  const calDay = calDate.getDay();
+  weekStart.setDate(calDate.getDate() + (calDay===0?-6:1-calDay)); // Monday
 
   // Clinic hours (configurable per clinic, default 09:00-20:00)
   const startHour = (S.clinic&&S.clinic.settings&&S.clinic.settings.start_hour) || 9;
@@ -1542,15 +1550,44 @@ function updateRegionPart(ri,val) { if(_laserRegions[ri]) _laserRegions[ri].body
 function updateSession(ri,si,field,val) { if(_laserRegions[ri]&&_laserRegions[ri].sessions&&_laserRegions[ri].sessions[si]) _laserRegions[ri].sessions[si][field]=val; }
 function updateRegionNotes(ri,val) { if(_laserRegions[ri]) _laserRegions[ri].notes=val; }
 function addRegionRow() {
-  const newRow = {body_part:'',sessions:Array(7).fill(null).map(()=>({date:'',spot_size:''})),notes:''};
+  const newRow = {body_part:'',sessions:Array(6).fill(null).map(()=>({date:'',spot_size:'',energy:'',dcd:'',notes:''})),notes:''};
   _laserRegions.push(newRow);
   const ri = _laserRegions.length-1;
-  const tbody = document.getElementById('regions-tbody');
-  if (!tbody) return;
-  const tr = document.createElement('tr');
-  tr.style.borderTop = '1px solid var(--border-2)';
-  tr.innerHTML = `<td style="padding:5px 8px"><select onchange="updateRegionPart(${ri},this.value)" style="font-size:10px;padding:2px 5px;border-radius:5px;border:1px solid var(--border);min-width:100px"><option value="">—</option>${BODY_PARTS.map(bp=>`<option value="${bp}">${bp}</option>`).join('')}</select></td>${[0,1,2,3,4,5,6].map(si=>`<td style="padding:3px 2px;text-align:center"><input type="date" onchange="updateSession(${ri},${si},'date',this.value)" style="font-size:9px;padding:1px 2px;border-radius:3px;border:1px solid var(--border);width:88px;display:block;margin-bottom:2px"/><input type="text" placeholder="J/cm²" onchange="updateSession(${ri},${si},'spot_size',this.value)" style="font-size:9px;padding:1px 4px;border-radius:3px;border:1px solid var(--border);width:44px"/></td>`).join('')}<td style="padding:3px 8px"><input type="text" placeholder="..." onchange="updateRegionNotes(${ri},this.value)" style="font-size:11px;padding:3px 6px;border-radius:5px;border:1px solid var(--border);width:100%"/></td>`;
-  tbody.appendChild(tr);
+  const container = document.getElementById('regions-container');
+  if (!container) return;
+  const div = document.createElement('div');
+  div.style.cssText = 'border:1.5px solid #e8b4ca;border-radius:10px;overflow:hidden';
+  div.innerHTML = `
+    <div style="background:#e8b4ca;padding:10px 14px;display:flex;align-items:center;gap:10px">
+      <span style="font-size:11px;font-weight:700;color:#fff;text-transform:uppercase">ΠΕΡΙΟΧΗ ${ri+1}:</span>
+      <select onchange="updateRegionPart(${ri},this.value)" style="flex:1;font-size:12px;padding:4px 8px;border-radius:6px;border:none;background:rgba(255,255,255,0.9);color:#C4618A;font-weight:500">
+        <option value="">-- Επιλέξτε περιοχή --</option>
+        ${BODY_PARTS.map(bp=>`<option value="${bp}">${bp}</option>`).join('')}
+      </select>
+    </div>
+    <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:11px">
+        <thead><tr style="background:#FDF0F5">
+          <th style="padding:8px 10px;text-align:center;color:#C4618A;font-weight:600;width:40px">Α/Α</th>
+          <th style="padding:8px 10px;text-align:center;color:#C4618A;font-weight:600">Ημ/νία</th>
+          <th style="padding:8px 10px;text-align:center;color:#C4618A;font-weight:600">Spot Size</th>
+          <th style="padding:8px 10px;text-align:center;color:#C4618A;font-weight:600">Ενέργεια (j/cm²)</th>
+          <th style="padding:8px 10px;text-align:center;color:#C4618A;font-weight:600">DCD</th>
+          <th style="padding:8px 10px;text-align:left;color:#C4618A;font-weight:600">Παρατηρήσεις</th>
+        </tr></thead>
+        <tbody>
+          ${Array(6).fill(null).map((_,si)=>`<tr style="border-top:1px solid #FCE4EE">
+            <td style="padding:6px 10px;text-align:center;font-weight:600;color:#C4618A">${si+1}</td>
+            <td style="padding:4px 6px"><input type="date" onchange="updateSession(${ri},${si},'date',this.value)" style="font-size:11px;padding:3px 6px;border-radius:5px;border:1px solid #e8b4ca;width:100%;text-align:center"/></td>
+            <td style="padding:4px 6px"><input type="text" placeholder="mm" onchange="updateSession(${ri},${si},'spot_size',this.value)" style="font-size:11px;padding:3px 6px;border-radius:5px;border:1px solid #e8b4ca;width:100%;text-align:center"/></td>
+            <td style="padding:4px 6px"><input type="text" placeholder="j/cm²" onchange="updateSession(${ri},${si},'energy',this.value)" style="font-size:11px;padding:3px 6px;border-radius:5px;border:1px solid #e8b4ca;width:100%;text-align:center"/></td>
+            <td style="padding:4px 6px"><input type="text" placeholder="DCD" onchange="updateSession(${ri},${si},'dcd',this.value)" style="font-size:11px;padding:3px 6px;border-radius:5px;border:1px solid #e8b4ca;width:100%;text-align:center"/></td>
+            <td style="padding:4px 6px"><input type="text" placeholder="..." onchange="updateSession(${ri},${si},'notes',this.value)" style="font-size:11px;padding:3px 6px;border-radius:5px;border:1px solid #e8b4ca;width:100%"/></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+  container.appendChild(div);
 }
 
 const SMS_AUTOMATIONS = [
@@ -2193,16 +2230,19 @@ function bindEvents() {
     if (!S.laserFormId) return;
     _slf.textContent='Αποθήκευση...'; _slf.disabled=true;
     const notes = document.getElementById('treatment-notes');
-    const hairColor = document.getElementById('hair-color');
+    const hairColors = Array.from(document.querySelectorAll('.lf-hair-color:checked')).map(cb=>cb.value);
+    const operator = document.getElementById('lf-operator');
     const startDate = document.getElementById('start-date');
     const consentSigned = document.getElementById('consent-signed');
     const {error} = await sb.from('laser_forms').update({
       body_parts: _laserBodyParts,
       skin_type: S.laserFormDetail&&S.laserFormDetail.skin_type||'',
+      gender: S.laserFormDetail&&S.laserFormDetail.gender||'',
       treatment_notes: notes?notes.value:'',
       consent_signed: consentSigned?consentSigned.checked:false,
       machine_settings: {
-        hair_color: hairColor?hairColor.value:'',
+        hair_colors: hairColors,
+        operator: operator?operator.value:'',
         start_date: startDate?startDate.value:'',
         regions: _laserRegions,
       }
@@ -2644,7 +2684,8 @@ function bindEvents() {
         source: 'import',
         status: 'active',
       };
-      const {error} = await sb.from('patients').upsert(payload, {onConflict:'clinic_id,phone',ignoreDuplicates:true});
+      const opts = phone ? {onConflict:'clinic_id,phone',ignoreDuplicates:true} : {};
+      const {error} = await sb.from('patients').upsert(payload, opts);
       if (error) err++; else ok++;
     }
     result.innerHTML=`<span style="color:var(--green)">✓ Εισήχθησαν: ${ok}</span> · <span style="color:var(--text-2)">Παραλείφθηκαν: ${skip}</span>${err?` · <span style="color:var(--red)">Σφάλματα: ${err}</span>`:''}`;
@@ -2683,8 +2724,8 @@ function bindEvents() {
       // Find patient by phone
       let patientId = null;
       if (phone) {
-        const {data:pt} = await sb.from('patients').select('id').eq('clinic_id',clinicId()).eq('phone',phone).single();
-        if (pt) patientId = pt.id;
+        const {data:pt} = await sb.from('patients').select('id').eq('clinic_id',clinicId()).eq('phone',phone).limit(1);
+        if (pt&&pt.length) patientId = pt[0].id;
       }
       const startTime = parseDateTime(dateStr, timeStr);
       if (!startTime) { skip++; continue; }
@@ -2904,7 +2945,7 @@ function bindModalEvents() {
   const ps = document.getElementById('a-patient-search');
   if (ps) {
     ps.oninput = async () => {
-      const q = ps.value.trim();
+      const q = ps.value.trim().replace(/[,()]/g,' ');
       const res = document.getElementById('a-patient-results');
       if (q.length < 2) { res.style.display='none'; return; }
       const {data} = await sb.from('patients').select('id,full_name,phone').eq('clinic_id',clinicId()).or(`full_name.ilike.%${q}%,phone.ilike.%${q}%`).limit(5);
@@ -3293,6 +3334,7 @@ function greekToLatin(str) {
 }
 
 async function globalSearch(q) {
+  q = (q||'').replace(/[,()]/g,' ').trim();
   if (!q || q.length < 2) { S.globalResults = []; render(); return; }
   const cid = clinicId();
   if (!cid) return;
