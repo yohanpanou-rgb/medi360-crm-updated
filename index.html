@@ -2771,7 +2771,7 @@ function bindEvents() {
           if (val) return val;
           if (k.includes('Συναιν')||k.includes('Συμφων')||k.includes('GDPR')) return row[k]||'';
           return val;
-        }, '')||'Ναί';
+        }, '');
         const gdprSigned = gdprValue.toLowerCase().includes('ναι')||gdprValue.toLowerCase().includes('ναί');
         const marketing = Object.keys(row).reduce((val, k) => {
           if (val) return val;
@@ -2809,9 +2809,8 @@ function bindEvents() {
           if (byPhone&&byPhone.length) existingId = byPhone[0].id;
         }
         if (!existingId && name) {
-          const firstName = name.split(' ')[0];
-          const {data:byName} = await sb.from('patients').select('id').eq('clinic_id',clinicId()).ilike('full_name','%'+firstName+'%').limit(1);
-          if (byName&&byName.length) existingId = byName[0].id;
+          const {data:byName} = await sb.from('patients').select('id').eq('clinic_id',clinicId()).ilike('full_name',name).limit(2);
+          if (byName&&byName.length===1) existingId = byName[0].id;
         }
 
         if (existingId) {
@@ -3012,8 +3011,8 @@ function showCalTooltip(el, e) {
   el.style.zIndex = 20;
   var tt = document.getElementById('cal-tooltip');
   if (!tt) return;
-  var name = el.getAttribute('data-name')||'—';
-  var svc = el.getAttribute('data-service')||'';
+  var name = esc(el.getAttribute('data-name')||'—');
+  var svc = esc(el.getAttribute('data-service')||'');
   var time = el.getAttribute('data-time')||'';
   var gdpr = el.getAttribute('data-gdpr')==='1';
   var vip = el.getAttribute('data-vip')==='1';
@@ -3135,12 +3134,11 @@ async function syncBooking247(preview=false) {
     for (const p of parsed) {
       // Find or create patient
       let patientId = null;
-      const nameParts = p.name.trim().split(/\s+/);
       const {data:existing} = await sb.from('patients').select('id')
         .eq('clinic_id',cid)
-        .ilike('full_name', '%'+nameParts[0]+'%')
-        .limit(1);
-      if (existing&&existing.length) {
+        .ilike('full_name', p.name.trim())
+        .limit(2);
+      if (existing&&existing.length===1) {
         patientId = existing[0].id;
       } else {
         const {data:newPt} = await sb.from('patients').insert({
