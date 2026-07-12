@@ -2018,7 +2018,9 @@ function modalNewPatient() {
     <div class="modal-body">
       <div class="form-row">
         <div class="form-group"><label class="form-label">Ονοματεπώνυμο *</label><input class="form-control" id="f-name" placeholder="Ονοματεπώνυμο"/></div>
-        <div class="form-group"><label class="form-label">Τηλέφωνο *</label><input class="form-control" id="f-phone" placeholder="69XXXXXXXX"/></div>
+        <div class="form-group"><label class="form-label">Τηλέφωνο *</label><input class="form-control" id="f-phone" placeholder="69XXXXXXXX"/>
+          <div id="f-phone-warning" style="display:none;font-size:11px;color:var(--amber-dark);margin-top:5px">⚠ Υπάρχει ήδη ασθενής με αυτό το τηλέφωνο</div>
+        </div>
       </div>
       <div class="form-group"><label class="form-label">Email</label><input class="form-control" id="f-email" type="email" placeholder="email@example.gr"/></div>
       <div class="form-row">
@@ -2942,15 +2944,29 @@ function bindEvents() {
 }
 
 function bindModalEvents() {
+  // Warn on duplicate phone while filling in a new patient
+  const _fp = document.getElementById('f-phone');
+  if (_fp) _fp.addEventListener('blur', async () => {
+    const phone = _fp.value.trim();
+    const warning = document.getElementById('f-phone-warning');
+    if (!warning) return;
+    if (!phone) { warning.style.display='none'; return; }
+    const dup = await findDuplicatePatientByPhone(phone);
+    warning.style.display = dup ? 'block' : 'none';
+    warning.textContent = dup ? `⚠ Υπάρχει ήδη ασθενής με αυτό το τηλέφωνο: ${dup.full_name}` : '';
+  });
+
   // Save patient
   const _sp=document.getElementById('save-patient');if(_sp)_sp.addEventListener('click', async () => {
     const name = document.getElementById('f-name').value.trim();
     const phone = document.getElementById('f-phone').value.trim();
     if (!name||!phone) return alert('Συμπλήρωσε υποχρεωτικά πεδία');
+    const dup = await findDuplicatePatientByPhone(phone);
+    if (dup && !confirm(`Υπάρχει ήδη ασθενής με αυτό το τηλέφωνο: ${dup.full_name}. Θέλεις να συνεχίσεις με νέα καταχώρηση;`)) return;
     const btn = document.getElementById('save-patient');
     btn.textContent='Αποθήκευση...'; btn.disabled=true;
     const {error} = await sb.from('patients').insert({
-      full_name:name, phone, email:document.getElementById('f-email').value,
+      full_name:name, phone:normalizePhone(phone), email:document.getElementById('f-email').value,
       gender:document.getElementById('f-gender').value,
       status:document.getElementById('f-status').value,
       source:document.getElementById('f-source').value,
@@ -3296,6 +3312,13 @@ function showCSVPreview(containerId, rows, maxRows) {
 function normalizePhone(phone) {
   if (!phone) return '';
   return phone.replace(/[\s\-\(\)\.]/g,'').replace(/^\+30/,'').replace(/^0030/,'');
+}
+
+async function findDuplicatePatientByPhone(phone) {
+  const norm = normalizePhone(phone);
+  if (!norm) return null;
+  const {data} = await sb.from('patients').select('id,full_name').eq('clinic_id',clinicId()).eq('phone',norm).limit(1);
+  return (data&&data[0])||null;
 }
 
 function parseGreekDate(str) {
