@@ -2808,11 +2808,8 @@ function bindEvents() {
           return val;
         }, '')||'';
         // GDPR - find column with "Συναινώ" or "Συμφωνώ"
-        const gdprValue = Object.keys(row).reduce((val, k) => {
-          if (val) return val;
-          if (k.includes('Συναιν')||k.includes('Συμφων')||k.includes('GDPR')) return row[k]||'';
-          return val;
-        }, '');
+        const gdprKey = Object.keys(row).find(k => k.includes('Συναιν')||k.includes('Συμφων')||k.includes('GDPR'));
+        const gdprValue = gdprKey ? (row[gdprKey]||'') : '';
         const gdprSigned = gdprValue.toLowerCase().includes('ναι')||gdprValue.toLowerCase().includes('ναί');
         const marketing = Object.keys(row).reduce((val, k) => {
           if (val) return val;
@@ -2836,7 +2833,7 @@ function bindEvents() {
           allergies: allergies||undefined,
           medications: otherConditions||undefined,
           previous_treatments: prevTreatments||undefined,
-          gdpr_signed: gdprSigned,
+          gdpr_signed: gdprKey ? gdprSigned : undefined,
           status: 'active',
         };
 
