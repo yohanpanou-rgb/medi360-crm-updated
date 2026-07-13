@@ -366,6 +366,21 @@ async function loadPageDataInner() {
     const {data:tmpl} = await sb.from('service_consent_templates').select('*').eq('clinic_id',cid).order('created_at',{ascending:false});
     S.consentTemplates = tmpl||[];
   }
+  if (S.page==='reports') {
+    if (!S.reportRange) {
+      const now = new Date();
+      const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      S.reportRange = { from: firstOfMonth.toISOString().slice(0,10), to: now.toISOString().slice(0,10) };
+    }
+    const fromISO = S.reportRange.from+'T00:00:00';
+    const toISO = S.reportRange.to+'T23:59:59';
+    const {data:apts} = await sb.from('appointments').select('*, patients(full_name,phone)').eq('clinic_id',cid).gte('start_time',fromISO).lte('start_time',toISO).order('start_time',{ascending:false});
+    S.reportAppointments = apts||[];
+    const {data:newPts} = await sb.from('patients').select('id,created_at').eq('clinic_id',cid).gte('created_at',fromISO).lte('created_at',toISO);
+    S.reportNewPatients = newPts||[];
+    const {data:allPts} = await sb.from('patients').select('id,status,gdpr_signed').eq('clinic_id',cid);
+    S.reportAllPatients = allPts||[];
+  }
 }
 
 async function loadPatientDetail(id) {
@@ -405,6 +420,7 @@ function render() {
       S.page==='laser-detail' ? renderLaserDetail() :
       S.page==='sms' ? renderSms() :
       S.page==='consents' ? renderConsents() :
+      S.page==='reports' ? renderReports() :
       S.page==='settings' ? renderSettings() :
       `<div class="page"><div class="empty-state"><div class="empty-icon">🚧</div><div>Σύντομα διαθέσιμο</div></div></div>`
     );
@@ -450,11 +466,12 @@ function renderShell(content) {
     {page:'sms',icon:'✉',label:'SMS & Auto.',roles:['super_admin','clinic_admin']},
     {page:'laser',icon:'⚡',label:'Laser Forms',roles:['super_admin','clinic_admin','therapist']},
     {page:'consents',icon:'✓',label:'Συναινέσεις',roles:['super_admin','clinic_admin','therapist']},
+    {page:'reports',icon:'▤',label:'Αναφορές',roles:['super_admin','clinic_admin']},
     {page:'clinics',icon:'⊞',label:'Κλινικές',roles:['super_admin']},
     {page:'settings',icon:'⚙',label:'Ρυθμίσεις',roles:['super_admin','clinic_admin']},
   ].filter(n => n.roles.includes(role) && (isSuperAdmin() && !cid ? ['dashboard','clinics'].includes(n.page) : true));
 
-  const PAGE_TITLES = {dashboard:'Dashboard',patients:'Ασθενείς','patient-detail':'Ασθενής',appointments:'Ραντεβού',calendar:'Πρόγραμμα',pipeline:'Pipeline',clinics:'Κλινικές',sms:'SMS & Αυτοματισμοί',laser:'Laser Forms',consents:'Συναινέσεις',settings:'Ρυθμίσεις'};
+  const PAGE_TITLES = {dashboard:'Dashboard',patients:'Ασθενείς','patient-detail':'Ασθενής',appointments:'Ραντεβού',calendar:'Πρόγραμμα',pipeline:'Pipeline',clinics:'Κλινικές',sms:'SMS & Αυτοματισμοί',laser:'Laser Forms',consents:'Συναινέσεις',reports:'Αναφορές',settings:'Ρυθμίσεις'};
 
   return `
   <div class="overlay ${S.sidebarOpen?'open':''}" id="overlay"></div>
@@ -1758,6 +1775,97 @@ function renderConsents() {
   </div>`;
 }
 
+// ── REPORTS ──
+function computeReportStats() {
+  const apts = S.reportAppointments||[];
+  const newPatients = S.reportNewPatients||[];
+  const allPatients = S.reportAllPatients||[];
+  const paidCompleted = apts.filter(a=>a.status==='paid'||a.status==='completed');
+  const revenue = paidCompleted.reduce((s,a)=>s+(a.price||0),0);
+  const noShows = apts.filter(a=>a.status==='no_show').length;
+  const noShowRate = apts.length ? Math.round((noShows/apts.length)*100) : null;
+  const activePatients = allPatients.filter(p=>p.status!=='inactive');
+  const gdprSigned = activePatients.filter(p=>p.gdpr_signed).length;
+  const gdprRate = activePatients.length ? Math.round((gdprSigned/activePatients.length)*100) : null;
+  const svc = {};
+  apts.forEach(a=>{ if(a.service_name) { svc[a.service_name]=svc[a.service_name]||{count:0,revenue:0}; svc[a.service_name].count++; svc[a.service_name].revenue+=(a.price||0); } });
+  const topServices = Object.entries(svc).sort((a,b)=>b[1].revenue-a[1].revenue).slice(0,8);
+  return { apts, newPatients, allPatients, revenue, noShowRate, noShows, gdprRate, gdprSigned, activeCount:activePatients.length, topServices };
+}
+
+function renderReports() {
+  const cid = clinicId();
+  if (!cid && isSuperAdmin()) return `<div class="page"><div class="empty-state"><div class="empty-icon">⊞</div><div style="font-size:14px;font-weight:500;margin-bottom:8px">Επίλεξε κλινική</div><div>Χρησιμοποίησε τον επιλογέα στα αριστερά</div></div></div>`;
+  const canFin = canSee(['super_admin','clinic_admin']);
+  const range = S.reportRange||{from:'',to:''};
+  const s = computeReportStats();
+
+  return `<div class="page">
+    <div class="page-header">
+      <div><h1 class="page-title">Αναφορές</h1><p class="page-sub">Σύνοψη απόδοσης για επιλεγμένο διάστημα</p></div>
+    </div>
+
+    <div class="card" style="padding:16px;margin-bottom:16px">
+      <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
+        <div class="form-group" style="margin:0"><label class="form-label">Από</label><input class="form-control" type="date" id="report-from" value="${range.from}"/></div>
+        <div class="form-group" style="margin:0"><label class="form-label">Έως</label><input class="form-control" type="date" id="report-to" value="${range.to}"/></div>
+        <button class="btn btn-primary" id="report-refresh">🔄 Ενημέρωση</button>
+      </div>
+    </div>
+
+    <div class="stats-grid" style="margin-bottom:16px">
+      <div class="stat-card">
+        <div class="stat-icon" style="background:#E1F5EE;color:#0F6E56">◷</div>
+        <div class="stat-label">Ραντεβού</div>
+        <div class="stat-value" style="color:#0F6E56">${s.apts.length}</div>
+        <div class="stat-change">${s.noShowRate===null?'—':s.noShowRate+'% no-show ('+s.noShows+')'}</div>
+      </div>
+      ${canFin?`<div class="stat-card">
+        <div class="stat-icon" style="background:#FAEEDA;color:#854F0B">€</div>
+        <div class="stat-label">Έσοδα</div>
+        <div class="stat-value" style="color:#854F0B">${euro(s.revenue)}</div>
+        <div class="stat-change">πληρωμένα/ολοκληρωμένα ραντεβού</div>
+      </div>`:''}
+      <div class="stat-card">
+        <div class="stat-icon" style="background:#eef0fe;color:var(--blue)">◎</div>
+        <div class="stat-label">Νέοι Πελάτες</div>
+        <div class="stat-value" style="color:var(--blue)">${s.newPatients.length}</div>
+        <div class="stat-change">μέσα στο διάστημα</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon" style="background:#EEEDFE;color:#3C3489">✓</div>
+        <div class="stat-label">GDPR Συμμόρφωση</div>
+        <div class="stat-value" style="color:#3C3489">${s.gdprRate===null?'—':s.gdprRate+'%'}</div>
+        <div class="stat-change">${s.gdprSigned} / ${s.activeCount} ενεργοί ασθενείς</div>
+      </div>
+    </div>
+
+    <div class="card" style="padding:16px;margin-bottom:16px">
+      <div class="card-title" style="margin-bottom:12px">Κορυφαίες Υπηρεσίες</div>
+      ${s.topServices.length?`<table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="text-align:left;color:var(--text-2);font-size:11px;text-transform:uppercase"><th style="padding:6px 0">Υπηρεσία</th><th style="padding:6px 0">Ραντεβού</th>${canFin?'<th style="padding:6px 0">Έσοδα</th>':''}</tr></thead>
+        <tbody>
+          ${s.topServices.map(([name,d])=>`<tr style="border-top:1px solid var(--border-2)">
+            <td style="padding:8px 0">${esc(name)}</td>
+            <td style="padding:8px 0">${d.count}</td>
+            ${canFin?`<td style="padding:8px 0">${euro(d.revenue)}</td>`:''}
+          </tr>`).join('')}
+        </tbody>
+      </table>`:`<div class="empty-state"><div class="empty-icon">▤</div><div>Δεν υπάρχουν ραντεβού στο διάστημα</div></div>`}
+    </div>
+
+    <div class="card" style="padding:16px">
+      <div class="card-title" style="margin-bottom:10px">📧 Αποστολή Αναφοράς με Email</div>
+      <div style="font-size:13px;color:var(--text-2);margin-bottom:12px">Στέλνει σύνοψη της παραπάνω αναφοράς στο email που ορίσεις.</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+        <input class="form-control" type="email" id="report-email-to" placeholder="email@example.gr" value="${esc((S.user&&S.user.email)||'')}" style="max-width:280px"/>
+        <button class="btn btn-primary" id="report-send-email">📧 Αποστολή με Email</button>
+      </div>
+      <div id="report-email-result" style="margin-top:10px;font-size:12px"></div>
+    </div>
+  </div>`;
+}
+
 // ── SETTINGS ──
 function renderSettings() {
   const cid = clinicId();
@@ -2984,6 +3092,51 @@ function bindEvents() {
   });
   document.querySelectorAll('[data-clinic]').forEach(el => {
     el.onclick = () => { selectClinic(el.dataset.clinic); };
+  });
+
+  // Reports — date range refresh
+  const _rrf = document.getElementById('report-refresh');
+  if (_rrf) _rrf.addEventListener('click', () => {
+    const from = document.getElementById('report-from').value;
+    const to = document.getElementById('report-to').value;
+    if (!from||!to) return alert('Επίλεξε και τις δύο ημερομηνίες');
+    if (from>to) return alert('Η ημερομηνία "Από" πρέπει να είναι πριν το "Έως"');
+    S.reportRange = {from, to};
+    loadPageData();
+  });
+
+  // Reports — send by email
+  const _rse = document.getElementById('report-send-email');
+  if (_rse) _rse.addEventListener('click', async () => {
+    const to = document.getElementById('report-email-to').value.trim();
+    const result = document.getElementById('report-email-result');
+    if (!to) { if(result) result.innerHTML = '<span style="color:var(--red)">Συμπλήρωσε email παραλήπτη</span>'; return; }
+    _rse.textContent = 'Αποστολή...'; _rse.disabled = true;
+    if (result) result.innerHTML = '<span style="color:var(--text-2)">Αποστολή...</span>';
+    try {
+      const s = computeReportStats();
+      const {data, error} = await sb.functions.invoke('send-report-email', {
+        body: {
+          to,
+          clinic_name: (S.clinic&&S.clinic.name)||'',
+          range: S.reportRange,
+          stats: {
+            appointments: s.apts.length,
+            revenue: canSee(['super_admin','clinic_admin']) ? s.revenue : null,
+            new_patients: s.newPatients.length,
+            no_show_rate: s.noShowRate,
+            gdpr_rate: s.gdprRate,
+            top_services: s.topServices.map(([name,d])=>({name, count:d.count, revenue:d.revenue})),
+          }
+        }
+      });
+      if (error) throw error;
+      if (result) result.innerHTML = '<span style="color:var(--green)">✓ Η αναφορά στάλθηκε στο '+esc(to)+'</span>';
+    } catch(e) {
+      if (result) result.innerHTML = '<span style="color:var(--red)">✗ Αποτυχία αποστολής: '+esc(e.message||'άγνωστο σφάλμα')+'</span>';
+    } finally {
+      _rse.textContent = '📧 Αποστολή με Email'; _rse.disabled = false;
+    }
   });
 }
 
