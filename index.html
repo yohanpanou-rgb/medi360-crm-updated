@@ -246,6 +246,61 @@ const STATUS_APPT = {pending:{bg:'#FAEEDA',c:'#854F0B',l:'Εκκρεμεί'},con
 const PIPELINE_STAGES = ['new_lead','contacted','interested','offer_sent','won','lost'];
 const STAGE_LABELS = {new_lead:'Νέο Lead',contacted:'Επαφή',interested:'Ενδιαφέρον',offer_sent:'Προσφορά',won:'✓ Κλείσιμο',lost:'✗ Απώλεια'};
 
+// Simplified consent groups (everything except Laser, which keeps its own detailed form).
+const CONSENT_GROUPS = ['Καθαρισμός Προσώπου','Θεραπεία Προσώπου','Μεσοθεραπεία','Peeling','Ηλεκτρόλυση'];
+const CONSENT_AFTERCARE = 'Μετά τη θεραπεία αποφεύγω για μερικές ώρες την έντονη σωματική άσκηση, το χαμάμ και τη σάουνα, την άμεση έκθεση στον ήλιο, την έντονη τριβή και το πολύ ζεστό νερό στην περιοχή. Η χρήση αντηλιακού με πολύ υψηλό δείκτη προστασίας είναι απαραίτητη, και η έκθεση στον ήλιο γίνεται σύμφωνα με την καθοδήγηση του θεραπευτή. Σε περίπτωση οποιασδήποτε μη αναμενόμενης αντίδρασης, οφείλω να επικοινωνήσω άμεσα με τον θεραπευτή.';
+const CONSENT_GROUP_TEXTS = {
+  'Καθαρισμός Προσώπου': `Η θεραπεία καθαρισμού προσώπου περιλαμβάνει καθαρισμό, ατμό, εξαγωγή σμήγματος/ακαθαρσιών από τους πόρους και εφαρμογή κατάλληλης μάσκας. Σκοπός είναι η βελτίωση της υφής και της καθαριότητας της επιδερμίδας.
+
+Μπορεί να προκληθεί παροδική ερυθρότητα ή ελαφρά ευαισθησία στην περιοχή, που συνήθως υποχωρεί μέσα σε λίγες ώρες.
+
+Οφείλω να ενημερώσω την κλινική για ενεργή δερματική πάθηση (π.χ. φλεγμονώδη ακμή, έρπητα), αλλεργίες σε καλλυντικά/συστατικά, ή πρόσφατη αισθητική θεραπεία προσώπου (π.χ. peeling, laser) στην ίδια περιοχή.
+
+Οδηγίες φροντίδας μετά τη θεραπεία: ${CONSENT_AFTERCARE}
+
+Δηλώνω ότι ενημερώθηκα για τη διαδικασία και τυχόν παροδικές αντιδράσεις, ότι ανέφερα κάθε σχετικό ιατρικό/δερματολογικό ιστορικό, και ότι συναινώ ελεύθερα στην εκτέλεση της θεραπείας.`,
+
+  'Θεραπεία Προσώπου': `Η θεραπεία στοχεύει στη βελτίωση της ενυδάτωσης, της υφής ή της εμφάνισης γήρανσης της επιδερμίδας, μέσω εξειδικευμένων προϊόντων και, όπου προβλέπεται, συσκευών αισθητικής (υπερήχων, ραδιοσυχνοτήτων ή φωτός LED).
+
+Πιθανές παροδικές αντιδράσεις: ερυθρότητα, ελαφρύ οίδημα ή αίσθημα θερμότητας στην περιοχή εφαρμογής. Σπάνια, αλλεργική αντίδραση σε συστατικό προϊόντος.
+
+Οφείλω να ενημερώσω την κλινική σε περίπτωση εγκυμοσύνης/θηλασμού, καρδιακού βηματοδότη ή μεταλλικών εμφυτευμάτων (αν η θεραπεία περιλαμβάνει συσκευή ρεύματος/ραδιοσυχνοτήτων), ενεργής δερματικής πάθησης, ή φωτοευαισθησίας.
+
+Οδηγίες φροντίδας μετά τη θεραπεία: ${CONSENT_AFTERCARE}
+
+Δηλώνω ότι ενημερώθηκα για τη φύση της θεραπείας και τους πιθανούς κινδύνους, ότι ανέφερα το σχετικό ιατρικό μου ιστορικό, και ότι συναινώ ελεύθερα στην εκτέλεσή της.`,
+
+  'Μεσοθεραπεία': `Η μεσοθεραπεία περιλαμβάνει τη χορήγηση εξειδικευμένου ενέσιμου διαλύματος στην επιδερμίδα μέσω σειράς μικροενέσεων, με σκοπό την ενυδάτωση, αναζωογόνηση ή βελτίωση της υφής του δέρματος. Συνήθως απαιτούνται περισσότερες από μία συνεδρίες για το επιθυμητό αποτέλεσμα, χωρίς αυτό να είναι εγγυημένο.
+
+Πιθανές παρενέργειες: πόνος, ερυθρότητα, μελάνιασμα ή τοπικό οίδημα στα σημεία των ενέσεων — συνήθως υποχωρούν μέσα σε λίγες ημέρες. Σπανιότερα: αλλεργική αντίδραση ή τοπική λοίμωξη.
+
+Οφείλω να ενημερώσω την κλινική για διαταραχές πήξης του αίματος, λήψη αντιπηκτικών/ασπιρίνης, εγκυμοσύνη ή θηλασμό, γνωστές αλλεργίες, ή ενεργή λοίμωξη/φλεγμονή στην περιοχή εφαρμογής.
+
+Οδηγίες φροντίδας μετά τη θεραπεία: ${CONSENT_AFTERCARE}
+
+Δηλώνω ότι ενημερώθηκα πλήρως για τη διαδικασία, τους κινδύνους και το ότι το αποτέλεσμα δεν είναι εγγυημένο, ότι ανέφερα κάθε σχετικό ιατρικό ιστορικό, και ότι συναινώ ελεύθερα στην εκτέλεση της θεραπείας.`,
+
+  'Peeling': `Η θεραπεία περιλαμβάνει εφαρμογή χημικού διαλύματος συγκεκριμένης σύστασης/συγκέντρωσης στην επιδερμίδα, με στόχο την απολέπιση των επιφανειακών στρωμάτων και τη βελτίωση της υφής, του τόνου ή ατελειών (π.χ. ακμή, κηλίδες).
+
+Αναμενόμενες αντιδράσεις: ερυθρότητα, τσούξιμο, σφιγμένη αίσθηση και ξεφλούδισμα τις επόμενες ημέρες. Σε ευαίσθητο δέρμα, σπάνια πιθανότητα υπερμελάγχρωσης ή παρατεταμένου ερεθισμού.
+
+Οφείλω να ενημερώσω την κλινική για πρόσφατη έκθεση στον ήλιο/solarium, χρήση Roaccutane ή άλλων φωτοευαισθητοποιών φαρμάκων/καλλυντικών, εγκυμοσύνη, ή ενεργό έρπητα στην περιοχή.
+
+Οδηγίες φροντίδας μετά τη θεραπεία: ${CONSENT_AFTERCARE}
+
+Δηλώνω ότι ενημερώθηκα για τη διαδικασία, τις αναμενόμενες αντιδράσεις και τις οδηγίες φροντίδας μετά τη θεραπεία, ότι ανέφερα το σχετικό ιστορικό μου, και ότι συναινώ ελεύθερα στην εκτέλεσή της.`,
+
+  'Ηλεκτρόλυση': `Η ηλεκτρόλυση στοχεύει στη μόνιμη καταστροφή του θύλακα της τρίχας με εισαγωγή πολύ λεπτής βελόνας και εφαρμογή ηλεκτρικού ρεύματος. Απαιτούνται συνήθως πολλαπλές συνεδρίες ανά περιοχή· ο ακριβής αριθμός δεν είναι εγγυημένος εκ των προτέρων.
+
+Πιθανές αντιδράσεις: παροδική ερυθρότητα, μικρό οίδημα ή ευαισθησία στην περιοχή. Σπανιότερα: μικρή μεταβολή χρωματισμού του δέρματος (υπερ/υπομελάγχρωση) σε ευαίσθητες επιδερμίδες, ή τοπική λοίμωξη αν δεν τηρηθούν οι οδηγίες φροντίδας.
+
+Οφείλω να ενημερώσω την κλινική για καρδιακό βηματοδότη ή μεταλλικά εμφυτεύματα κοντά στην περιοχή, σακχαρώδη διαβήτη, διαταραχές πήξης, εγκυμοσύνη, ή τάση σε κηλοειδή/ουλές.
+
+Οδηγίες φροντίδας μετά τη θεραπεία: ${CONSENT_AFTERCARE}
+
+Δηλώνω ότι ενημερώθηκα για τη διαδικασία, τον αναμενόμενο αριθμό συνεδριών και τους πιθανούς κινδύνους, ότι ανέφερα κάθε σχετικό ιατρικό ιστορικό, και ότι συναινώ ελεύθερα στην εκτέλεση της θεραπείας.`,
+};
+
 function badge(label,bg,c){return `<span class="badge" style="background:${bg};color:${c}">${esc(label)}</span>`}
 function patBadge(status){const s=STATUS_PAT[status]||STATUS_PAT.lead;return badge(s.l,s.bg,s.c)}
 function apptBadge(status){const s=STATUS_APPT[status]||STATUS_APPT.pending;return badge(s.l,s.bg,s.c)}
@@ -365,6 +420,9 @@ async function loadPageDataInner() {
     S.serviceConsents = [];
     const {data:tmpl} = await sb.from('service_consent_templates').select('*').eq('clinic_id',cid).order('created_at',{ascending:false});
     S.consentTemplates = tmpl||[];
+    const {data:svcRows} = await sb.from('appointments').select('service_name').eq('clinic_id',cid).not('service_name','is',null);
+    S.allServiceNames = [...new Set((svcRows||[]).map(r=>(r.service_name||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'el'));
+    S.serviceConsentMap = (S.clinic&&S.clinic.settings&&S.clinic.settings.service_consent_groups)||{};
   }
   if (S.page==='reports') {
     if (!S.reportRange) {
@@ -1743,7 +1801,7 @@ function renderConsents() {
     </div>
     <!-- Tabs -->
     <div style="display:flex;gap:0;border-bottom:1px solid var(--border-2);margin-bottom:20px">
-      ${[{id:'gdpr',l:`GDPR (${gdpr.length})`},{id:'service',l:`Υπηρεσιών (${svc.length})`},{id:'templates',l:'Templates'}].map(t=>`<button class="btn" style="border-radius:0;border-bottom:2px solid ${conTab===t.id?'var(--blue)':'transparent'};color:${conTab===t.id?'var(--blue)':'var(--text-2)'};background:transparent;padding:8px 16px;font-size:12px" data-con-tab="${t.id}">${t.l}</button>`).join('')}
+      ${[{id:'gdpr',l:`GDPR (${gdpr.length})`},{id:'service',l:`Υπηρεσιών (${svc.length})`},{id:'templates',l:'Templates'},{id:'mapping',l:'Αντιστοίχιση Υπηρεσιών'}].map(t=>`<button class="btn" style="border-radius:0;border-bottom:2px solid ${conTab===t.id?'var(--blue)':'transparent'};color:${conTab===t.id?'var(--blue)':'var(--text-2)'};background:transparent;padding:8px 16px;font-size:12px" data-con-tab="${t.id}">${t.l}</button>`).join('')}
     </div>
     ${conTab==='gdpr'?`<div class="card"><div class="table-wrap"><table>
       <thead><tr><th>Ασθενής</th><th>Τηλέφωνο</th><th>Υπογραφή</th><th>Ημ/νία</th><th></th></tr></thead>
@@ -1765,12 +1823,38 @@ function renderConsents() {
         <td><a href="${consultFormLink}" target="_blank" class="btn btn-ghost btn-xs">🔗</a></td>
       </tr>`).join(''):`<tr><td colspan="5"><div class="empty-state"><div class="empty-icon">📋</div><div style="margin-bottom:10px">Δεν υπάρχουν συναινέσεις</div><a href="${consultFormLink}" target="_blank" class="btn btn-primary btn-sm" style="background:#534AB7">🔗 Φόρμα Consultation</a></div></td></tr>`}
       </tbody></table></div></div>`:''}
-    ${conTab==='templates'?`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">
-      ${tmpl.map(t=>`<div class="card" style="padding:16px">
-        <div style="font-size:13px;font-weight:500;margin-bottom:6px">${esc(t.service_name)}</div>
-        <div style="font-size:12px;color:var(--text-2);line-height:1.5;max-height:80px;overflow:hidden">${esc(t.consent_text&&t.consent_text.slice(0,150))}${(t.consent_text&&t.consent_text.length)>150?'...':''}</div>
-        <div style="margin-top:10px;display:flex;justify-content:flex-end"><button class="btn btn-danger btn-xs" data-del-tmpl="${t.id}">Διαγραφή</button></div>
-      </div>`).join('')||`<div class="empty-state"><div class="empty-icon">📄</div><div>Δεν υπάρχουν templates</div></div>`}
+    ${conTab==='templates'?`<div>
+      <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
+        <button class="btn btn-ghost btn-sm" id="seed-consent-groups">✨ Δημιουργία των 5 βασικών templates</button>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">
+        ${tmpl.map(t=>`<div class="card" style="padding:16px">
+          <div style="font-size:13px;font-weight:500;margin-bottom:6px">${esc(t.service_name)}</div>
+          <div style="font-size:12px;color:var(--text-2);line-height:1.5;max-height:80px;overflow:hidden;white-space:pre-line">${esc(t.consent_text&&t.consent_text.slice(0,150))}${(t.consent_text&&t.consent_text.length)>150?'...':''}</div>
+          <div style="margin-top:10px;display:flex;justify-content:flex-end"><button class="btn btn-danger btn-xs" data-del-tmpl="${t.id}">Διαγραφή</button></div>
+        </div>`).join('')||`<div class="empty-state"><div class="empty-icon">📄</div><div>Δεν υπάρχουν templates</div></div>`}
+      </div>
+    </div>`:''}
+    ${conTab==='mapping'?`<div class="card">
+      <div style="padding:16px 20px;border-bottom:1px solid var(--border-2)">
+        <div style="font-size:13px;font-weight:600;color:var(--navy)">Ποια υπηρεσία ανήκει σε ποια ομάδα συναίνεσης</div>
+        <div style="font-size:12px;color:var(--text-2);margin-top:4px">Οι υπηρεσίες προέρχονται από τα ραντεβού της κλινικής. Το Laser έχει ήδη τη δική του ξεχωριστή φόρμα.</div>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Υπηρεσία (από ραντεβού)</th><th>Ομάδα Συναίνεσης</th></tr></thead>
+        <tbody>${(S.allServiceNames||[]).length?(S.allServiceNames||[]).map(name=>`<tr>
+          <td style="font-weight:500">${esc(name)}</td>
+          <td><select class="form-control svc-consent-group" data-svc="${esc(name)}" style="max-width:260px">
+            <option value="">— Χωρίς κατηγορία —</option>
+            <option value="laser" ${(S.serviceConsentMap||{})[name]==='laser'?'selected':''}>Laser (ξεχωριστή φόρμα)</option>
+            ${CONSENT_GROUPS.map(g=>`<option value="${esc(g)}" ${(S.serviceConsentMap||{})[name]===g?'selected':''}>${esc(g)}</option>`).join('')}
+          </select></td>
+        </tr>`).join(''):`<tr><td colspan="2"><div class="empty-state"><div class="empty-icon">📋</div><div>Δεν βρέθηκαν υπηρεσίες από ραντεβού ακόμα</div></div></td></tr>`}
+        </tbody></table></div>
+      <div style="padding:16px 20px;display:flex;align-items:center;gap:12px">
+        <button class="btn btn-primary" id="save-service-consent-map">Αποθήκευση Αντιστοιχίσεων</button>
+        <div id="save-service-consent-map-result" style="font-size:12px"></div>
+      </div>
     </div>`:''}
   </div>`;
 }
@@ -3074,6 +3158,40 @@ function bindEvents() {
       await sb.from('service_consent_templates').delete().eq('id',el.dataset.delTmpl);
       loadPageData();
     };
+  });
+
+  // Seed the 5 standard consent-group templates (skips ones that already exist)
+  const _scg = document.getElementById('seed-consent-groups');
+  if (_scg) _scg.addEventListener('click', async () => {
+    _scg.textContent = 'Δημιουργία...'; _scg.disabled = true;
+    const existing = new Set((S.consentTemplates||[]).map(t=>t.service_name));
+    const toCreate = CONSENT_GROUPS.filter(g=>!existing.has(g));
+    for (const g of toCreate) {
+      await sb.from('service_consent_templates').insert({
+        clinic_id: clinicId(), service_name: g, consent_text: CONSENT_GROUP_TEXTS[g]
+      });
+    }
+    _scg.textContent = '✨ Δημιουργία των 5 βασικών templates'; _scg.disabled = false;
+    if (!toCreate.length) alert('Τα 5 βασικά templates υπάρχουν ήδη.');
+    await loadPageData();
+  });
+
+  // Save service → consent-group mapping
+  const _sscm = document.getElementById('save-service-consent-map');
+  if (_sscm) _sscm.addEventListener('click', async () => {
+    const result = document.getElementById('save-service-consent-map-result');
+    _sscm.textContent = 'Αποθήκευση...'; _sscm.disabled = true;
+    const map = {};
+    document.querySelectorAll('.svc-consent-group').forEach(sel => {
+      if (sel.value) map[sel.dataset.svc] = sel.value;
+    });
+    const settings = Object.assign({}, (S.clinic&&S.clinic.settings)||{}, {service_consent_groups: map});
+    const {error} = await sb.from('clinics').update({settings}).eq('id', clinicId());
+    _sscm.textContent = 'Αποθήκευση Αντιστοιχίσεων'; _sscm.disabled = false;
+    if (error) { if(result) result.innerHTML = '<span style="color:var(--red)">✗ '+esc(error.message)+'</span>'; return; }
+    if (S.clinic) S.clinic.settings = settings;
+    S.serviceConsentMap = map;
+    if (result) { result.innerHTML = '<span style="color:var(--green)">✓ Αποθηκεύτηκε</span>'; setTimeout(()=>{ if(result) result.innerHTML=''; }, 2500); }
   });
 
   // Laser form click
