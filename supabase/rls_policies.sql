@@ -21,7 +21,14 @@
 --   - profiles.role           in ('super_admin','clinic_admin','therapist','receptionist')
 --   - profiles.clinic_id      references clinics.id
 --   - patients / appointments / laser_forms / pipeline_deals / sms_log /
---     service_consent_templates all have a clinic_id column
+--     service_consent_templates / gdpr_consents / laser_consents /
+--     service_consents / unmatched_consultations / patient_photos all have
+--     a clinic_id column (confirmed against every sb.from(...) call in the
+--     live production app, including the patient-detail consent/photo loads)
+--   - The 'patient-photos' Storage bucket is private, and every object path
+--     is written as `${clinic_id}/${patient_id}/${filename}` (see the photo
+--     upload handler in index.html) — the storage policies below rely on
+--     that path convention to scope access per clinic.
 --   - User creation/role changes go through a Supabase Edge Function using
 --     the service_role key (per the comment already in index.html), NOT
 --     directly from the browser — so profiles has no client-side
@@ -123,7 +130,7 @@ do $$
 declare
   t text;
 begin
-  foreach t in array array['profiles','clinics','patients','appointments','laser_forms','pipeline_deals','sms_log','service_consent_templates']
+  foreach t in array array['profiles','clinics','patients','appointments','laser_forms','pipeline_deals','sms_log','service_consent_templates','gdpr_consents','laser_consents','service_consents','unmatched_consultations','patient_photos']
   loop
     if to_regclass('public.' || t) is null then
       raise notice 'SKIPPED (table does not exist): %', t;
@@ -208,22 +215,31 @@ end $$;
 -- 5. Generic clinic-scoped tables (only the ones that actually exist)
 -- ----------------------------------------------------------------------------
 -- patients, appointments, laser_forms, pipeline_deals, sms_log,
--- service_consent_templates: every role in a clinic can read/write rows that
--- belong to their own clinic_id (matches how the app already lets
--- therapist/receptionist/clinic_admin all create patients, appointments,
--- laser forms, etc). super_admin can read/write across all clinics.
+-- service_consent_templates, gdpr_consents, laser_consents, service_consents,
+-- unmatched_consultations, patient_photos: every role in a clinic can
+-- read/write rows that belong to their own clinic_id (matches how the app
+-- already lets therapist/receptionist/clinic_admin all create patients,
+-- appointments, laser forms, consents, and patient photos). super_admin can
+-- read/write across all clinics.
 --
--- DELETE is intentionally restricted to clinic_admin/super_admin: the app's
--- UI only exposes a delete action for consent templates today, and nothing
--- in the client should ever need to delete a patient/appointment/laser
--- record as a therapist/receptionist. Loosen this per table if that's wrong
--- for your workflow.
+-- DELETE is intentionally restricted to clinic_admin/super_admin for most of
+-- these tables: the app's UI only exposes a delete action for consent
+-- templates and unmatched consultations (both from the Settings/Consents
+-- pages, already role-gated to clinic_admin/super_admin by the NAV array)
+-- today, and nothing in the client should ever need to delete a
+-- patient/appointment/laser/consent record as a therapist/receptionist.
+-- Loosen this per table if that's wrong for your workflow.
+--
+-- patient_photos is the one exception: index.html's patient-detail page lets
+-- ANY logged-in role delete a photo (deletePatientPhoto(), no role check in
+-- the UI) — so it gets its own, less restrictive delete policy below rather
+-- than the clinic_admin/super_admin-only one every other table gets here.
 
 do $$
 declare
   t text;
 begin
-  foreach t in array array['patients','appointments','laser_forms','pipeline_deals','sms_log','service_consent_templates']
+  foreach t in array array['patients','appointments','laser_forms','pipeline_deals','sms_log','service_consent_templates','gdpr_consents','laser_consents','service_consents','unmatched_consultations','patient_photos']
   loop
     if to_regclass('public.' || t) is null then
       raise notice 'SKIPPED (table does not exist): %', t;
@@ -264,6 +280,21 @@ begin
         );
     $f$, t, t);
 
+    if t = 'patient_photos' then
+      -- Broader delete: any clinic member can delete a photo, matching the
+      -- app's unrestricted deletePatientPhoto() UI action.
+      execute format('drop policy if exists "%s_delete" on public.%I', t, t);
+      execute format($f$
+        create policy "%s_delete" on public.%I
+          for delete
+          using (
+            public.is_super_admin()
+            or clinic_id = public.current_user_clinic_id()
+          );
+      $f$, t, t);
+      continue;
+    end if;
+
     execute format('drop policy if exists "%s_delete" on public.%I', t, t);
     execute format($f$
       create policy "%s_delete" on public.%I
@@ -274,6 +305,55 @@ begin
         );
     $f$, t, t);
   end loop;
+end $$;
+
+
+-- ----------------------------------------------------------------------------
+-- 5b. Storage: 'patient-photos' bucket
+-- ----------------------------------------------------------------------------
+-- Object paths are written by index.html as `${clinic_id}/${patient_id}/${filename}`
+-- (see the photo upload handler), so the clinic_id is the first path segment.
+-- storage.foldername(name) returns that path split into an array of segments.
+
+do $$
+begin
+  if to_regclass('storage.objects') is null then
+    raise notice 'SKIPPED: storage.objects does not exist (Storage not enabled?)';
+    return;
+  end if;
+
+  drop policy if exists "patient_photos_storage_select" on storage.objects;
+  create policy "patient_photos_storage_select" on storage.objects
+    for select
+    using (
+      bucket_id = 'patient-photos'
+      and (
+        public.is_super_admin()
+        or (storage.foldername(name))[1] = public.current_user_clinic_id()::text
+      )
+    );
+
+  drop policy if exists "patient_photos_storage_insert" on storage.objects;
+  create policy "patient_photos_storage_insert" on storage.objects
+    for insert
+    with check (
+      bucket_id = 'patient-photos'
+      and (
+        public.is_super_admin()
+        or (storage.foldername(name))[1] = public.current_user_clinic_id()::text
+      )
+    );
+
+  drop policy if exists "patient_photos_storage_delete" on storage.objects;
+  create policy "patient_photos_storage_delete" on storage.objects
+    for delete
+    using (
+      bucket_id = 'patient-photos'
+      and (
+        public.is_super_admin()
+        or (storage.foldername(name))[1] = public.current_user_clinic_id()::text
+      )
+    );
 end $$;
 
 
@@ -290,12 +370,20 @@ end $$;
 --       select relname, relrowsecurity from pg_class
 --       where relname in ('profiles','clinics','patients','appointments',
 --                         'laser_forms','pipeline_deals','sms_log',
---                         'service_consent_templates');
+--                         'service_consent_templates','gdpr_consents',
+--                         'laser_consents','service_consents',
+--                         'unmatched_consultations','patient_photos');
 --     relrowsecurity must be `t` for every row returned.
 --
 -- [ ] Confirm the anon key alone (no session) gets ZERO rows back:
 --       Using curl/Postman with only the anon apikey header (no user JWT),
 --       GET .../rest/v1/patients?select=* should return [] , not real data.
+--
+-- [ ] If the 'patient-photos' Storage bucket exists, confirm it's marked
+--     private (not public) in Storage settings — the storage.objects
+--     policies above only matter if the bucket itself isn't public, since a
+--     public bucket serves objects over a direct URL with no auth check at
+--     all, bypassing RLS entirely.
 --
 -- [ ] Cross-clinic isolation test (do this with two real test accounts):
 --       1. Log in as a clinic_admin/therapist/receptionist of Clinic A.
