@@ -3582,14 +3582,20 @@ function bindEvents() {
       ]);
       const allRows = [...rows1, ...rows2];
       const phone = normalizePhone(p.phone||'');
-      const name = (p.full_name||'').toLowerCase().split(' ')[0];
-      // Find matching row
-      const match = allRows.find(row => {
-        const rPhone = normalizePhone(row['Τηλέφωνο:']||row['Τηλέφωνο']||'');
-        const rName = (row['Ονοματεπώνυμο:']||row['Ονοματεπώνυμο']||'').toLowerCase();
-        return (phone&&rPhone===phone)||(name&&rName.includes(name));
-      });
-      if (!match) { _spsb.textContent='❌ Δεν βρέθηκε'; setTimeout(()=>{ _spsb.textContent='🔄 Sync από Sheet'; _spsb.disabled=false; },2000); return; }
+      const fullName = (p.full_name||'').trim().toLowerCase();
+      // Βρες γραμμή που ταιριάζει: ΑΚΡΙΒΕΣ τηλέφωνο, αλλιώς ΑΚΡΙΒΕΣ ονοματεπώνυμο (ποτέ substring
+      // σε μικρό όνομα — π.χ. "Γεωργία" ταιριάζει σε δεκάδες ασθενείς και θα έφερνε τυχαία
+      // ιατρικό ιστορικό άλλου ατόμου). Αν βρεθούν παραπάνω από 1 πιθανές γραμμές, δεν μαντεύουμε.
+      const rowPhone = row => normalizePhone(row['Τηλέφωνο:']||row['Τηλέφωνο']||'');
+      const rowName = row => (row['Ονοματεπώνυμο:']||row['Ονοματεπώνυμο']||'').trim().toLowerCase();
+      let candidates = phone ? allRows.filter(row => rowPhone(row)===phone) : [];
+      if (!candidates.length && fullName) candidates = allRows.filter(row => rowName(row)===fullName);
+      if (candidates.length !== 1) {
+        _spsb.textContent = candidates.length>1 ? '❌ Διφορούμενη αντιστοίχιση' : '❌ Δεν βρέθηκε';
+        setTimeout(()=>{ _spsb.textContent='🔄 Sync από Sheet'; _spsb.disabled=false; },2500);
+        return;
+      }
+      const match = candidates[0];
       // Update patient with smart column matching
       const getCol = (row, keywords) => Object.keys(row).reduce((val, k) => {
         if (val) return val;
@@ -3628,11 +3634,11 @@ function bindEvents() {
     try {
       const rows = await fetchGoogleSheet(sheetId, sheetTab);
       const phone = normalizePhone(S.patientDetail&&S.patientDetail.phone||'');
-      const name = (S.patientDetail&&S.patientDetail.full_name||'').toLowerCase();
+      const fullName = (S.patientDetail&&S.patientDetail.full_name||'').trim().toLowerCase();
       S.patConsultations = rows.filter(r => {
         const rPhone = normalizePhone(r['Τηλέφωνο:']||r['Τηλέφωνο']||r['phone']||'');
-        const rName = (r['Ονοματεπώνυμο:']||r['Ονοματεπώνυμο']||'').toLowerCase();
-        return (phone&&rPhone===phone)||(name&&rName.includes(name.split(' ')[0]));
+        const rName = (r['Ονοματεπώνυμο:']||r['Ονοματεπώνυμο']||'').trim().toLowerCase();
+        return (phone&&rPhone===phone)||(fullName&&rName===fullName);
       });
       render();
     } catch(e) { alert(e.message); _lcb.textContent='🔄 Φόρτωση'; _lcb.disabled=false; }
@@ -3644,11 +3650,11 @@ function bindEvents() {
     if (integrations.consultation_sheet_id && S.patientDetail) {
       fetchGoogleSheet(integrations.consultation_sheet_id, integrations.consultation_sheet_tab||'').then(rows => {
         const phone = normalizePhone(S.patientDetail.phone||'');
-        const name = (S.patientDetail.full_name||'').toLowerCase();
+        const fullName = (S.patientDetail.full_name||'').trim().toLowerCase();
         S.patConsultations = rows.filter(r => {
           const rPhone = normalizePhone(r['Τηλέφωνο:']||r['Τηλέφωνο']||r['phone']||'');
-          const rName = (r['Ονοματεπώνυμο:']||r['Ονοματεπώνυμο']||'').toLowerCase();
-          return (phone&&rPhone===phone)||(name&&rName.includes(name.split(' ')[0]));
+          const rName = (r['Ονοματεπώνυμο:']||r['Ονοματεπώνυμο']||'').trim().toLowerCase();
+          return (phone&&rPhone===phone)||(fullName&&rName===fullName);
         });
         render();
       }).catch(()=>{});
