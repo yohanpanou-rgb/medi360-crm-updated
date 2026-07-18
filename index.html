@@ -3043,6 +3043,19 @@ function renderSettings() {
           </div>
           <div id="booking247-sync-result" style="margin-top:12px;font-size:12px"></div>
           <div id="booking247-preview-list" style="margin-top:12px"></div>
+          <div style="margin-top:18px;padding-top:16px;border-top:1px dashed var(--border-2)">
+            <div style="font-size:12px;font-weight:600;color:var(--navy);margin-bottom:8px">⚙️ Αυτόματο sync κάθε 1 λεπτό (μέσω Google Apps Script)</div>
+            <div style="font-size:11px;color:var(--text-2);margin-bottom:10px">Βάλε εδώ το Sheet ID που γράφει το Apps Script (βλ. google-apps-script/booking247-sync.gs). Ένα διακομιστής (Edge Function) διαβάζει αυτό το Sheet κάθε λεπτό και δημιουργεί τα ραντεβού αυτόματα, χωρίς να χρειάζεται ανοιχτό browser.</div>
+            <div class="form-group">
+              <label class="form-label">Google Sheet ID ή URL</label>
+              <input id="booking247-sheet-id" placeholder="https://docs.google.com/spreadsheets/d/..." value="${esc(integrations.booking247_sheet_id||'')}" style="font-family:var(--mono);font-size:12px"/>
+            </div>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-primary btn-sm" id="save-booking247-sheet">Αποθήκευση</button>
+              <button class="btn btn-ghost btn-sm" id="test-booking247-sheet">🔄 Test σύνδεση</button>
+            </div>
+            <div id="booking247-sheet-result" style="margin-top:10px;font-size:12px"></div>
+          </div>
         </div>
       </div>
     </div>`:''}
@@ -4008,6 +4021,31 @@ function bindEvents() {
     result.innerHTML='<span style="color:var(--text-2)">Ελέγχω σύνδεση...</span>';
     try {
       const rows = await fetchGoogleSheet(id, tab);
+      result.innerHTML=`<span style="color:var(--green)">✓ Βρέθηκαν ${rows.length} εγγραφές</span>`;
+    } catch(e) { result.innerHTML=`<span style="color:var(--red)">✗ ${e.message}</span>`; }
+  });
+
+  // Save Booking247 auto-sync Sheet ID
+  const _sb247sheet = document.getElementById('save-booking247-sheet');
+  if (_sb247sheet) _sb247sheet.addEventListener('click', async () => {
+    const id = extractSheetId(document.getElementById('booking247-sheet-id').value);
+    const integrations = Object.assign({}, (S.clinic&&S.clinic.integrations)||{}, {booking247_sheet_id:id});
+    const {error} = await sb.from('clinics').update({integrations}).eq('id',clinicId());
+    if (error) { alert(error.message); return; }
+    if (S.clinic) S.clinic.integrations = integrations;
+    _sb247sheet.textContent='✓ Αποθηκεύτηκε!';
+    setTimeout(()=>{ _sb247sheet.textContent='Αποθήκευση'; loadPageData(); }, 1500);
+  });
+
+  // Test Booking247 auto-sync Sheet
+  const _tb247sheet = document.getElementById('test-booking247-sheet');
+  if (_tb247sheet) _tb247sheet.addEventListener('click', async () => {
+    const id = extractSheetId(document.getElementById('booking247-sheet-id').value);
+    const result = document.getElementById('booking247-sheet-result');
+    if (!id) { result.innerHTML='<span style="color:var(--red)">Βάλε πρώτα Sheet ID</span>'; return; }
+    result.innerHTML='<span style="color:var(--text-2)">Ελέγχω σύνδεση...</span>';
+    try {
+      const rows = await fetchGoogleSheet(id, 'Ραντεβού');
       result.innerHTML=`<span style="color:var(--green)">✓ Βρέθηκαν ${rows.length} εγγραφές</span>`;
     } catch(e) { result.innerHTML=`<span style="color:var(--red)">✗ ${e.message}</span>`; }
   });
