@@ -4218,7 +4218,7 @@ function bindEvents() {
         fetchGoogleSheet(sheetId, 'Νέα Ιστορικά').catch(()=>[]),
         fetchGoogleSheet(sheetId, 'Παλιά Ιστορικά').catch(()=>[])
       ]);
-      const allRows = [...rows1, ...rows2];
+      const allRows = dedupeHistoryRowsByPhone([...rows1, ...rows2]);
       let updated=0, skip=0;
       const skippedList = [];
 
@@ -4303,7 +4303,7 @@ function bindEvents() {
         fetchGoogleSheet(sheetId, 'Νέα Ιστορικά').catch(()=>[]),
         fetchGoogleSheet(sheetId, 'Παλιά Ιστορικά').catch(()=>[])
       ]);
-      const allRows = [...rows1, ...rows2];
+      const allRows = dedupeHistoryRowsByPhone([...rows1, ...rows2]);
       const cid = clinicId();
       const FIELD_LABELS = {
         dob: 'Ημ. Γέννησης', city: 'Περιοχή', source: 'Πηγή',
@@ -5346,6 +5346,27 @@ function parseHistoryTimestamp(raw) {
   if (iso) return new Date(iso + 'T00:00:00').toISOString();
   const d = new Date(raw);
   return isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+// Κάποιοι πελάτες συμπληρώνουν τη φόρμα ιστορικού πάνω από μία φορά (π.χ. για να
+// διορθώσουν κάτι). Χωρίς αυτό, το sync θα εφάρμοζε όποια γραμμή τύχει να είναι
+// τελευταία στη σειρά των tabs (Νέα/Παλιά Ιστορικά) — που δεν είναι απαραίτητα η
+// πιο πρόσφατη υποβολή, κι έτσι μια παλιότερη/λάθος καταχώρηση θα μπορούσε να
+// "νικήσει" μια νεότερη σωστή. Κρατάμε μόνο τη γραμμή με το πιο πρόσφατο
+// "Χρονική σήμανση" ανά τηλέφωνο.
+function dedupeHistoryRowsByPhone(rows) {
+  const byPhone = new Map();
+  const noPhone = [];
+  for (const row of rows) {
+    const phone = normalizePhone(historyImportGetCol(row, ['Τηλέφωνο']));
+    if (!phone) { noPhone.push(row); continue; }
+    const ts = parseHistoryTimestamp(historyImportGetCol(row, ['Χρονική σήμανση']));
+    const prev = byPhone.get(phone);
+    if (!prev || (ts && (!prev._ts || ts > prev._ts))) {
+      byPhone.set(phone, Object.assign({}, row, { _ts: ts }));
+    }
+  }
+  return [...byPhone.values(), ...noPhone];
 }
 
 function buildHistoryImportRow(row) {
