@@ -3589,9 +3589,22 @@ function bindEvents() {
       openLaserConsentModal();
       return;
     }
+
+    // Υποχρεωτικά πεδία πριν την αποθήκευση — χωρίς αυτά η φόρμα Laser είναι
+    // κλινικά ανολοκλήρωτη (δεν ξέρουμε σε ποια περιοχή/ρύθμιση αναφέρεται).
+    const hairColors = Array.from(document.querySelectorAll('.lf-hair-color:checked')).map(cb=>cb.value);
+    const missing = [];
+    if (!(S.laserFormDetail && S.laserFormDetail.gender)) missing.push('Φύλο');
+    if (!(S.laserFormDetail && S.laserFormDetail.skin_type)) missing.push('Φωτότυπος Δέρματος');
+    if (!hairColors.length) missing.push('Χρώμα Τρίχας');
+    if (!_laserBodyParts.length) missing.push('Περιοχή Σώματος');
+    if (missing.length) {
+      alert('⚠ Συμπλήρωσε πρώτα: ' + missing.join(', ') + '.\n\nΗ φόρμα Laser δεν μπορεί να αποθηκευτεί χωρίς αυτά τα στοιχεία.');
+      return;
+    }
+
     _slf.textContent='Αποθήκευση...'; _slf.disabled=true;
     const notes = document.getElementById('treatment-notes');
-    const hairColors = Array.from(document.querySelectorAll('.lf-hair-color:checked')).map(cb=>cb.value);
     const operator = document.getElementById('lf-operator');
     const startDate = document.getElementById('start-date');
     const {error} = await sb.from('laser_forms').update({
