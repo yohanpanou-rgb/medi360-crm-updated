@@ -5982,6 +5982,12 @@ async function openHistoryFormModal() {
       errEl.textContent = 'Συμπλήρωσε όλα τα υποχρεωτικά πεδία (*) και αποδέξου τη συναίνεση GDPR.';
       return;
     }
+    const dobDate = new Date(dob + 'T00:00:00');
+    const age = (Date.now() - dobDate.getTime()) / (365.25 * 24 * 3600 * 1000);
+    if (dobDate.getTime() > Date.now() || age > 120) {
+      errEl.textContent = 'Η ημερομηνία γέννησης δεν είναι έγκυρη — έλεγξε ξανά την τιμή.';
+      return;
+    }
     const conditions = Array.from(document.querySelectorAll('.hf-condition:checked')).map(el => el.value);
     const conditionOther = document.getElementById('hf-condition-other').value.trim();
     const medicalHistory = [...conditions, conditionOther ? `Other: ${conditionOther}` : null].filter(Boolean).join(', ');
