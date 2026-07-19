@@ -3124,8 +3124,10 @@ function renderSettings() {
           <div style="display:flex;gap:10px;flex-wrap:wrap">
             <button class="btn btn-primary" id="sync-gdpr-now">🔄 Sync Ιατρικό Ιστορικό</button>
             <button class="btn btn-ghost" id="sync-consult-now">🔄 Sync Consultation</button>
+            <button class="btn btn-ghost" id="audit-gdpr-now">🔍 Έλεγχος Συμφωνίας (χωρίς αλλαγές)</button>
           </div>
           <div id="sync-result" style="margin-top:12px;font-size:12px"></div>
+          <div id="audit-result" style="margin-top:12px;font-size:12px"></div>
         </div>
       </div>
 
@@ -4286,6 +4288,95 @@ function bindEvents() {
       result.innerHTML=`<span style="color:var(--red)">✗ ${e.message}</span>`;
     }
     _sgn.disabled=false;
+  });
+
+  // Audit — read-only comparison of Sheet vs CRM, no writes at all
+  const _agn = document.getElementById('audit-gdpr-now');
+  if (_agn) _agn.addEventListener('click', async () => {
+    const integrations = (S.clinic&&S.clinic.integrations)||{};
+    const sheetId = integrations.gdpr_sheet_id || '1enyraKQzFwRd8V8hTykTg-TCZuS0B2egrXo3MXh-aA8';
+    const result = document.getElementById('audit-result');
+    result.innerHTML='<span style="color:var(--text-2)">Έλεγχος (καμία αλλαγή δεν γίνεται)...</span>';
+    _agn.disabled=true;
+    try {
+      const [rows1, rows2] = await Promise.all([
+        fetchGoogleSheet(sheetId, 'Νέα Ιστορικά').catch(()=>[]),
+        fetchGoogleSheet(sheetId, 'Παλιά Ιστορικά').catch(()=>[])
+      ]);
+      const allRows = [...rows1, ...rows2];
+      const cid = clinicId();
+      const FIELD_LABELS = {
+        dob: 'Ημ. Γέννησης', city: 'Περιοχή', source: 'Πηγή',
+        medical_history: 'Ιατρικό Ιστορικό', allergies: 'Αλλεργίες',
+        medications: 'Φαρμ. Αγωγή / Παθήσεις', previous_treatments: 'Προηγ. Θεραπείες',
+        avoid_body_areas: 'Περιοχές Αποφυγής',
+      };
+      let matchedOk = 0;
+      const unmatched = [];
+      const mismatches = [];
+
+      for (const row of allRows) {
+        const phone = normalizePhone(row['Τηλέφωνο:']||row['Τηλέφωνο']||row['phone']||'');
+        const name = (row['Ονοματεπώνυμο:']||row['Ονοματεπώνυμο']||row['name']||'').trim();
+        if (!name&&!phone) continue;
+        const sheetVals = {
+          dob: parseGreekDate(row['Ημερομηνία Γέννησης']||row['Ημ. Γέννησης']||'')||'',
+          city: (row['Περιοχή Κατοικίας:']||row['Περιοχή Κατοικίας']||row['Περιοχή']||'').trim(),
+          source: (row['Από πού μας γνωρίσατε:']||row['Από πού μας γνωρίσατε']||'').trim(),
+          medical_history: historyImportGetCol(row, ['ΙΑΤΡΙΚΟ ΙΣΤΟΡΙΚΟ']).trim(),
+          allergies: historyImportGetCol(row, ['Αλλεργίες']).trim(),
+          medications: historyImportGetCol(row, ['φαρμακευτική']).trim(),
+          previous_treatments: historyImportGetCol(row, ['Προηγούμενες αισθητικές']).trim(),
+          avoid_body_areas: historyImportGetCol(row, ['προς αποφυγή']).trim(),
+        };
+
+        let existing = null;
+        if (phone) {
+          const {data} = await sb.from('patients').select('*').eq('clinic_id',cid).eq('phone',phone).limit(1);
+          if (data&&data.length) existing = data[0];
+        }
+        if (!existing && name) {
+          const {data} = await sb.from('patients').select('*').eq('clinic_id',cid).ilike('full_name',name).limit(2);
+          if (data&&data.length===1) existing = data[0];
+        }
+        if (!existing) { unmatched.push(`${name||'—'} · ${phone||'χωρίς τηλέφωνο'}`); continue; }
+
+        let rowMismatch = false;
+        Object.keys(FIELD_LABELS).forEach(f => {
+          const sheetV = sheetVals[f];
+          const crmV = (existing[f]||'').toString().trim();
+          if (sheetV && sheetV !== crmV) {
+            mismatches.push({ name: existing.full_name, phone: existing.phone, field: FIELD_LABELS[f], crm: crmV||'(κενό)', sheet: sheetV });
+            rowMismatch = true;
+          }
+        });
+        if (!rowMismatch) matchedOk++;
+      }
+
+      let html = `<div style="margin-bottom:8px">
+        <span style="color:var(--green);font-weight:600">✓ ${matchedOk} ταιριάζουν πλήρως</span>
+        ${mismatches.length ? ` · <span style="color:var(--amber-dark);font-weight:600">⚠ ${mismatches.length} διαφορές σε ${new Set(mismatches.map(m=>m.name+m.phone)).size} πελάτες</span>` : ''}
+        ${unmatched.length ? ` · <span style="color:var(--red)">✗ ${unmatched.length} χωρίς ταίριασμα</span>` : ''}
+      </div>`;
+      if (mismatches.length) {
+        html += `<div style="max-height:320px;overflow-y:auto;border:1px solid var(--border-2);border-radius:8px"><table style="width:100%;border-collapse:collapse;font-size:11px">
+          <thead><tr style="background:var(--surface)"><th style="padding:6px 8px;text-align:left">Πελάτης</th><th style="padding:6px 8px;text-align:left">Πεδίο</th><th style="padding:6px 8px;text-align:left">Στο CRM</th><th style="padding:6px 8px;text-align:left">Στο Sheet</th></tr></thead>
+          <tbody>${mismatches.map(m=>`<tr style="border-top:1px solid var(--border-2)">
+            <td style="padding:5px 8px">${esc(m.name)} · ${esc(m.phone||'')}</td>
+            <td style="padding:5px 8px">${esc(m.field)}</td>
+            <td style="padding:5px 8px;color:var(--red)">${esc(m.crm)}</td>
+            <td style="padding:5px 8px;color:var(--green)">${esc(m.sheet)}</td>
+          </tr>`).join('')}</tbody>
+        </table></div>`;
+      }
+      if (unmatched.length) {
+        html += `<div style="margin-top:8px;font-size:11px;color:var(--text-2)"><b>Χωρίς ταίριασμα:</b><br>${unmatched.map(esc).join('<br>')}</div>`;
+      }
+      result.innerHTML = html;
+    } catch(e) {
+      result.innerHTML=`<span style="color:var(--red)">✗ ${e.message}</span>`;
+    }
+    _agn.disabled=false;
   });
 
   // Bulk history backfill (file upload ή paste)
