@@ -1530,6 +1530,7 @@ function renderPatientDetail() {
           <span class="card-title">🏥 Ιατρικό Ιστορικό & GDPR</span>
           <div style="display:flex;gap:8px;align-items:center">
             ${p.gdpr_signed?'<span class="badge badge-green">✓ GDPR Υπογεγραμμένο</span>':'<span class="badge badge-red">⚠ Χωρίς GDPR</span>'}
+            <button class="btn btn-primary btn-sm" id="open-history-form-btn">✏️ Επεξεργασία Φόρμας</button>
             <button class="btn btn-ghost btn-sm" id="sync-patient-sheet-btn">🔄 Sync από Sheet</button>
           </div>
         </div>
@@ -1550,15 +1551,20 @@ function renderPatientDetail() {
             <div style="font-size:10px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px">ΠΡΟΗΓΟΥΜΕΝΕΣ ΘΕΡΑΠΕΙΕΣ</div>
             <div style="font-size:13px;line-height:1.7;color:var(--text)">${esc(p.previous_treatments)}</div>
           </div>`:''}
+          ${p.avoid_body_areas?`<div>
+            <div style="font-size:10px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px">ΠΕΡΙΟΧΕΣ ΠΡΟΣ ΑΠΟΦΥΓΗ</div>
+            <div style="font-size:13px;line-height:1.7;color:var(--text)">${esc(p.avoid_body_areas)}</div>
+          </div>`:''}
         </div>
-        ${!p.medical_history&&!p.allergies?`<div style="padding:0 16px 16px;font-size:12px;color:var(--text-2)">Δεν υπάρχουν ιατρικά στοιχεία. Κάνε Sync για να φορτώσεις από το Google Sheet.</div>`:''}
+        ${!p.medical_history&&!p.allergies?`<div style="padding:0 16px 16px;font-size:12px;color:var(--text-2)">Δεν υπάρχουν ιατρικά στοιχεία. Πάτησε "Επεξεργασία Φόρμας" ή κάνε Sync για να φορτώσεις από το Google Sheet.</div>`:''}
       </div>`:`
       <div class="empty-state">
         <div class="empty-icon">🏥</div>
         <div style="margin-bottom:12px">Δεν υπάρχει ιατρικό ιστορικό</div>
-        <div style="font-size:12px;color:var(--text-3);margin-bottom:12px">Συμπληρώνεται μέσω Google Form και συγχρονίζεται αυτόματα</div>
+        <div style="font-size:12px;color:var(--text-3);margin-bottom:12px">Συμπλήρωσέ το απευθείας εδώ, ή μέσω Google Form (συγχρονίζεται με Sync)</div>
         <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
-          <a href="${medicalFormLink}" target="_blank" class="btn btn-primary btn-sm">🔗 Άνοιγμα Φόρμας Ιατρικού Ιστορικού</a>
+          <button class="btn btn-primary btn-sm" id="open-history-form-btn">📝 Συμπλήρωση Φόρμας Ιστορικού</button>
+          <a href="${medicalFormLink}" target="_blank" class="btn btn-ghost btn-sm">🔗 Άνοιγμα Google Form</a>
           <button class="btn btn-ghost btn-sm" id="sync-patient-sheet-btn">🔄 Sync από Google Sheets</button>
         </div>
       </div>`}
@@ -3579,6 +3585,10 @@ function bindEvents() {
   document.querySelectorAll('[data-pat-tab]').forEach(el => {
     el.onclick = () => { S.patTab=el.dataset.patTab; render(); };
   });
+
+  // Open the in-CRM Ιατρικό Ιστορικό / GDPR form
+  const _ohfb = document.getElementById('open-history-form-btn');
+  if (_ohfb) _ohfb.addEventListener('click', openHistoryFormModal);
 
   // Sync patient from Google Sheet
   const _spsb = document.getElementById('sync-patient-sheet-btn');
@@ -5661,18 +5671,6 @@ function openEditPatientModal() {
         </div>
         <div class="form-group" style="grid-column:1/-1"><label class="form-label">Σημειώσεις</label><textarea class="form-control" id="ep-notes" rows="3">${esc(p.notes||'')}</textarea></div>
       </div>
-      <div style="margin-top:16px;padding-top:16px;border-top:1px dashed var(--border-2)">
-        <div style="font-size:13px;font-weight:600;color:var(--navy);margin-bottom:10px">🏥 Ιατρικό Ιστορικό &amp; GDPR</div>
-        <div style="font-size:11px;color:var(--text-2);margin-bottom:12px">Καταχώρησε εδώ απευθείας ό,τι σου δηλώσει ο ασθενής (τηλεφωνικά ή αυτοπροσώπως) — αποθηκεύεται κατευθείαν στην καρτέλα του, χωρίς να χρειάζεται Google Form/Sheet.</div>
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:12px;font-size:13px">
-          <input type="checkbox" id="ep-gdpr-signed" ${p.gdpr_signed?'checked':''} style="width:16px;height:16px;accent-color:var(--blue)"/>
-          Έχει υπογράψει GDPR
-        </label>
-        <div class="form-group"><label class="form-label">Ιατρικό Ιστορικό</label><textarea class="form-control" id="ep-medical-history" rows="2">${esc(p.medical_history||'')}</textarea></div>
-        <div class="form-group"><label class="form-label">Αλλεργίες</label><textarea class="form-control" id="ep-allergies" rows="2">${esc(p.allergies||'')}</textarea></div>
-        <div class="form-group"><label class="form-label">Φαρμακευτική Αγωγή</label><textarea class="form-control" id="ep-medications" rows="2">${esc(p.medications||'')}</textarea></div>
-        <div class="form-group"><label class="form-label">Προηγούμενες Αισθητικές Θεραπείες</label><textarea class="form-control" id="ep-previous-treatments" rows="2">${esc(p.previous_treatments||'')}</textarea></div>
-      </div>
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px">
         <button class="btn btn-ghost" onclick="document.getElementById('lc-overlay').remove()">Ακύρωση</button>
         <button class="btn btn-primary" id="ep-save">Αποθήκευση</button>
@@ -5694,15 +5692,153 @@ function openEditPatientModal() {
       city: document.getElementById('ep-city').value.trim() || null,
       status: statusEl ? statusEl.value : p.status,
       notes: document.getElementById('ep-notes').value.trim() || null,
-      gdpr_signed: document.getElementById('ep-gdpr-signed').checked,
-      medical_history: document.getElementById('ep-medical-history').value.trim() || null,
-      allergies: document.getElementById('ep-allergies').value.trim() || null,
-      medications: document.getElementById('ep-medications').value.trim() || null,
-      previous_treatments: document.getElementById('ep-previous-treatments').value.trim() || null,
     };
     const {error} = await sb.from('patients').update(patch).eq('id', p.id);
     if (error) { alert('Σφάλμα: '+error.message); return; }
     document.getElementById('lc-overlay').remove();
+    await loadPatientDetail(p.id);
+    render();
+  });
+}
+
+// ── ΦΟΡΜΑ ΙΣΤΟΡΙΚΟΥ (ίδια δομή με το εξωτερικό Google Form, αλλά αποθηκεύει
+// απευθείας στην καρτέλα του ασθενή — καμία ανάγκη matching/Sheet) ──
+const HISTORY_FORM_CONDITIONS = [
+  'Σακχαρώδης Διαβήτης', 'Υπέρταση', 'Καρκίνος (παρελθόν / παρόν)', 'Επιληψία',
+  'Αιμορροφιλία', 'Πρόσφατο Χειρουργείο', 'Αυτοάνοσα νοσήματα', 'Εγκυμοσύνη',
+  'Θηλασμός', 'Δερματικά νοσήματα', 'Πολυκυστικές ωοθήκες', 'Κάπνισμα',
+];
+const HISTORY_FORM_SOURCES = ['Social', 'Σύσταση', 'Ταμπέλα', 'Χρυσός Οδηγός', 'Google'];
+
+function historyFormParseList(text, knownValues) {
+  const checked = new Set();
+  let rest = (text || '').trim();
+  knownValues.forEach(v => {
+    if (rest.includes(v)) { checked.add(v); rest = rest.split(v).join(''); }
+  });
+  rest = rest.replace(/,\s*,/g, ',').replace(/^[,\s]+|[,\s]+$/g, '');
+  return { checked, other: rest };
+}
+
+function openHistoryFormModal() {
+  const p = S.patientDetail; if (!p) return;
+  const old = document.getElementById('history-form-overlay'); if (old) old.remove();
+  const med = historyFormParseList(p.medical_history, HISTORY_FORM_CONDITIONS);
+  const srcKnown = HISTORY_FORM_SOURCES.find(s => (p.source || '').toLowerCase() === s.toLowerCase());
+  const srcOther = srcKnown ? '' : (p.source || '');
+  const integrations = (S.clinic && S.clinic.integrations) || {};
+
+  const ov = document.createElement('div');
+  ov.id = 'history-form-overlay';
+  // Συμπαγές (όχι ημιδιάφανο) φόντο — ο ασθενής μπορεί να κρατάει ο ίδιος τη
+  // συσκευή για να συμπληρώσει τη φόρμα, οπότε δεν πρέπει να φαίνεται ΤΙΠΟΤΑ
+  // από το υπόλοιπο CRM (λίστες ασθενών, στοιχεία άλλων ατόμων) πίσω από αυτήν.
+  ov.style.cssText = 'position:fixed;inset:0;background:var(--bg);z-index:9500;overflow-y:auto;padding:24px 16px';
+  ov.innerHTML = `
+    <div style="max-width:720px;margin:0 auto;background:var(--white);border-radius:16px;padding:28px;box-shadow:var(--shadow-lg)">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px">
+        <div>
+          <div style="font-size:18px;font-weight:700;color:var(--navy)">Φόρμα Ιστορικού</div>
+          <div style="font-size:12px;color:var(--text-2);margin-top:2px">Τα πεδία με * είναι υποχρεωτικά</div>
+        </div>
+        <button onclick="document.getElementById('history-form-overlay').remove()" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--text-2)">×</button>
+      </div>
+
+      <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px">📌 Προσωπικά Στοιχεία</div>
+      <div class="form-group"><label class="form-label">Ονοματεπώνυμο *</label><input class="form-control" id="hf-name" value="${esc(p.full_name || '')}"/></div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Ημερομηνία Γέννησης *</label><input class="form-control" id="hf-dob" type="date" value="${p.dob || ''}"/></div>
+        <div class="form-group"><label class="form-label">Τηλέφωνο *</label><input class="form-control" id="hf-phone" value="${esc(p.phone || '')}"/></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Email *</label><input class="form-control" id="hf-email" type="email" value="${esc(p.email || '')}"/></div>
+        <div class="form-group"><label class="form-label">Περιοχή Κατοικίας *</label><input class="form-control" id="hf-city" value="${esc(p.city || '')}"/></div>
+      </div>
+
+      <div style="margin-top:18px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px">Από πού μας γνωρίσατε *</div>
+      <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px">
+        ${HISTORY_FORM_SOURCES.map(s => `<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+          <input type="radio" name="hf-source" value="${esc(s)}" ${srcKnown === s ? 'checked' : ''} style="accent-color:var(--blue)"/> ${esc(s)}
+        </label>`).join('')}
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+          <input type="radio" name="hf-source" value="__other__" ${!srcKnown ? 'checked' : ''} style="accent-color:var(--blue)"/> Other:
+          <input class="form-control" id="hf-source-other" value="${esc(srcOther)}" style="max-width:220px"/>
+        </label>
+      </div>
+
+      <div style="margin-top:18px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px">🩺 Ιατρικό Ιστορικό</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px">
+        ${HISTORY_FORM_CONDITIONS.map(c => `<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+          <input type="checkbox" class="hf-condition" value="${esc(c)}" ${med.checked.has(c) ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--blue)"/> ${esc(c)}
+        </label>`).join('')}
+      </div>
+      <div class="form-group"><label class="form-label">Other</label><input class="form-control" id="hf-condition-other" value="${esc(med.other)}"/></div>
+
+      <div class="form-group"><label class="form-label">Αλλεργίες (αναφέρατε)</label><input class="form-control" id="hf-allergies" value="${esc(p.allergies || '')}"/></div>
+      <div class="form-group"><label class="form-label">Άλλες παθήσεις ή φαρμακευτική αγωγή</label><input class="form-control" id="hf-medications" value="${esc(p.medications || '')}"/></div>
+      <div class="form-group"><label class="form-label">Προηγούμενες αισθητικές θεραπείες (ποιες)</label><input class="form-control" id="hf-previous-treatments" value="${esc(p.previous_treatments || '')}"/></div>
+      <div class="form-group"><label class="form-label">Περιοχές του σώματος προς αποφυγή</label><input class="form-control" id="hf-avoid-areas" value="${esc(p.avoid_body_areas || '')}"/></div>
+
+      <div style="margin-top:18px;padding:14px 16px;background:var(--surface);border-radius:10px">
+        <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;font-size:13px;line-height:1.5">
+          <input type="checkbox" id="hf-gdpr" ${p.gdpr_signed ? 'checked' : ''} style="width:16px;height:16px;margin-top:2px;accent-color:var(--blue)"/>
+          <span>Συναινώ στην επεξεργασία των προσωπικών δεδομένων μου για σκοπούς παροχής και παρακολούθησης θεραπειών, σύμφωνα με τον GDPR και δηλώνω ότι οι παραπάνω πληροφορίες είναι αληθείς. *
+          ${integrations.privacy_policy_link ? `<br/><a href="${esc(integrations.privacy_policy_link)}" target="_blank">${esc(integrations.privacy_policy_link)}</a>` : ''}</span>
+        </label>
+      </div>
+
+      <div style="margin-top:14px">
+        <div style="font-size:13px;margin-bottom:8px">Θέλω να λαμβάνω email από την κλινική με προσφορές, tips και νέα. *</div>
+        <div style="display:flex;gap:16px">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px"><input type="radio" name="hf-marketing" value="yes" ${p.marketing_opt_in === true ? 'checked' : ''} style="accent-color:var(--blue)"/> Ναι</label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px"><input type="radio" name="hf-marketing" value="no" ${p.marketing_opt_in === false ? 'checked' : ''} style="accent-color:var(--blue)"/> Όχι</label>
+        </div>
+      </div>
+
+      <div id="hf-error" style="margin-top:14px;font-size:12px;color:var(--red)"></div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px">
+        <button class="btn btn-ghost" onclick="document.getElementById('history-form-overlay').remove()">Ακύρωση</button>
+        <button class="btn btn-primary" id="hf-save">Υποβολή</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+
+  document.getElementById('hf-save').addEventListener('click', async () => {
+    const errEl = document.getElementById('hf-error');
+    const name = document.getElementById('hf-name').value.trim();
+    const dob = document.getElementById('hf-dob').value;
+    const phone = document.getElementById('hf-phone').value.trim();
+    const email = document.getElementById('hf-email').value.trim();
+    const city = document.getElementById('hf-city').value.trim();
+    const sourceEl = document.querySelector('input[name="hf-source"]:checked');
+    const source = sourceEl && sourceEl.value === '__other__' ? document.getElementById('hf-source-other').value.trim() : (sourceEl ? sourceEl.value : '');
+    const gdpr = document.getElementById('hf-gdpr').checked;
+    const marketingEl = document.querySelector('input[name="hf-marketing"]:checked');
+    if (!name || !dob || !phone || !email || !city || !source || !gdpr || !marketingEl) {
+      errEl.textContent = 'Συμπλήρωσε όλα τα υποχρεωτικά πεδία (*) και αποδέξου τη συναίνεση GDPR.';
+      return;
+    }
+    const conditions = Array.from(document.querySelectorAll('.hf-condition:checked')).map(el => el.value);
+    const conditionOther = document.getElementById('hf-condition-other').value.trim();
+    const medicalHistory = [...conditions, conditionOther ? `Other: ${conditionOther}` : null].filter(Boolean).join(', ');
+
+    const btn = document.getElementById('hf-save');
+    btn.textContent = 'Αποθήκευση...'; btn.disabled = true;
+    const patch = {
+      full_name: name, dob, phone, email: email, city,
+      source,
+      medical_history: medicalHistory || null,
+      allergies: document.getElementById('hf-allergies').value.trim() || null,
+      medications: document.getElementById('hf-medications').value.trim() || null,
+      previous_treatments: document.getElementById('hf-previous-treatments').value.trim() || null,
+      avoid_body_areas: document.getElementById('hf-avoid-areas').value.trim() || null,
+      gdpr_signed: true,
+      gdpr_signed_at: p.gdpr_signed ? undefined : new Date().toISOString(),
+      marketing_opt_in: marketingEl.value === 'yes',
+    };
+    const {error} = await sb.from('patients').update(patch).eq('id', p.id);
+    if (error) { errEl.textContent = 'Σφάλμα: ' + error.message; btn.textContent = 'Υποβολή'; btn.disabled = false; return; }
+    document.getElementById('history-form-overlay').remove();
     await loadPatientDetail(p.id);
     render();
   });
