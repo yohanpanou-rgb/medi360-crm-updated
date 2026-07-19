@@ -3134,10 +3134,20 @@ function renderSettings() {
         <div class="card-header"><span class="card-title">📋 Μαζική Εισαγωγή Ιστορικού (παλιά δεδομένα)</span></div>
         <div style="padding:16px">
           <div style="background:var(--surface);border-radius:8px;padding:12px;margin-bottom:14px;font-size:12px;color:var(--text-2)">
-            Επικόλλησε εδώ ΟΛΟ το export (μαζί με την πρώτη γραμμή επικεφαλίδων) από το παλιό Google Form/Sheet.
+            Ανέβασε το αρχείο export (μαζί με την πρώτη γραμμή επικεφαλίδων) από το παλιό Google Form/Sheet, ή επικόλλησε το κείμενο χειροκίνητα.
             Ταίριασμα γίνεται <strong>μόνο με ακριβές τηλέφωνο</strong> — γραμμές χωρίς ταίριασμα παραλείπονται και αναφέρονται, δεν δημιουργείται νέος ασθενής.
           </div>
-          <textarea class="form-control" id="history-import-paste" rows="6" placeholder="Επικόλλησε εδώ (Ctrl+V)..." style="font-family:var(--mono);font-size:11px"></textarea>
+          <div id="history-import-drop" style="border:2px dashed var(--border);border-radius:10px;padding:24px;text-align:center;cursor:pointer;transition:.15s;margin-bottom:12px" onclick="document.getElementById('history-import-file').click()">
+            <div style="font-size:22px;margin-bottom:6px">📄</div>
+            <div style="font-size:13px;font-weight:500;margin-bottom:4px">Κλικ ή σύρε το αρχείο εδώ</div>
+            <div style="font-size:11px;color:var(--text-2)">.csv, .tsv ή .txt (export από Google Sheets)</div>
+          </div>
+          <input type="file" id="history-import-file" accept=".csv,.tsv,.txt" style="display:none"/>
+          <div id="history-import-file-name" style="font-size:11px;color:var(--text-2);margin-bottom:8px"></div>
+          <details>
+            <summary style="cursor:pointer;font-size:12px;color:var(--text-2)">ή επικόλλησε χειροκίνητα</summary>
+            <textarea class="form-control" id="history-import-paste" rows="6" placeholder="Επικόλλησε εδώ (Ctrl+V)..." style="font-family:var(--mono);font-size:11px;margin-top:8px"></textarea>
+          </details>
           <div style="display:flex;gap:8px;margin-top:12px">
             <button class="btn btn-ghost" id="preview-history-import-btn">👁 Προεπισκόπηση</button>
             <button class="btn btn-primary" id="confirm-history-import-btn" style="display:none">✓ Επιβεβαίωση Εισαγωγής</button>
@@ -4314,7 +4324,18 @@ function bindEvents() {
     _sgn.disabled=false;
   });
 
-  // Bulk history backfill (paste)
+  // Bulk history backfill (file upload ή paste)
+  const _hif = document.getElementById('history-import-file');
+  if (_hif) _hif.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      document.getElementById('history-import-paste').value = ev.target.result;
+      document.getElementById('history-import-file-name').textContent = `📎 ${file.name} (${(file.size/1024).toFixed(1)} KB) φορτώθηκε — πάτησε Προεπισκόπηση`;
+    };
+    reader.readAsText(file, 'UTF-8');
+  });
   const _phib = document.getElementById('preview-history-import-btn');
   if (_phib) _phib.addEventListener('click', previewHistoryImport);
   const _chib = document.getElementById('confirm-history-import-btn');
