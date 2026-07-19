@@ -1470,7 +1470,7 @@ function renderPatientDetail() {
             ['Πόλη', p.city],
             ['Πηγή', p.source],
             ['GDPR', p.gdpr_signed?'✅ Υπογεγραμμένο':'❌ Όχι'],
-            ['Ιατρικό Ιστορικό', (p.medical_history&&p.medical_history.trim())||(p.allergies&&p.allergies.trim())?'✅ Συμπληρωμένο':'❌ Όχι'],
+            ['Ιατρικό Ιστορικό', [p.medical_history,p.allergies,p.medications,p.previous_treatments].some(v=>v&&v.trim())?'✅ Συμπληρωμένο':'❌ Όχι'],
             ...(canSeeFinancials?[['LTV', euro(p.ltv)]]:[] ),
             ['Εγγραφή', fmt(p.created_at)],
           ].map(([k,v])=>`
@@ -4217,84 +4217,34 @@ function bindEvents() {
         fetchGoogleSheet(sheetId, 'Παλιά Ιστορικά').catch(()=>[])
       ]);
       const allRows = [...rows1, ...rows2];
-      let ok=0, skip=0, updated=0;
+      let updated=0, skip=0;
+      const skippedList = [];
 
       for (const row of allRows) {
-        // Map columns from the sheet
+        // Map columns from the sheet (ίδια keyword-λογική με το buildHistoryImportRow)
         const phone = normalizePhone(
           row['Τηλέφωνο:']||row['Τηλέφωνο']||row['phone']||''
         );
         const name = (
           row['Ονοματεπώνυμο:']||row['Ονοματεπώνυμο']||row['name']||''
         ).trim();
+        if (!name&&!phone) { continue; }
         const email = row['Email:']||row['Email']||'';
         const dob = parseGreekDate(row['Ημερομηνία Γέννησης']||row['Ημ. Γέννησης']||'');
         const city = row['Περιοχή Κατοικίας:']||row['Περιοχή Κατοικίας']||row['Περιοχή']||'';
         const source = row['Από πού μας γνωρίσατε:']||row['Από πού μας γνωρίσατε']||'';
-        // Find medical history - column has emoji prefix 🩺
-        const medHistory = Object.keys(row).reduce((val, k) => {
-          if (val) return val;
-          if (k.includes('ΙΑΤΡΙΚΟ ΙΣΤΟΡΙΚΟ')||k.includes('Ιατρικό Ιστορικό')) return row[k]||'';
-          return val;
-        }, '')||'';
-        // Find allergies
-        const allergies = Object.keys(row).reduce((val, k) => {
-          if (val) return val;
-          if (k.includes('Αλλεργίες')) return row[k]||'';
-          return val;
-        }, '')||'';
-        // Other conditions / medications
-        const otherConditions = Object.keys(row).reduce((val, k) => {
-          if (val) return val;
-          if (k.includes('παθήσεις')||k.includes('φαρμακευτική αγωγή')) return row[k]||'';
-          return val;
-        }, '')||'';
-        // Previous treatments
-        const prevTreatments = Object.keys(row).reduce((val, k) => {
-          if (val) return val;
-          if (k.includes('Προηγούμενες αισθητικές')||k.includes('προηγούμενες')) return row[k]||'';
-          return val;
-        }, '')||'';
-        // Avoid areas
-        const avoidAreas = Object.keys(row).reduce((val, k) => {
-          if (val) return val;
-          if (k.includes('αποφυγή')) return row[k]||'';
-          return val;
-        }, '')||'';
-        // GDPR - find column with "Συναινώ" or "Συμφωνώ"
-        const gdprKey = Object.keys(row).find(k => k.includes('Συναιν')||k.includes('Συμφων')||k.includes('GDPR'));
-        const gdprValue = gdprKey ? (row[gdprKey]||'') : '';
-        const gdprSigned = gdprValue.toLowerCase().includes('ναι')||gdprValue.toLowerCase().includes('ναί');
-        const marketing = Object.keys(row).reduce((val, k) => {
-          if (val) return val;
-          if (k.includes('email')||k.includes('προσφορές')) return row[k]||'';
-          return val;
-        }, '')||'';
-        const timestamp = row['Στήλη 1']||row['Timestamp']||'';
+        const medHistory = historyImportGetCol(row, ['ΙΑΤΡΙΚΟ ΙΣΤΟΡΙΚΟ']);
+        const allergies = historyImportGetCol(row, ['Αλλεργίες']);
+        const otherConditions = historyImportGetCol(row, ['φαρμακευτική']);
+        const prevTreatments = historyImportGetCol(row, ['Προηγούμενες αισθητικές']);
+        const avoidAreas = historyImportGetCol(row, ['προς αποφυγή']);
+        const gdprRaw = historyImportGetCol(row, ['Συναιν', 'Συμφων', 'GDPR']);
+        const gdprSigned = /ναι/i.test(gdprRaw);
+        const marketingRaw = historyImportGetCol(row, ['προσφορές']);
+        const signedAt = parseHistoryTimestamp(historyImportGetCol(row, ['Χρονική σήμανση']));
 
-        if (!name&&!phone) { skip++; continue; }
-
-        // Build upsert payload
-        const payload = {
-          clinic_id: clinicId(),
-          full_name: name||undefined,
-          phone: phone||undefined,
-          email: email||undefined,
-          dob: dob||undefined,
-          city: city||undefined,
-          source: source||undefined,
-          medical_history: medHistory||undefined,
-          allergies: allergies||undefined,
-          medications: otherConditions||undefined,
-          previous_treatments: prevTreatments||undefined,
-          gdpr_signed: gdprKey ? gdprSigned : undefined,
-          status: 'active',
-        };
-
-        // Remove undefined keys
-        Object.keys(payload).forEach(k => payload[k]===undefined && delete payload[k]);
-
-        // Find existing patient by phone or name
+        // Find EXISTING patient only — ακριβές τηλέφωνο, αλλιώς μοναδικό ονοματεπώνυμο.
+        // Ποτέ δεν δημιουργούμε νέο πελάτη εδώ (μόνο ενημέρωση υπαρχόντων).
         let existingId = null;
         if (phone) {
           const {data:byPhone} = await sb.from('patients').select('id').eq('clinic_id',clinicId()).eq('phone',phone).limit(1);
@@ -4305,19 +4255,33 @@ function bindEvents() {
           if (byName&&byName.length===1) existingId = byName[0].id;
         }
 
-        if (existingId) {
-          // Update existing patient with medical history
-          const {error} = await sb.from('patients').update(payload).eq('id',existingId);
-          if (error) { console.error(error); skip++; } else { updated++; ok++; }
-        } else {
-          // Create new patient
-          const {error} = await sb.from('patients').insert(payload);
-          if (error) { console.error(error); skip++; } else ok++;
-        }
+        if (!existingId) { skip++; skippedList.push(`${name||'—'} · ${phone||'χωρίς τηλέφωνο'}`); continue; }
+
+        const payload = {
+          email: email||undefined,
+          dob: dob||undefined,
+          city: city||undefined,
+          source: source||undefined,
+          medical_history: medHistory||undefined,
+          allergies: allergies||undefined,
+          medications: otherConditions||undefined,
+          previous_treatments: prevTreatments||undefined,
+          avoid_body_areas: avoidAreas||undefined,
+          gdpr_signed: gdprRaw ? gdprSigned : undefined,
+          gdpr_signed_at: gdprSigned && signedAt ? signedAt : undefined,
+          marketing_opt_in: marketingRaw ? /ναι/i.test(marketingRaw) : undefined,
+        };
+        Object.keys(payload).forEach(k => payload[k]===undefined && delete payload[k]);
+
+        const {error} = await sb.from('patients').update(payload).eq('id',existingId);
+        if (error) { console.error(error); skip++; skippedList.push(`${name||'—'} · ${phone||'—'} (σφάλμα: ${error.message})`); } else updated++;
       }
-      result.innerHTML=`<span style="color:var(--green)">✓ Sync ολοκληρώθηκε!</span> ${ok} εγγραφές · ${updated} ενημερώθηκαν · ${skip} παραλείφθηκαν`;
-      if(result) result.innerHTML += `<br><span style="color:var(--text-2);font-size:11px">Νέα Ιστορικά: ${rows1.length} · Παλιά Ιστορικά: ${rows2.length}</span>`;
-      await loadPageData();
+      result.innerHTML=`<span style="color:var(--green)">✓ Sync ολοκληρώθηκε!</span> ${updated} ενημερώθηκαν · ${skip} παραλείφθηκαν (χωρίς ταίριασμα υπάρχοντα πελάτη)`;
+      result.innerHTML += `<br><span style="color:var(--text-2);font-size:11px">Νέα Ιστορικά: ${rows1.length} · Παλιά Ιστορικά: ${rows2.length}</span>`;
+      if (skippedList.length) {
+        result.innerHTML += `<div style="max-height:180px;overflow-y:auto;border:1px solid var(--border-2);border-radius:8px;padding:8px;margin-top:8px;font-size:11px;color:var(--text-2)">${skippedList.map(esc).join('<br>')}</div>`;
+      }
+      setTimeout(() => { loadPageData(); }, 3000);
     } catch(e) {
       result.innerHTML=`<span style="color:var(--red)">✗ ${e.message}</span>`;
     }
