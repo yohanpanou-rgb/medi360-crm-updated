@@ -5720,13 +5720,15 @@ function historyFormParseList(text, knownValues) {
   return { checked, other: rest };
 }
 
-function openHistoryFormModal() {
+async function openHistoryFormModal() {
   const p = S.patientDetail; if (!p) return;
   const old = document.getElementById('history-form-overlay'); if (old) old.remove();
   const med = historyFormParseList(p.medical_history, HISTORY_FORM_CONDITIONS);
   const srcKnown = HISTORY_FORM_SOURCES.find(s => (p.source || '').toLowerCase() === s.toLowerCase());
   const srcOther = srcKnown ? '' : (p.source || '');
   const integrations = (S.clinic && S.clinic.integrations) || {};
+  const {data: cityRows} = await sb.from('patients').select('city').eq('clinic_id', clinicId()).not('city', 'is', null);
+  const knownCities = [...new Set((cityRows || []).map(r => (r.city || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'el'));
 
   const ov = document.createElement('div');
   ov.id = 'history-form-overlay';
@@ -5752,7 +5754,10 @@ function openHistoryFormModal() {
       </div>
       <div class="form-row">
         <div class="form-group"><label class="form-label">Email *</label><input class="form-control" id="hf-email" type="email" value="${esc(p.email || '')}"/></div>
-        <div class="form-group"><label class="form-label">Περιοχή Κατοικίας *</label><input class="form-control" id="hf-city" value="${esc(p.city || '')}"/></div>
+        <div class="form-group"><label class="form-label">Περιοχή Κατοικίας *</label>
+          <input class="form-control" id="hf-city" list="hf-city-list" placeholder="Επίλεξε από τη λίστα ή γράψε νέα περιοχή" value="${esc(p.city || '')}"/>
+          <datalist id="hf-city-list">${knownCities.map(c => `<option value="${esc(c)}"></option>`).join('')}</datalist>
+        </div>
       </div>
 
       <div style="margin-top:18px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px">Από πού μας γνωρίσατε *</div>
