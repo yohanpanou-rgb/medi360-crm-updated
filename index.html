@@ -3128,6 +3128,24 @@ function renderSettings() {
           <div id="sync-result" style="margin-top:12px;font-size:12px"></div>
         </div>
       </div>
+
+      <!-- Bulk history backfill (paste όλο το παλιό export) -->
+      <div class="card">
+        <div class="card-header"><span class="card-title">📋 Μαζική Εισαγωγή Ιστορικού (παλιά δεδομένα)</span></div>
+        <div style="padding:16px">
+          <div style="background:var(--surface);border-radius:8px;padding:12px;margin-bottom:14px;font-size:12px;color:var(--text-2)">
+            Επικόλλησε εδώ ΟΛΟ το export (μαζί με την πρώτη γραμμή επικεφαλίδων) από το παλιό Google Form/Sheet.
+            Ταίριασμα γίνεται <strong>μόνο με ακριβές τηλέφωνο</strong> — γραμμές χωρίς ταίριασμα παραλείπονται και αναφέρονται, δεν δημιουργείται νέος ασθενής.
+          </div>
+          <textarea class="form-control" id="history-import-paste" rows="6" placeholder="Επικόλλησε εδώ (Ctrl+V)..." style="font-family:var(--mono);font-size:11px"></textarea>
+          <div style="display:flex;gap:8px;margin-top:12px">
+            <button class="btn btn-ghost" id="preview-history-import-btn">👁 Προεπισκόπηση</button>
+            <button class="btn btn-primary" id="confirm-history-import-btn" style="display:none">✓ Επιβεβαίωση Εισαγωγής</button>
+          </div>
+          <div id="history-import-preview" style="margin-top:12px;font-size:12px"></div>
+          <div id="history-import-result" style="margin-top:10px;font-size:12px"></div>
+        </div>
+      </div>
     </div>`:''}
 
     <!-- USERS TAB -->
@@ -4296,6 +4314,12 @@ function bindEvents() {
     _sgn.disabled=false;
   });
 
+  // Bulk history backfill (paste)
+  const _phib = document.getElementById('preview-history-import-btn');
+  if (_phib) _phib.addEventListener('click', previewHistoryImport);
+  const _chib = document.getElementById('confirm-history-import-btn');
+  if (_chib) _chib.addEventListener('click', confirmHistoryImport);
+
   // Clear CSV buttons
   const _ccpb = document.getElementById('clear-patients-csv');
   if (_ccpb) _ccpb.addEventListener('click', () => {
@@ -5187,6 +5211,90 @@ function parseCSVLine(line) {
   return result;
 }
 
+// ── Γενικός parser για επικολλημένα δεδομένα (tab ή comma separated) ──
+// Διαφέρει από το parseCSV/parseCSVLine παραπάνω επειδή χειρίζεται σωστά
+// πεδία με ΕΝΣΩΜΑΤΩΜΕΝΕΣ αλλαγές γραμμής μέσα σε εισαγωγικά (π.χ. όπως
+// βγαίνουν όταν αντιγράφεις-επικολλάς ένα εύρος από Google Sheets) — το
+// parseCSV παραπάνω σπάει σε γραμμές πρώτα με text.split('\n'), πράγμα που
+// θα έσπαγε λάθος ένα τέτοιο πολυγραμμικό πεδίο στη μέση.
+function parseDelimitedText(text) {
+  const firstLine = text.slice(0, (text.indexOf('\n') + 1 || text.length + 1) - 1);
+  const delimiter = firstLine.split('\t').length >= firstLine.split(',').length ? '\t' : ',';
+  const rawRows = [];
+  let row = [];
+  let field = '';
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else inQuotes = false;
+      } else {
+        field += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === delimiter) {
+      row.push(field); field = '';
+    } else if (ch === '\n') {
+      row.push(field); rawRows.push(row); row = []; field = '';
+    } else if (ch === '\r') {
+      // skip
+    } else {
+      field += ch;
+    }
+  }
+  if (field.length || row.length) { row.push(field); rawRows.push(row); }
+  const nonEmptyRows = rawRows.filter(r => r.some(v => (v || '').trim()));
+  if (!nonEmptyRows.length) return [];
+  const headers = nonEmptyRows[0].map(h => h.trim());
+  return nonEmptyRows.slice(1).map(vals => {
+    const obj = {};
+    headers.forEach((h, j) => { obj[h] = (vals[j] || '').trim(); });
+    return obj;
+  });
+}
+
+function historyImportGetCol(row, keywords) {
+  for (const k of Object.keys(row)) {
+    if (keywords.some(kw => k.includes(kw))) return row[k] || '';
+  }
+  return '';
+}
+
+function parseHistoryTimestamp(raw) {
+  if (!raw) return null;
+  const datePart = raw.trim().split(' ')[0];
+  const iso = parseGreekDate(datePart);
+  if (iso) return new Date(iso + 'T00:00:00').toISOString();
+  const d = new Date(raw);
+  return isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+function buildHistoryImportRow(row) {
+  const phone = normalizePhone(historyImportGetCol(row, ['Τηλέφωνο']));
+  const name = historyImportGetCol(row, ['Ονοματεπώνυμο']).trim();
+  if (!phone && !name) return null;
+  const gdprRaw = historyImportGetCol(row, ['Συναιν', 'Συμφων', 'GDPR']);
+  const marketingRaw = historyImportGetCol(row, ['προσφορές']);
+  return {
+    phone, name,
+    dob: parseGreekDate(historyImportGetCol(row, ['Ημερομηνία Γέννησης'])),
+    email: historyImportGetCol(row, ['Email']),
+    city: historyImportGetCol(row, ['Περιοχή Κατοικίας']),
+    source: historyImportGetCol(row, ['γνωρίσατε']),
+    medical_history: historyImportGetCol(row, ['ΙΑΤΡΙΚΟ ΙΣΤΟΡΙΚΟ']),
+    allergies: historyImportGetCol(row, ['Αλλεργίες']),
+    medications: historyImportGetCol(row, ['φαρμακευτική']),
+    previous_treatments: historyImportGetCol(row, ['Προηγούμενες αισθητικές']),
+    avoid_body_areas: historyImportGetCol(row, ['προς αποφυγή']),
+    gdpr_signed: /ναι/i.test(gdprRaw),
+    marketing_opt_in: /ναι/i.test(marketingRaw),
+    gdpr_signed_at: parseHistoryTimestamp(historyImportGetCol(row, ['Χρονική σήμανση'])),
+  };
+}
+
 function showCSVPreview(containerId, rows, maxRows) {
   const el = document.getElementById(containerId);
   if (!el||!rows.length) return;
@@ -5200,6 +5308,72 @@ function showCSVPreview(containerId, rows, maxRows) {
         <tbody>${preview.map(r=>`<tr style="border-top:1px solid var(--border-2)">${headers.map(h=>`<td style="padding:5px 8px;white-space:nowrap;overflow:hidden;max-width:150px;text-overflow:ellipsis">${esc(r[h]||'')}</td>`).join('')}</tr>`).join('')}</tbody>
       </table>
     </div>`;
+}
+
+async function previewHistoryImport() {
+  const text = document.getElementById('history-import-paste').value;
+  const previewEl = document.getElementById('history-import-preview');
+  const confirmBtn = document.getElementById('confirm-history-import-btn');
+  if (!text.trim()) { previewEl.innerHTML = '<span style="color:var(--red)">Επικόλλησε πρώτα τα δεδομένα.</span>'; return; }
+  previewEl.innerHTML = '<span style="color:var(--text-2)">Ανάλυση...</span>';
+  confirmBtn.style.display = 'none';
+  const rawRows = parseDelimitedText(text).map(buildHistoryImportRow).filter(Boolean);
+  if (!rawRows.length) { previewEl.innerHTML = '<span style="color:var(--red)">Δεν βρέθηκαν έγκυρες γραμμές (χρειάζεται τουλάχιστον όνομα ή τηλέφωνο).</span>'; return; }
+
+  const cid = clinicId();
+  const matched = [];
+  const unmatched = [];
+  for (const row of rawRows) {
+    let patientId = null;
+    if (row.phone) {
+      const { data } = await sb.from('patients').select('id,full_name').eq('clinic_id', cid).eq('phone', row.phone).limit(1);
+      if (data && data.length) patientId = data[0].id;
+    }
+    if (patientId) matched.push({ ...row, patientId }); else unmatched.push(row);
+  }
+  S._historyImportMatched = matched;
+
+  previewEl.innerHTML = `
+    <div style="margin-bottom:8px"><span style="color:var(--green);font-weight:600">✓ ${matched.length} θα ενημερωθούν</span> (ακριβές ταίριασμα τηλεφώνου)</div>
+    ${unmatched.length ? `<div style="color:var(--amber-dark);font-weight:600;margin-bottom:6px">⚠ ${unmatched.length} παραλείπονται (δεν βρέθηκε τηλέφωνο σε υπάρχοντα πελάτη) — χρειάζονται χειροκίνητο έλεγχο:</div>
+    <div style="max-height:180px;overflow-y:auto;border:1px solid var(--border-2);border-radius:8px;padding:8px;font-size:11px;color:var(--text-2)">
+      ${unmatched.map(r => `${esc(r.name || '—')} · ${esc(r.phone || 'χωρίς τηλέφωνο')}`).join('<br>')}
+    </div>` : ''}`;
+  if (matched.length) confirmBtn.style.display = 'inline-flex';
+}
+
+async function confirmHistoryImport() {
+  const matched = S._historyImportMatched || [];
+  const resultEl = document.getElementById('history-import-result');
+  const btn = document.getElementById('confirm-history-import-btn');
+  if (!matched.length) return;
+  btn.disabled = true; btn.textContent = 'Εισαγωγή...';
+  let ok = 0, err = 0;
+  for (const row of matched) {
+    const patch = {
+      dob: row.dob || undefined,
+      email: row.email || undefined,
+      city: row.city || undefined,
+      source: row.source || undefined,
+      medical_history: row.medical_history || undefined,
+      allergies: row.allergies || undefined,
+      medications: row.medications || undefined,
+      previous_treatments: row.previous_treatments || undefined,
+      avoid_body_areas: row.avoid_body_areas || undefined,
+      gdpr_signed: row.gdpr_signed || undefined,
+      gdpr_signed_at: row.gdpr_signed && row.gdpr_signed_at ? row.gdpr_signed_at : undefined,
+      marketing_opt_in: row.marketing_opt_in,
+    };
+    Object.keys(patch).forEach(k => patch[k] === undefined && delete patch[k]);
+    const { error } = await sb.from('patients').update(patch).eq('id', row.patientId);
+    if (error) err++; else ok++;
+  }
+  resultEl.innerHTML = `<span style="color:var(--green)">✓ Ενημερώθηκαν ${ok} καρτέλες</span>${err ? ` · <span style="color:var(--red)">${err} σφάλματα</span>` : ''}`;
+  btn.textContent = '✓ Επιβεβαίωση Εισαγωγής'; btn.disabled = false; btn.style.display = 'none';
+  S._historyImportMatched = null;
+  // Καθυστέρηση πριν το loadPageData()/render() ώστε να προλάβει να φανεί
+  // το μήνυμα αποτελέσματος — αλλιώς σβήνεται αμέσως στο επόμενο render().
+  setTimeout(() => { loadPageData(); }, 2000);
 }
 
 function parseGreekDate(str) {
