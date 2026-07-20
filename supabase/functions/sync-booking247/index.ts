@@ -37,9 +37,14 @@ function json(body: unknown, status = 200) {
 function normalizePhone(p: string | null | undefined): string {
   if (!p) return '';
   let digits = String(p).replace(/[^\d]/g, '');
+  if (digits.startsWith('00') && digits.length > 10) digits = digits.slice(2);
   if (digits.startsWith('30') && digits.length > 10) digits = digits.slice(2);
   digits = digits.replace(/^0+/, '');
   return digits;
+}
+
+function normalizePatientName(s: string | null | undefined): string {
+  return (s || '').trim().toUpperCase();
 }
 
 function mapApptStatus(s: string | null | undefined): string {
@@ -172,7 +177,7 @@ Deno.serve(async (req: Request) => {
         } else {
           const { data: newPt, error: insPtErr } = await supabase
             .from('patients')
-            .insert({ clinic_id: clinic.id, full_name: parsed.name, phone: parsed.phone, status: 'active', source: 'booking247' })
+            .insert({ clinic_id: clinic.id, full_name: normalizePatientName(parsed.name), phone: parsed.phone, status: 'active', source: 'booking247' })
             .select('id').single();
           if (insPtErr) { err++; continue; }
           patientId = newPt?.id || null;

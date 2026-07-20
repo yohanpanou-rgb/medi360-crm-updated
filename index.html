@@ -2958,6 +2958,16 @@ function renderSettings() {
         </div>
       </div>`:''}
 
+      <!-- ΕΡΓΑΛΕΙΑ ΔΕΔΟΜΕΝΩΝ -->
+      <div class="card" style="grid-column:1/-1">
+        <div class="card-header"><span class="card-title">🔤 Ονόματα Πελατών σε ΚΕΦΑΛΑΙΑ</span></div>
+        <div style="padding:16px">
+          <div style="font-size:11px;color:var(--text-2);margin-bottom:12px;line-height:1.5">Μετατρέπει εφάπαξ όλα τα ονοματεπώνυμα των υπαρχόντων πελατών της κλινικής σε κεφαλαία γράμματα. Από εδώ και πέρα, κάθε νέα ή τροποποιημένη καταχώρηση (χειροκίνητη, import, Booking247 sync κλπ) αποθηκεύεται αυτόματα σε κεφαλαία, οπότε αυτό χρειάζεται να τρέξει μία φορά.</div>
+          <button class="btn btn-primary btn-sm" id="uppercase-patient-names">Μετατροπή σε ΚΕΦΑΛΑΙΑ</button>
+          <div id="uppercase-names-result" style="margin-top:10px;font-size:12px"></div>
+        </div>
+      </div>
+
       <!-- PANIC ZONE -->
       <div class="card" style="grid-column:1/-1;background:#FEF2F2">
         <div class="card-header"><span class="card-title" style="color:#7F1D1D">🛑 Panic Zone</span></div>
@@ -4064,6 +4074,24 @@ function bindEvents() {
     setTimeout(()=>{ _scs.textContent='Αποθήκευση'; }, 2000);
   });
 
+  // One-time bulk conversion: όλα τα ονόματα πελατών σε ΚΕΦΑΛΑΙΑ
+  const _upn = document.getElementById('uppercase-patient-names');
+  if (_upn) _upn.addEventListener('click', async () => {
+    const result = document.getElementById('uppercase-names-result');
+    _upn.disabled = true; _upn.textContent = 'Μετατροπή...';
+    const {data: pts, error: fetchErr} = await sb.from('patients').select('id,full_name').eq('clinic_id', clinicId());
+    if (fetchErr) { result.innerHTML = `<span style="color:var(--red)">✗ ${esc(fetchErr.message)}</span>`; _upn.disabled = false; _upn.textContent = 'Μετατροπή σε ΚΕΦΑΛΑΙΑ'; return; }
+    const toUpdate = (pts||[]).filter(p => p.full_name && p.full_name !== normalizePatientName(p.full_name));
+    let ok = 0, err = 0;
+    for (const p of toUpdate) {
+      const {error} = await sb.from('patients').update({full_name: normalizePatientName(p.full_name)}).eq('id', p.id);
+      if (error) err++; else ok++;
+    }
+    result.innerHTML = `<span style="color:var(--green)">✓ Ενημερώθηκαν ${ok} ονόματα</span>${err?` <span style="color:var(--red)">(${err} απέτυχαν)</span>`:''}${!toUpdate.length?'<span style="color:var(--text-2)">Όλα τα ονόματα είναι ήδη σε κεφαλαία</span>':''}`;
+    _upn.disabled = false; _upn.textContent = 'Μετατροπή σε ΚΕΦΑΛΑΙΑ';
+    setTimeout(() => { loadPageData(); }, 2500);
+  });
+
   // Save GDPR Sheet
   const _sgdpr = document.getElementById('save-gdpr-sheet');
   if (_sgdpr) _sgdpr.addEventListener('click', async () => {
@@ -4201,7 +4229,7 @@ function bindEvents() {
       if (!name&&!phone) { skip++; continue; }
       const payload = {
         clinic_id: clinicId(),
-        full_name: name.trim(),
+        full_name: normalizePatientName(name),
         phone: phone,
         email: row['Email']||row['email']||'',
         dob: parseGreekDate(row['Ημερομηνία Γέννησης']||row['Ημ.Γέννησης']||''),
@@ -4626,7 +4654,7 @@ function bindModalEvents() {
     const btn = document.getElementById('save-patient');
     btn.textContent='Αποθήκευση...'; btn.disabled=true;
     const {error} = await sb.from('patients').insert({
-      full_name:name, phone, email:document.getElementById('f-email').value,
+      full_name:normalizePatientName(name), phone, email:document.getElementById('f-email').value,
       gender:document.getElementById('f-gender').value,
       status:document.getElementById('f-status').value,
       source:document.getElementById('f-source').value,
@@ -4664,7 +4692,7 @@ function bindModalEvents() {
         const email = (prompt('Email (υποχρεωτικό):')||'').trim();
         if (!/^\S+@\S+\.\S+$/.test(email)) { alert('Το email είναι υποχρεωτικό και πρέπει να είναι έγκυρο'); return; }
         const {data:np, error} = await sb.from('patients')
-          .insert({clinic_id:clinicId(), full_name:name, phone, email, status:'active'})
+          .insert({clinic_id:clinicId(), full_name:normalizePatientName(name), phone, email, status:'active'})
           .select('id,full_name').single();
         if (error) { alert('Σφάλμα: '+error.message); return; }
         document.getElementById('a-patient-id').value = np.id;
@@ -4863,6 +4891,10 @@ function openSmsModal(link, formName) {
 }
 
 // ── BOOKING247 EMAIL SYNC ──
+function normalizePatientName(s) {
+  return (s||'').trim().toUpperCase();
+}
+
 function normalizePhone(p) {
   if (!p) return '';
   let digits = (p+'').replace(/[^\d]/g,'');
@@ -5326,7 +5358,7 @@ async function _doSkincareSync(token, preview, cid, resultEl) {
       }
       // 3) Νέος ασθενής (χωρίς phone — θα ενωθεί αργότερα)
       if (!pid) {
-        const {data:np} = await sb.from('patients').insert({clinic_id:cid,full_name:c.name,status:'active',source:'skincare_plan'}).select('id').single();
+        const {data:np} = await sb.from('patients').insert({clinic_id:cid,full_name:normalizePatientName(c.name),status:'active',source:'skincare_plan'}).select('id').single();
         if (np) pid = np.id;
       }
       if (!pid) continue;
@@ -5411,7 +5443,7 @@ async function syncBooking247(preview=false) {
         patientId = existing[0].id;
       } else {
         const {data:newPt} = await sb.from('patients').insert({
-          clinic_id:cid, full_name:p.name, phone:p.phone, status:'active', source:'booking247'
+          clinic_id:cid, full_name:normalizePatientName(p.name), phone:p.phone, status:'active', source:'booking247'
         }).select('id').single();
         if (newPt) patientId = newPt.id;
       }
@@ -6158,7 +6190,7 @@ function openEditPatientModal() {
     if (!name) { alert('Το ονοματεπώνυμο είναι υποχρεωτικό.'); return; }
     const statusEl = document.querySelector('input[name="ep-status"]:checked');
     const patch = {
-      full_name: name,
+      full_name: normalizePatientName(name),
       phone: phone,
       email: document.getElementById('ep-email').value.trim() || null,
       dob: document.getElementById('ep-dob').value || null,
@@ -6359,7 +6391,7 @@ async function openHistoryFormModal(opts) {
     const btn = document.getElementById('hf-save');
     btn.textContent = 'Αποθήκευση...'; btn.disabled = true;
     const patch = {
-      full_name: name, dob, phone, email: email, city,
+      full_name: normalizePatientName(name), dob, phone, email: email, city,
       source,
       medical_history: medicalHistory || null,
       allergies: document.getElementById('hf-allergies').value.trim() || null,
