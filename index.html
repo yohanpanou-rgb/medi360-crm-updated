@@ -3064,27 +3064,7 @@ function renderSettings() {
         </div>
         <div style="padding:16px">
           <div style="background:#E1F5EE;border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:12px;color:#0F6E56">
-            Σύνδεσε το Gmail σου για να διαβαστούν τα emails από <strong>appointments@booking247.gr</strong>. Το matching ασθενών γίνεται με το <strong>τηλέφωνο</strong> πελάτη, όχι το όνομα.
-          </div>
-          <div style="display:flex;gap:10px;flex-wrap:wrap">
-            <button class="btn btn-primary" id="connect-gmail-booking247">🔗 Σύνδεση Gmail</button>
-            <button class="btn btn-primary" id="sync-booking247-now">🔄 Sync τώρα</button>
-            <button class="btn btn-ghost" id="sync-booking247-preview">👁 Προεπισκόπηση</button>
-          </div>
-          <div id="booking247-sync-result" style="margin-top:12px;font-size:12px"></div>
-          <div id="booking247-preview-list" style="margin-top:12px"></div>
-          <div style="margin-top:18px;padding-top:16px;border-top:1px dashed var(--border-2)">
-            <div style="font-size:12px;font-weight:600;color:var(--navy);margin-bottom:8px">⚙️ Αυτόματο sync κάθε 1 λεπτό (μέσω Google Apps Script)</div>
-            <div style="font-size:11px;color:var(--text-2);margin-bottom:10px">Βάλε εδώ το Sheet ID που γράφει το Apps Script (βλ. google-apps-script/booking247-sync.gs). Ένα διακομιστής (Edge Function) διαβάζει αυτό το Sheet κάθε λεπτό και δημιουργεί τα ραντεβού αυτόματα, χωρίς να χρειάζεται ανοιχτό browser.</div>
-            <div class="form-group">
-              <label class="form-label">Google Sheet ID ή URL</label>
-              <input id="booking247-sheet-id" placeholder="https://docs.google.com/spreadsheets/d/..." value="${esc(integrations.booking247_sheet_id||'')}" style="font-family:var(--mono);font-size:12px"/>
-            </div>
-            <div style="display:flex;gap:8px">
-              <button class="btn btn-primary btn-sm" id="save-booking247-sheet">Αποθήκευση</button>
-              <button class="btn btn-ghost btn-sm" id="test-booking247-sheet">🔄 Test σύνδεση</button>
-            </div>
-            <div id="booking247-sheet-result" style="margin-top:10px;font-size:12px"></div>
+            ✓ Ενεργό — τα emails από <strong>appointments@booking247.gr</strong> διαβάζονται και τα ραντεβού δημιουργούνται αυτόματα κάθε 5 λεπτά (matching με <strong>τηλέφωνο</strong> πελάτη, όχι όνομα). Δεν χρειάζεται καμία ενέργεια — τρέχει στο παρασκήνιο.
           </div>
           <div style="margin-top:18px;padding-top:16px;border-top:1px dashed var(--border-2)">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
@@ -4043,14 +4023,6 @@ function bindEvents() {
     }
   });
 
-  // Booking247 sync
-  const _gmailConnect = document.getElementById('connect-gmail-booking247');
-  if (_gmailConnect) _gmailConnect.addEventListener('click', connectGmailBooking247);
-  const _sb247sync = document.getElementById('sync-booking247-now');
-  if (_sb247sync) _sb247sync.addEventListener('click', () => syncBooking247(false));
-  const _sb247prev = document.getElementById('sync-booking247-preview');
-  if (_sb247prev) _sb247prev.addEventListener('click', () => syncBooking247(true));
-
   // Settings tabs
   document.querySelectorAll('[data-settings-tab]').forEach(el => {
     el.onclick = () => { S.settingsTab=el.dataset.settingsTab; render(); };
@@ -4143,31 +4115,6 @@ function bindEvents() {
     result.innerHTML='<span style="color:var(--text-2)">Ελέγχω σύνδεση...</span>';
     try {
       const rows = await fetchGoogleSheet(id, tab);
-      result.innerHTML=`<span style="color:var(--green)">✓ Βρέθηκαν ${rows.length} εγγραφές</span>`;
-    } catch(e) { result.innerHTML=`<span style="color:var(--red)">✗ ${e.message}</span>`; }
-  });
-
-  // Save Booking247 auto-sync Sheet ID
-  const _sb247sheet = document.getElementById('save-booking247-sheet');
-  if (_sb247sheet) _sb247sheet.addEventListener('click', async () => {
-    const id = extractSheetId(document.getElementById('booking247-sheet-id').value);
-    const integrations = Object.assign({}, (S.clinic&&S.clinic.integrations)||{}, {booking247_sheet_id:id});
-    const {error} = await sb.from('clinics').update({integrations}).eq('id',clinicId());
-    if (error) { alert(error.message); return; }
-    if (S.clinic) S.clinic.integrations = integrations;
-    _sb247sheet.textContent='✓ Αποθηκεύτηκε!';
-    setTimeout(()=>{ _sb247sheet.textContent='Αποθήκευση'; loadPageData(); }, 1500);
-  });
-
-  // Test Booking247 auto-sync Sheet
-  const _tb247sheet = document.getElementById('test-booking247-sheet');
-  if (_tb247sheet) _tb247sheet.addEventListener('click', async () => {
-    const id = extractSheetId(document.getElementById('booking247-sheet-id').value);
-    const result = document.getElementById('booking247-sheet-result');
-    if (!id) { result.innerHTML='<span style="color:var(--red)">Βάλε πρώτα Sheet ID</span>'; return; }
-    result.innerHTML='<span style="color:var(--text-2)">Ελέγχω σύνδεση...</span>';
-    try {
-      const rows = await fetchGoogleSheet(id, 'Ραντεβού');
       result.innerHTML=`<span style="color:var(--green)">✓ Βρέθηκαν ${rows.length} εγγραφές</span>`;
     } catch(e) { result.innerHTML=`<span style="color:var(--red)">✗ ${e.message}</span>`; }
   });
@@ -5043,101 +4990,7 @@ async function mergePatients(primaryId, dupIds) {
   }
 }
 
-function parseBooking247Email(snippet) {
-  // Πραγματική μορφή email Booking247:
-  // Πελάτης: ΟΝΟΜΑ / Ημερομηνία: DD/MM/YYYY / Ώρα: HH:MM / Υπηρεσία: ... /
-  // Προσωπικό: ... / Τηλέφωνο πελάτη : +30 ... / Διάρκεια Ραντεβού : NNλ /
-  // Κατάσταση Ραντεβού : ... / Τιμή ραντεβού : NN.NN€
-  const clean = snippet.replace(/&amp;/g,'&').replace(/<[^>]+>/g,'');
-  const name = (clean.match(/Πελάτης:\s*([^\n]+?)(?:\s*\n|\s+Ημερομηνία|$)/i)||[])[1]||'';
-  const date = (clean.match(/Ημερομηνία:\s*(\d{2}\/\d{2}\/\d{4})/i)||[])[1]||'';
-  const time = (clean.match(/Ώρα:\s*(\d{1,2}:\d{2})/i)||[])[1]||'09:00';
-  const service = (clean.match(/Υπηρεσία:\s*([^\n]+?)(?:\s*\n|\s+Προσωπικό|$)/i)||[])[1]||'';
-  const staff = (clean.match(/Προσωπικό:\s*([^\n]+?)(?:\s*\n|\s+Τηλέφωνο|$)/i)||[])[1]||'';
-  const phoneRaw = (clean.match(/Τηλέφωνο πελάτη\s*:\s*([+\d\s]+)/i)||[])[1]||'';
-  const durMatch = clean.match(/Διάρκεια\s*Ραντεβού\s*:\s*(?:(\d+)\s*ω)?\s*(?:(\d+)\s*λ)?/i);
-  let duration = 60;
-  if (durMatch && (durMatch[1] || durMatch[2])) {
-    duration = (parseInt(durMatch[1])||0)*60 + (parseInt(durMatch[2])||0);
-  }
-  const status = (clean.match(/Κατάσταση\s*Ραντεβού\s*:\s*([^\n]+?)(?:\s*\n|$)/i)||[])[1]||'';
-  const price = (clean.match(/Τιμή\s*ραντεβού\s*:\s*([\d.,]+)/i)||[])[1]||'';
-  const phone = normalizePhone(phoneRaw);
-  if (!name||!date||!phone) return null; // χωρίς τηλέφωνο δεν κάνουμε matching — αγνοείται
-  const [d,m,y] = date.split('/');
-  const [h,min] = time.split(':');
-  const startTime = `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}T${(h||'09').padStart(2,'0')}:${(min||'00').padStart(2,'0')}:00+03:00`;
-  return { name: name.trim(), phone, date, time, service: service.trim(), staff: staff.trim(),
-    duration, status: status.trim(), price: parseFloat((price||'').replace(',','.'))||null, startTime };
-}
-
-// ── GMAIL OAUTH FETCH (client-side, real emails) ──
-function decodeBase64Url(data) {
-  data = (data||'').replace(/-/g,'+').replace(/_/g,'/');
-  try { return decodeURIComponent(escape(atob(data))); } catch(e) { try { return atob(data); } catch(e2){ return ''; } }
-}
-function extractPlainText(payload) {
-  if (!payload) return '';
-  if (payload.mimeType==='text/plain' && payload.body && payload.body.data) return decodeBase64Url(payload.body.data);
-  if (payload.parts) { for (const part of payload.parts) { const t = extractPlainText(part); if (t) return t; } }
-  if (payload.body && payload.body.data) return decodeBase64Url(payload.body.data);
-  return '';
-}
-
 let _gmailTokenClient = null;
-function connectGmailBooking247() {
-  const resultEl = document.getElementById('booking247-sync-result');
-  if (GOOGLE_CLIENT_ID.indexOf('PASTE_YOUR') === 0) {
-    if (resultEl) resultEl.innerHTML = '<span style="color:var(--red)">⚠ Δεν έχει οριστεί GOOGLE_CLIENT_ID στον κώδικα. Δες οδηγίες στο Supabase/Google Cloud setup.</span>';
-    return;
-  }
-  if (!window.google || !google.accounts || !google.accounts.oauth2) {
-    if (resultEl) resultEl.innerHTML = '<span style="color:var(--red)">Η Google βιβλιοθήκη δεν φορτώθηκε ακόμα. Δοκίμασε ξανά σε λίγο.</span>';
-    return;
-  }
-  if (resultEl) resultEl.innerHTML = '<span style="color:var(--text-2)">Άνοιγμα σύνδεσης Google...</span>';
-  if (!_gmailTokenClient) {
-    _gmailTokenClient = google.accounts.oauth2.initTokenClient({
-      client_id: GOOGLE_CLIENT_ID,
-      scope: 'https://www.googleapis.com/auth/gmail.readonly',
-      callback: async (resp) => {
-        if (resp.error) {
-          if (resultEl) resultEl.innerHTML = '<span style="color:var(--red)">Σφάλμα σύνδεσης Google: '+esc(resp.error)+'</span>';
-          return;
-        }
-        await fetchBooking247Emails(resp.access_token);
-      },
-    });
-  }
-  _gmailTokenClient.requestAccessToken();
-}
-
-async function fetchBooking247Emails(accessToken) {
-  const resultEl = document.getElementById('booking247-sync-result');
-  if (resultEl) resultEl.innerHTML = '<span style="color:var(--text-2)">Λήψη emails από appointments@booking247.gr...</span>';
-  try {
-    const q = encodeURIComponent('from:appointments@booking247.gr newer_than:90d');
-    const listRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${q}&maxResults=100`, {
-      headers: { Authorization: 'Bearer ' + accessToken }
-    });
-    const listData = await listRes.json();
-    if (listData.error) throw new Error(listData.error.message||'Gmail API error');
-    const ids = (listData.messages||[]).map(m=>m.id);
-    const emails = [];
-    for (const id of ids) {
-      const msgRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`, {
-        headers: { Authorization: 'Bearer ' + accessToken }
-      });
-      const msgData = await msgRes.json();
-      const text = extractPlainText(msgData.payload) || msgData.snippet || '';
-      emails.push({snippet: text});
-    }
-    S.booking247Emails = emails;
-    if (resultEl) resultEl.innerHTML = `<span style="color:var(--green)">✓ Βρέθηκαν ${emails.length} emails. Πάτα "Προεπισκόπηση" για έλεγχο πριν την εισαγωγή.</span>`;
-  } catch(e) {
-    if (resultEl) resultEl.innerHTML = '<span style="color:var(--red)">Σφάλμα: '+esc(e.message)+'</span>';
-  }
-}
 
 // ── CONSULTATION EDIT ──
 function openConsultEdit(id) {
@@ -5390,94 +5243,6 @@ async function _doSkincareSync(token, preview, cid, resultEl) {
     await loadData(); render();
   } catch(e) {
     if (resultEl) resultEl.innerHTML = '<span style="color:var(--red)">Σφάλμα: '+esc(e.message)+'</span>';
-  }
-}
-
-async function syncBooking247(preview=false) {
-  const resultEl = document.getElementById('booking247-sync-result');
-  const previewEl = document.getElementById('booking247-preview-list');
-  if (resultEl) resultEl.innerHTML='<span style="color:var(--text-2)">Φόρτωση emails...</span>';
-  if (previewEl) previewEl.innerHTML='';
-
-  // Fetch emails via Claude API (using the Anthropic API in artifact mode)
-  // We parse the snippets we already have in state, OR fetch fresh via a backend
-  // Since we're in browser, we use the gmail data we fetched earlier
-  // For now, show the data we have and let user trigger sync
-
-  try {
-    // Call our backend sync endpoint (we'll use a simple fetch to Supabase edge function)
-    // For now, parse from state or prompt user
-    const cid = clinicId();
-    if (!cid) { if(resultEl) resultEl.innerHTML='<span style="color:var(--red)">Επίλεξε κλινική πρώτα</span>'; return; }
-
-    // Use the emails data from state if available
-    const emails = S.booking247Emails||[];
-    if (!emails.length) {
-      if(resultEl) resultEl.innerHTML='<span style="color:var(--amber-dark)">⚠ Δεν υπάρχουν emails για sync. Χρησιμοποίησε το κουμπί "Sync από Claude" στη συνέχεια.</span>';
-      return;
-    }
-
-    let ok=0, skip=0, err=0;
-    const parsed = emails.map(e=>parseBooking247Email(e.snippet)).filter(Boolean);
-
-    if (preview) {
-      if(previewEl) previewEl.innerHTML=`
-        <div style="margin-top:10px">
-          <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;margin-bottom:8px">${parsed.length} ραντεβού βρέθηκαν:</div>
-          <div style="max-height:300px;overflow-y:auto;border:1px solid var(--border-2);border-radius:8px">
-            ${parsed.map(p=>`<div style="padding:10px 14px;border-bottom:1px solid var(--border-2);font-size:12px">
-              <div style="font-weight:500">${esc(p.name)} · <span style="font-family:var(--mono);color:var(--text-2)">${esc(p.phone)}</span></div>
-              <div style="color:var(--text-2)">${esc(p.service)} · ${esc(p.date)} ${esc(p.time)}${p.staff?' · '+esc(p.staff):''}</div>
-            </div>`).join('')}
-          </div>
-          <button class="btn btn-primary btn-sm" style="margin-top:10px" id="confirm-sync-btn">✓ Εισαγωγή όλων στο CRM</button>
-        </div>`;
-      // Bind confirm
-      setTimeout(()=>{
-        const cb = document.getElementById('confirm-sync-btn');
-        if (cb) cb.addEventListener('click', ()=>syncBooking247(false));
-      }, 100);
-      return;
-    }
-
-    // Insert into Supabase — matching γίνεται με ΤΗΛΕΦΩΝΟ (κοινό αναγνωριστικό), όχι όνομα
-    for (const p of parsed) {
-      let patientId = null;
-      const {data:existing} = await sb.from('patients').select('id')
-        .eq('clinic_id',cid)
-        .ilike('phone', '%'+p.phone+'%')
-        .limit(1);
-      if (existing&&existing.length) {
-        patientId = existing[0].id;
-      } else {
-        const {data:newPt} = await sb.from('patients').insert({
-          clinic_id:cid, full_name:normalizePatientName(p.name), phone:p.phone, status:'active', source:'booking247'
-        }).select('id').single();
-        if (newPt) patientId = newPt.id;
-      }
-      if (!patientId) { err++; continue; }
-      // Insert appointment (avoid duplicates by patient+start_time)
-      const {data:existAppt} = await sb.from('appointments').select('id')
-        .eq('clinic_id',cid)
-        .eq('start_time',p.startTime)
-        .eq('patient_id',patientId)
-        .limit(1);
-      if (existAppt&&existAppt.length) { skip++; continue; }
-      const {error} = await sb.from('appointments').insert({
-        clinic_id:cid, patient_id:patientId,
-        service_name:p.service,
-        start_time:p.startTime,
-        duration_minutes:p.duration||60,
-        price:p.price,
-        status:mapApptStatus(p.status),
-        notes:p.staff?'Προσωπικό: '+p.staff:'',
-      });
-      if (error) err++; else ok++;
-    }
-    if(resultEl) resultEl.innerHTML=`<span style="color:var(--green)">✓ Εισήχθησαν: ${ok}</span> · <span style="color:var(--text-2)">Ήδη υπάρχουν: ${skip}</span>${err?` · <span style="color:var(--red)">Σφάλματα: ${err}</span>`:''}`;
-    await loadPageData();
-  } catch(e) {
-    if(resultEl) resultEl.innerHTML=`<span style="color:var(--red)">✗ ${e.message}</span>`;
   }
 }
 
@@ -6796,8 +6561,6 @@ async function processVoiceCommand(text) {
 }
 
 // ── BOOT ──
-// Τα emails γεμίζουν πλέον δυναμικά μέσω πραγματικής σύνδεσης Gmail (βλ. connectGmailBooking247)
-S.booking247Emails = [];
 document.getElementById('app').innerHTML = '<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;font-size:13px;color:#888">Φόρτωση...</div>';
 init();
 </script>
