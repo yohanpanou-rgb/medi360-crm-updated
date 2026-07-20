@@ -386,6 +386,14 @@ function classifyConsentGroup(serviceName) {
   return null;
 }
 
+// Η ομάδα συναίνεσης είναι σχετική με τον ασθενή μόνο αν έχει κλεισμένο (μη ακυρωμένο)
+// ή ολοκληρωμένο ραντεβού σε αυτή την κατηγορία υπηρεσίας — αλλιώς δεν έχει νόημα
+// να δείχνουμε προειδοποίηση για συναίνεση υπηρεσίας που ποτέ δεν έκανε/έκλεισε.
+function patientNeedsServiceConsent(patient, groupKey) {
+  return ((patient&&patient.appointments)||[]).some(a =>
+    a.status !== 'cancelled' && classifyConsentGroup(a.service_name) === groupKey);
+}
+
 // ── SERVICE MATCHING (Consultation προτάσεις ↔ πραγματικά ραντεβού) ──
 function normalizeGreek(s) {
   return (s||'').toLowerCase()
@@ -945,12 +953,35 @@ function renderDashboard() {
     if (/συστασ/.test(s)) return 'Σύσταση';
     return 'Σύσταση'; // ελεύθερο κείμενο (φίλους, οικογένεια, γειτονιά, παλιά πελάτισσα κ.λπ.) → word-of-mouth
   };
-  const sourceCount = {'Σύσταση':0,'Google':0,'Ταμπέλα':0,'Social':0};
-  let sourceCountedTotal = 0;
-  pts.forEach(p=>{ const c = canonicalizeSource(p.source); if (c) { sourceCount[c]++; sourceCountedTotal++; } });
+  const sourceCountsInRange = (from, to) => {
+    const counts = {'Σύσταση':0,'Google':0,'Ταμπέλα':0,'Social':0};
+    let noSource = 0;
+    pts.forEach(p => {
+      const created = new Date(p.created_at);
+      if (from && created < from) return;
+      if (to && created >= to) return;
+      const c = canonicalizeSource(p.source);
+      if (c) counts[c]++; else noSource++;
+    });
+    return {counts, noSource};
+  };
+  const dashSourcePeriod = S.dashSourcePeriod || 'all';
+  let curFrom = null, curTo = null, prevFrom = null, prevTo = null;
+  if (dashSourcePeriod === 'week') {
+    curFrom = thisWeekStart;
+    prevFrom = new Date(thisWeekStart); prevFrom.setDate(prevFrom.getDate()-7);
+    prevTo = thisWeekStart;
+  } else if (dashSourcePeriod === 'month') {
+    curFrom = new Date(now.getFullYear(), now.getMonth(), 1);
+    prevTo = curFrom;
+    prevFrom = new Date(now.getFullYear(), now.getMonth()-1, 1);
+  }
+  const curSourceData = sourceCountsInRange(curFrom, curTo);
+  const prevSourceData = dashSourcePeriod!=='all' ? sourceCountsInRange(prevFrom, prevTo) : null;
+  const sourceCount = curSourceData.counts;
   const topSources = Object.entries(sourceCount).sort((a,b)=>b[1]-a[1]);
   const maxSource = Math.max(1, ...topSources.map(([,c])=>c));
-  const noSourceCount = pts.filter(p=>!canonicalizeSource(p.source)).length;
+  const noSourceCount = curSourceData.noSource;
   const noLaserConsentPatients = new Set(
     apts.filter(a => new Date(a.start_time)>now && a.status!=='cancelled'
       && /alexandrite|laser/i.test(a.service_name||'')
@@ -1138,18 +1169,36 @@ function renderDashboard() {
         </div>
       </div>
       <div class="card">
-        <div class="card-header"><span class="card-title">📍 Από πού μας βρήκαν</span></div>
+        <div class="card-header">
+          <span class="card-title">📍 Από πού μας βρήκαν</span>
+          <select onchange="S.dashSourcePeriod=this.value;render()" style="font-size:11px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--white);cursor:pointer;font-family:var(--font)">
+            <option value="all" ${dashSourcePeriod==='all'?'selected':''}>Συνολικά</option>
+            <option value="week" ${dashSourcePeriod==='week'?'selected':''}>Αυτή την εβδομάδα vs προηγούμενη</option>
+            <option value="month" ${dashSourcePeriod==='month'?'selected':''}>Αυτόν τον μήνα vs προηγούμενο</option>
+          </select>
+        </div>
         <div style="padding:14px 16px">
-          ${topSources.length?topSources.map(([src,cnt])=>`
+          ${Object.values(sourceCount).some(c=>c>0)?topSources.map(([src,cnt])=>{
+            let deltaHtml = '';
+            if (prevSourceData) {
+              const prevCnt = prevSourceData.counts[src]||0;
+              const diff = cnt - prevCnt;
+              const pct = prevCnt>0 ? Math.round((diff/prevCnt)*100) : (cnt>0?100:0);
+              const color = diff>0?'#0F6E56':diff<0?'var(--red)':'var(--text-3)';
+              const arrow = diff>0?'▲':diff<0?'▼':'▬';
+              deltaHtml = `<span style="font-size:10px;font-weight:600;color:${color};margin-left:6px;white-space:nowrap">${diff>0?'+':''}${diff} (${arrow}${Math.abs(pct)}%)</span>`;
+            }
+            return `
             <div style="margin-bottom:10px">
               <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
                 <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px">${esc(src)}</span>
-                <span style="font-weight:500;color:var(--blue);flex-shrink:0;margin-left:8px">${cnt}</span>
+                <span style="flex-shrink:0;margin-left:8px"><span style="font-weight:500;color:var(--blue)">${cnt}</span>${deltaHtml}</span>
               </div>
               <div style="height:5px;background:var(--surface);border-radius:99px;overflow:hidden">
                 <div style="height:100%;width:${Math.round(cnt/maxSource*100)}%;background:var(--blue);border-radius:99px;transition:.3s"></div>
               </div>
-            </div>`).join(''):`<div style="text-align:center;color:var(--text-2);padding:20px;font-size:12px">Δεν υπάρχουν δεδομένα πηγής ακόμα</div>`}
+            </div>`;
+          }).join(''):`<div style="text-align:center;color:var(--text-2);padding:20px;font-size:12px">Δεν υπάρχουν δεδομένα πηγής ${dashSourcePeriod==='all'?'ακόμα':'σε αυτή την περίοδο'}</div>`}
           ${noSourceCount?`<div style="font-size:10px;color:var(--text-3);margin-top:6px;padding-top:8px;border-top:1px solid var(--border-2)">${noSourceCount} πελάτες χωρίς καταγεγραμμένη πηγή</div>`:''}
         </div>
       </div>
@@ -1182,7 +1231,7 @@ function renderPatients() {
       if (sortKey==='phone') return p.phone||'';
       if (sortKey==='status') return p.status||'';
       if (sortKey==='gdpr_signed') return p.gdpr_signed?1:0;
-      if (sortKey==='medical_history') return (p.medical_history&&p.medical_history.trim())?1:0;
+      if (sortKey==='medical_history') return p.medical_history_completed?1:0;
       if (sortKey==='consult') return ((S.consultDates||{})[p.id]) ? new Date((S.consultDates||{})[p.id]).getTime() : 0;
       if (sortKey==='ltv') return p.ltv||0;
       return '';
@@ -1242,7 +1291,7 @@ function renderPatients() {
           <td class="hide-mobile" style="font-family:var(--mono);font-size:12px;color:var(--text-2)">${esc(p.phone||'—')}</td>
           <td>${patBadge(p.status)}</td>
           <td class="hide-mobile">${p.gdpr_signed?'✅':'❌'}</td>
-          <td class="hide-mobile">${p.medical_history&&p.medical_history.trim()?'<span style="color:#0F6E56;font-weight:600" title="Έχει ιατρικό ιστορικό">✓</span>':'<span style="color:var(--text-3)">—</span>'}</td>
+          <td class="hide-mobile">${p.medical_history_completed?'<span style="color:#0F6E56;font-weight:600" title="Έχει συμπληρώσει ιατρικό ιστορικό">✓</span>':'<span style="color:var(--text-3)">—</span>'}</td>
           <td class="hide-mobile">${consultDate?`<span style="color:#185FA5;font-weight:500;font-size:12px">${new Date(consultDate).toLocaleDateString('el-GR',{day:'2-digit',month:'2-digit',year:'numeric'})}</span>`:'<span style="color:var(--text-3)">—</span>'}</td>
           <td class="hide-mobile" style="font-weight:500;color:#0F6E56">${euro(p.ltv)}</td>
           <td><button class="btn btn-ghost btn-xs" data-patient="${p.id}">Άνοιγμα</button></td>
@@ -1385,13 +1434,13 @@ function renderPatientDetail() {
             ${p.source?`<span style="font-size:11px;color:var(--text-2);background:var(--surface-2);padding:2px 9px;border-radius:9px">📍 ${esc(p.source)}</span>`:''}
             ${S.serviceConsentCleansing
               ? `<span style="font-size:11px;color:#0F6E56;cursor:pointer" onclick="viewGroupConsent('cleansing')">✓ Καθαρισμοί/Pore Over</span>`
-              : `<span style="font-size:11px;color:var(--red);cursor:pointer" onclick="openGroupConsentModal('cleansing')">⚠ Χωρίς Συν. Καθαρισμού</span>`}
+              : patientNeedsServiceConsent(p,'cleansing') ? `<span style="font-size:11px;color:var(--red);cursor:pointer" onclick="openGroupConsentModal('cleansing')">⚠ Χωρίς Συν. Καθαρισμού</span>` : ''}
             ${S.serviceConsentPeelings
               ? `<span style="font-size:11px;color:#0F6E56;cursor:pointer" onclick="viewGroupConsent('peelings')">✓ Peelings/PRX-Microneedling</span>`
-              : `<span style="font-size:11px;color:var(--red);cursor:pointer" onclick="openGroupConsentModal('peelings')">⚠ Χωρίς Συν. Peelings</span>`}
+              : patientNeedsServiceConsent(p,'peelings') ? `<span style="font-size:11px;color:var(--red);cursor:pointer" onclick="openGroupConsentModal('peelings')">⚠ Χωρίς Συν. Peelings</span>` : ''}
             ${S.serviceConsentOxygen
               ? `<span style="font-size:11px;color:#0F6E56;cursor:pointer" onclick="viewGroupConsent('oxygen')">✓ Οξυγόνο/Face Treatments</span>`
-              : `<span style="font-size:11px;color:var(--red);cursor:pointer" onclick="openGroupConsentModal('oxygen')">⚠ Χωρίς Συν. Οξυγόνου</span>`}
+              : patientNeedsServiceConsent(p,'oxygen') ? `<span style="font-size:11px;color:var(--red);cursor:pointer" onclick="openGroupConsentModal('oxygen')">⚠ Χωρίς Συν. Οξυγόνου</span>` : ''}
             <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-2);cursor:pointer;user-select:none;margin-left:4px">
               <input type="checkbox" id="pat-student-toggle" ${p.is_student?'checked':''} style="width:14px;height:14px;accent-color:var(--blue);cursor:pointer"/> Φοιτητής
             </label>
@@ -1410,7 +1459,7 @@ function renderPatientDetail() {
         {id:'overview',l:'Στοιχεία'},
         {id:'timeline',l:'Timeline'},
         {id:'appointments',l:`Ραντεβού (${(p.appointments&&p.appointments.length)||0})`},
-        {id:'medical',l:`Ιατρικό Ιστορικό${p.medical_history||p.allergies?' ✓':''}`},
+        {id:'medical',l:`Ιατρικό Ιστορικό${p.medical_history_completed?' ✓':''}`},
         {id:'laser',l:`Laser Forms (${laserForms.length})`},
         {id:'photos',l:`Φωτογραφίες (${(S.patientPhotos||[]).length})`},
         {id:'patconsents',l:'Συναινέσεις'},
@@ -1431,7 +1480,7 @@ function renderPatientDetail() {
         // GDPR
         if (p.gdpr_signed) events.push({date:p.gdpr_signed_at||p.created_at,type:'gdpr',icon:'✓',color:'#0F6E56',bg:'#E1F5EE',title:'GDPR Υπογεγραμμένο',desc:'Συναίνεση δεδομένων'});
         // Medical history
-        if (p.medical_history) events.push({date:p.medical_history_date||p.created_at,type:'medical',icon:'🏥',color:'#185FA5',bg:'#E6F1FB',title:'Ιατρικό Ιστορικό',desc:p.medical_history.slice(0,80)+(p.medical_history.length>80?'...':'')});
+        if (p.medical_history_completed) events.push({date:p.medical_history_completed_at||p.created_at,type:'medical',icon:'🏥',color:'#185FA5',bg:'#E6F1FB',title:'Ιατρικό Ιστορικό',desc:p.medical_history?(p.medical_history.slice(0,80)+(p.medical_history.length>80?'...':'')):'Ελεύθερο ιστορικό — τίποτα προς δήλωση'});
         // Appointments
         (p.appointments||[]).forEach(a=>{
           const st=STATUS_APPT[a.status]||STATUS_APPT.pending;
@@ -1482,7 +1531,7 @@ function renderPatientDetail() {
             ['Πόλη', p.city],
             ['Πηγή', p.source],
             ['GDPR', p.gdpr_signed?'✅ Υπογεγραμμένο':'❌ Όχι'],
-            ['Ιατρικό Ιστορικό', [p.medical_history,p.allergies,p.medications,p.previous_treatments].some(v=>v&&v.trim())?'✅ Συμπληρωμένο':'❌ Όχι'],
+            ['Ιατρικό Ιστορικό', p.medical_history_completed?([p.medical_history,p.allergies,p.medications,p.previous_treatments].some(v=>v&&v.trim())?'✅ Συμπληρωμένο':'✅ Συμπληρωμένο — Ελεύθερο ιστορικό'):'❌ Όχι'],
             ...(canSeeFinancials?[['LTV', euro(p.ltv)]]:[] ),
             ['Εγγραφή', fmt(p.created_at)],
           ].map(([k,v])=>`
@@ -3706,6 +3755,8 @@ function bindEvents() {
         gdpr_signed: true,
         city: getCol(match, ['Κατοικίας','Περιοχή'])||p.city,
         dob: parseGreekDate(getCol(match, ['Γέννησης']))||p.dob,
+        medical_history_completed: true,
+        medical_history_completed_at: p.medical_history_completed ? undefined : new Date().toISOString(),
       };
       await sb.from('patients').update(updates).eq('id',p.id);
       Object.assign(S.patientDetail, updates);
@@ -4316,6 +4367,8 @@ function bindEvents() {
           gdpr_signed: gdprRaw ? gdprSigned : undefined,
           gdpr_signed_at: gdprSigned && signedAt ? signedAt : undefined,
           marketing_opt_in: marketingRaw ? /ναι/i.test(marketingRaw) : undefined,
+          medical_history_completed: true,
+          medical_history_completed_at: signedAt||undefined,
         };
         Object.keys(payload).forEach(k => payload[k]===undefined && delete payload[k]);
 
@@ -5468,6 +5521,8 @@ async function confirmHistoryImport() {
       gdpr_signed: row.gdpr_signed || undefined,
       gdpr_signed_at: row.gdpr_signed && row.gdpr_signed_at ? row.gdpr_signed_at : undefined,
       marketing_opt_in: row.marketing_opt_in,
+      medical_history_completed: true,
+      medical_history_completed_at: row.gdpr_signed_at || undefined,
     };
     Object.keys(patch).forEach(k => patch[k] === undefined && delete patch[k]);
     const { error } = await sb.from('patients').update(patch).eq('id', row.patientId);
@@ -6174,6 +6229,8 @@ async function openHistoryFormModal(opts) {
       gdpr_signed: true,
       gdpr_signed_at: p.gdpr_signed ? undefined : new Date().toISOString(),
       marketing_opt_in: marketingEl.value === 'yes',
+      medical_history_completed: true,
+      medical_history_completed_at: p.medical_history_completed ? undefined : new Date().toISOString(),
     };
 
     if (selectedPatientId) {
