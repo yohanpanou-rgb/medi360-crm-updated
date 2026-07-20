@@ -44,7 +44,14 @@ function normalizePhone(p: string | null | undefined): string {
 }
 
 function normalizePatientName(s: string | null | undefined): string {
-  return (s || '').trim().toUpperCase();
+  // Στα κεφαλαία ελληνικά τα φωνήεντα γράφονται χωρίς τόνο — αφαιρούμε μόνο το
+  // combining acute accent (U+0301) μετά από NFD decomposition, όχι τα διαλυτικά (U+0308).
+  return (s || '')
+    .trim()
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/́/g, '')
+    .normalize('NFC');
 }
 
 function mapApptStatus(s: string | null | undefined): string {

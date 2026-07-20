@@ -4892,7 +4892,15 @@ function openSmsModal(link, formName) {
 
 // ── BOOKING247 EMAIL SYNC ──
 function normalizePatientName(s) {
-  return (s||'').trim().toUpperCase();
+  // Στα κεφαλαία ελληνικά τα φωνήεντα γράφονται ΧΩΡΙΣ τόνο (ΓΕΩΡΓΙΑ, όχι ΓΕΩΡΓΊΑ).
+  // Αποσυνθέτουμε (NFD) το γράμμα από τον τόνο και αφαιρούμε μόνο
+  // το combining mark του τόνου (U+0301) — όχι τα διαλυτικά (U+0308, π.χ. Ϊ).
+  return (s||'')
+    .trim()
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/\u0301/g, '')
+    .normalize('NFC');
 }
 
 function normalizePhone(p) {
