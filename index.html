@@ -253,6 +253,8 @@ tr{cursor:pointer}
 .empty-state{text-align:center;padding:48px 20px;color:var(--text-2)}
 .empty-icon{font-size:32px;margin-bottom:10px;opacity:.35}
 
+.mobile-pt-indicators{display:none}
+
 /* PIPELINE */
 .pipeline-col{background:var(--surface);border-radius:10px;padding:12px;min-width:220px;flex:1}
 .pipeline-card{background:var(--white);border-radius:8px;border:1px solid var(--border-2);padding:12px;margin-bottom:8px;box-shadow:var(--shadow-sm);cursor:pointer}
@@ -269,6 +271,7 @@ tr{cursor:pointer}
   .stats-grid{grid-template-columns:1fr 1fr;gap:10px}
   .stat-value{font-size:22px}
   .hide-mobile{display:none}
+  .mobile-pt-indicators{display:flex;gap:6px;flex-wrap:wrap;margin-top:3px}
   .form-row{grid-template-columns:1fr}
   .dash-grid{grid-template-columns:1fr!important}
   th,td{padding:9px 10px}
@@ -796,7 +799,6 @@ function renderShell(content) {
     {page:'patients',icon:'◎',label:'Ασθενείς',roles:['super_admin','clinic_admin','therapist','receptionist']},
     {page:'appointments',icon:'◷',label:'Ραντεβού',roles:['super_admin','clinic_admin','therapist','receptionist']},
     {page:'calendar',icon:'⊟',label:'Πρόγραμμα',roles:['super_admin','clinic_admin','therapist','receptionist']},
-    {page:'pipeline',icon:'⟫',label:'Pipeline',roles:['super_admin','clinic_admin']},
     {page:'sms',icon:'✉',label:'SMS & Auto.',roles:['super_admin','clinic_admin']},
     {page:'laser',icon:'⚡',label:'Laser Forms',roles:['super_admin','clinic_admin','therapist']},
     {page:'consultations',icon:'📋',label:'Consultation',roles:['super_admin','clinic_admin','therapist']},
@@ -1193,11 +1195,16 @@ function renderPatients() {
     });
   }
   const sortArrow = (key) => sortKey===key ? (sortDir==='asc'?' ▲':' ▼') : '';
+  const dupGroups = detectDuplicatePatientGroups();
   return `<div class="page">
     <div class="page-header">
       <div><h1 class="page-title">Ασθενείς</h1><p class="page-sub">${S.patients.length} συνολικά · ${S.patients.filter(p=>p.status==='active').length} ενεργοί</p></div>
       <button class="btn btn-primary" data-modal="new-patient">+ Νέος Ασθενής</button>
     </div>
+    ${dupGroups.length?`<div style="background:#FFF4E5;border:1px solid #F5C77E;border-radius:10px;padding:12px 16px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+      <div style="font-size:12px;color:#8A5A00"><strong>⚠ ${dupGroups.length} πιθανά διπλότυπα</strong> — ίδιο τηλέφωνο σε περισσότερους από έναν ασθενείς.</div>
+      <button class="btn btn-sm" id="open-merge-duplicates" style="background:#D97706;color:#fff">Έλεγχος &amp; Συγχώνευση</button>
+    </div>`:''}
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">
       ${[{l:'Σύνολο',v:S.patients.length,bg:'var(--surface)'},{l:'Ενεργοί',v:S.patients.filter(p=>p.status==='active').length,bg:'#E1F5EE'},{l:'VIP',v:S.patients.filter(p=>p.status==='vip').length,bg:'#EEEDFE'},{l:'Leads',v:S.patients.filter(p=>p.status==='lead').length,bg:'#E6F1FB'}].map(s=>`
       <div style="background:${s.bg};border-radius:8px;padding:10px 14px"><div style="font-size:11px;color:var(--text-2);margin-bottom:2px">${s.l}</div><div style="font-size:20px;font-weight:500">${s.v}</div></div>`).join('')}
@@ -1225,7 +1232,12 @@ function renderPatients() {
           return `<tr data-patient="${p.id}">
           <td><div style="display:flex;align-items:center;gap:9px">
             <div style="width:28px;height:28px;border-radius:50%;background:#E6F1FB;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;color:#185FA5;flex-shrink:0">${initials(p.full_name)}</div>
-            <div><div style="font-weight:500;font-size:13px">${esc(p.full_name)}</div>${p.email?`<div style="font-size:11px;color:var(--text-2)">${esc(p.email)}</div>`:''}</div>
+            <div><div style="font-weight:500;font-size:13px">${esc(p.full_name)}</div>${p.email?`<div style="font-size:11px;color:var(--text-2)">${esc(p.email)}</div>`:''}
+              <div class="mobile-pt-indicators">
+                <span style="font-size:10px;padding:1px 6px;border-radius:6px;background:${p.gdpr_signed?'#E1F5EE':'#FCEBEB'};color:${p.gdpr_signed?'#0F6E56':'#A32D2D'}">${p.gdpr_signed?'✅ GDPR':'❌ GDPR'}</span>
+                <span style="font-size:10px;padding:1px 6px;border-radius:6px;background:var(--surface);color:#0F6E56;font-weight:500">LTV ${euro(p.ltv)}</span>
+              </div>
+            </div>
           </div></td>
           <td class="hide-mobile" style="font-family:var(--mono);font-size:12px;color:var(--text-2)">${esc(p.phone||'—')}</td>
           <td>${patBadge(p.status)}</td>
@@ -1844,14 +1856,15 @@ function renderClinics() {
     </div>
     <div class="card">
       <div class="table-wrap"><table>
-        <thead><tr><th>Κλινική</th><th>Email</th><th>Τηλέφωνο</th><th>Πόλη</th><th>Κατάσταση</th></tr></thead>
-        <tbody>${S.clinics.length?S.clinics.map(c=>`<tr>
+        <thead><tr><th>Κλινική</th><th>Email</th><th>Τηλέφωνο</th><th>Πόλη</th><th>Κατάσταση</th><th></th></tr></thead>
+        <tbody>${S.clinics.length?S.clinics.map(c=>`<tr data-modal="new-clinic" data-clinic-id="${c.id}" style="cursor:pointer">
           <td><div style="font-weight:500">${esc(c.name)}</div></td>
           <td style="color:var(--text-2)">${esc(c.email||'—')}</td>
           <td style="font-family:var(--mono);font-size:12px;color:var(--text-2)">${esc(c.phone||'—')}</td>
           <td style="color:var(--text-2)">${esc(c.city||'—')}</td>
           <td>${c.active?badge('Ενεργή','#E1F5EE','#0F6E56'):badge('Ανενεργή','#FCEBEB','#A32D2D')}</td>
-        </tr>`).join(''):`<tr><td colspan="5"><div class="empty-state"><div class="empty-icon">⊞</div><div>Δεν υπάρχουν κλινικές</div></div></td></tr>`}
+          <td><button class="btn btn-ghost btn-xs" data-modal="new-clinic" data-clinic-id="${c.id}">Επεξεργασία</button></td>
+        </tr>`).join(''):`<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">⊞</div><div>Δεν υπάρχουν κλινικές</div></div></td></tr>`}
         </tbody>
       </table></div>
     </div>
@@ -3063,6 +3076,22 @@ function renderSettings() {
             </div>
             <div id="booking247-sheet-result" style="margin-top:10px;font-size:12px"></div>
           </div>
+          <div style="margin-top:18px;padding-top:16px;border-top:1px dashed var(--border-2)">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+              <div style="font-size:12px;font-weight:600;color:var(--navy)">🔌 Απευθείας σύνδεση με το Booking247 API</div>
+              ${integrations.booking247_key?'<span class="badge badge-green">✓ Κλειδί αποθηκευμένο</span>':'<span class="badge badge-gray">Μη ρυθμισμένο</span>'}
+            </div>
+            <div style="font-size:11px;color:var(--text-2);margin-bottom:10px">Για όταν αποκτήσεις πραγματικό API key από το Booking247 (αντί για το παραπάνω email/Sheet relay). Αποθήκευσε το κλειδί εδώ τώρα — μόλις μας δώσεις τα στοιχεία σύνδεσης του API (endpoint/έγγραφα του Booking247), θα ενεργοποιήσουμε το πραγματικό sync χωρίς να χρειαστεί άλλη αλλαγή σε αυτή τη σελίδα.</div>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">API Key</label><input id="booking247-key" placeholder="π.χ. bk247_live_..." value="${esc(integrations.booking247_key||'')}" style="font-family:var(--mono);font-size:12px"/></div>
+              <div class="form-group"><label class="form-label">Company / Account ID</label><input id="booking247-company" placeholder="Κωδικός εταιρείας στο Booking247" value="${esc(integrations.booking247_company||'')}"/></div>
+            </div>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-primary btn-sm" id="save-booking247">Αποθήκευση</button>
+              <button class="btn btn-ghost btn-sm" id="test-booking247-api">🔄 Δοκιμή σύνδεσης</button>
+            </div>
+            <div id="booking247-api-result" style="margin-top:10px;font-size:12px"></div>
+          </div>
         </div>
       </div>
     </div>`:''}
@@ -3340,22 +3369,25 @@ function modalNewUser() {
 }
 
 function modalNewClinic() {
+  const editId = S.modalData && S.modalData.clinicId;
+  const c = editId ? (S.clinics||[]).find(x=>x.id===editId) : null;
   return `<div class="modal">
-    <div class="modal-header"><span class="modal-title">Νέα Κλινική</span><button class="modal-close" onclick="closeModal()">×</button></div>
+    <div class="modal-header"><span class="modal-title">${c?'Επεξεργασία Κλινικής':'Νέα Κλινική'}</span><button class="modal-close" onclick="closeModal()">×</button></div>
     <div class="modal-body">
-      <div class="form-group"><label class="form-label">Όνομα Κλινικής *</label><input class="form-control" id="c-name" placeholder="Όνομα"/></div>
+      <div class="form-group"><label class="form-label">Όνομα Κλινικής *</label><input class="form-control" id="c-name" placeholder="Όνομα" value="${esc((c&&c.name)||'')}"/></div>
       <div class="form-row">
-        <div class="form-group"><label class="form-label">Email</label><input class="form-control" id="c-email" type="email" placeholder="info@clinic.gr"/></div>
-        <div class="form-group"><label class="form-label">Τηλέφωνο</label><input class="form-control" id="c-phone" placeholder="210XXXXXXX"/></div>
+        <div class="form-group"><label class="form-label">Email</label><input class="form-control" id="c-email" type="email" placeholder="info@clinic.gr" value="${esc((c&&c.email)||'')}"/></div>
+        <div class="form-group"><label class="form-label">Τηλέφωνο</label><input class="form-control" id="c-phone" placeholder="210XXXXXXX" value="${esc((c&&c.phone)||'')}"/></div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label class="form-label">Πόλη</label><input class="form-control" id="c-city" placeholder="Αθήνα"/></div>
-        <div class="form-group"><label class="form-label">Διεύθυνση</label><input class="form-control" id="c-address" placeholder="Διεύθυνση"/></div>
+        <div class="form-group"><label class="form-label">Πόλη</label><input class="form-control" id="c-city" placeholder="Αθήνα" value="${esc((c&&c.city)||'')}"/></div>
+        <div class="form-group"><label class="form-label">Διεύθυνση</label><input class="form-control" id="c-address" placeholder="Διεύθυνση" value="${esc((c&&c.address)||'')}"/></div>
       </div>
+      ${c?`<label style="display:flex;align-items:center;gap:8px;margin-top:4px;cursor:pointer"><input type="checkbox" id="c-active" ${c.active?'checked':''}/> <span style="font-size:13px">Ενεργή κλινική</span></label>`:''}
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Ακύρωση</button>
-      <button class="btn btn-primary" id="save-clinic">Αποθήκευση</button>
+      <button class="btn btn-primary" id="save-clinic" data-clinic-id="${editId||''}">Αποθήκευση</button>
     </div>
   </div>`;
 }
@@ -3492,20 +3524,26 @@ function bindEvents() {
     el.onclick = () => { S.filter=el.dataset.filter; render(); };
   });
 
+  const _openMergeDup = document.getElementById('open-merge-duplicates');
+  if (_openMergeDup) _openMergeDup.onclick = () => openMergeDuplicatesModal();
+
   // Search
   // (local search removed — using global search topbar)
 
   // Appointment status change
   document.querySelectorAll('[data-appt-status]').forEach(el => {
+    const prevValue = el.value;
     el.onchange = async () => {
-      await sb.from('appointments').update({status:el.value}).eq('id',el.dataset.apptStatus);
+      const newValue = el.value;
+      const {error} = await sb.from('appointments').update({status:newValue}).eq('id',el.dataset.apptStatus);
+      if (error) { alert('✗ Η αλλαγή κατάστασης απέτυχε: '+error.message); el.value = prevValue; return; }
       loadPageData();
     };
   });
 
   // Modals trigger
   document.querySelectorAll('[data-modal]').forEach(el => {
-    el.onclick = () => { S.modal=el.dataset.modal; render(); };
+    el.onclick = (e) => { if(e) e.stopPropagation(); S.modal=el.dataset.modal; S.modalData = el.dataset.clinicId ? {clinicId: el.dataset.clinicId} : {}; render(); };
   });
 
   // Save laser form detail
@@ -3856,7 +3894,9 @@ function bindEvents() {
         loadPatientDetail(a.patient_id);
       });
       const _cs=content.querySelector('[data-appt-status]');if(_cs)_cs.addEventListener('change', async (ev) => {
-        await sb.from('appointments').update({status:ev.target.value}).eq('id',a.id);
+        const prevValue = a.status;
+        const {error} = await sb.from('appointments').update({status:ev.target.value}).eq('id',a.id);
+        if (error) { alert('✗ Η αλλαγή κατάστασης απέτυχε: '+error.message); ev.target.value = prevValue; return; }
         await loadPageData();
       });
     };
@@ -4114,7 +4154,22 @@ function bindEvents() {
     if (error) { alert(error.message); return; }
     if (S.clinic) S.clinic.integrations = integrations;
     _sb247.textContent='✓ Αποθηκεύτηκε!';
-    setTimeout(()=>{ _sb247.textContent='Αποθήκευση'; }, 2000);
+    setTimeout(()=>{ _sb247.textContent='Αποθήκευση'; loadPageData(); }, 1200);
+  });
+
+  // Test Booking247 direct API connection (scaffold — δεν υπάρχει ακόμα πραγματικό
+  // Booking247 API endpoint να καλέσουμε, οπότε απλώς επιβεβαιώνουμε ότι το κλειδί
+  // είναι αποθηκευμένο και δίνουμε σαφή ένδειξη ότι το πραγματικό sync θα ενεργοποιηθεί
+  // μόλις έρθουν τα στοιχεία του API).
+  const _tb247api = document.getElementById('test-booking247-api');
+  if (_tb247api) _tb247api.addEventListener('click', async () => {
+    const result = document.getElementById('booking247-api-result');
+    const key = document.getElementById('booking247-key').value.trim();
+    if (!key) { result.innerHTML = '<span style="color:var(--red)">Βάλε πρώτα το API Key</span>'; return; }
+    result.innerHTML = '<span style="color:var(--text-2)">Έλεγχος...</span>';
+    const {data, error} = await sb.functions.invoke('booking247-api-sync', {body:{clinic_id: clinicId(), mode:'test'}});
+    if (error) { result.innerHTML = `<span style="color:var(--red)">✗ ${esc(error.message||'Το API δεν είναι ακόμα συνδεδεμένο')}</span>`; return; }
+    result.innerHTML = `<span style="color:${data&&data.ready?'var(--green)':'#D97706'}">${esc((data&&data.message)||'Το κλειδί αποθηκεύτηκε — περιμένει τα στοιχεία του πραγματικού Booking247 API')}</span>`;
   });
 
   // CSV Patients upload
@@ -4707,14 +4762,23 @@ function bindModalEvents() {
     const name = document.getElementById('c-name').value.trim();
     if (!name) return alert('Συμπλήρωσε όνομα κλινικής');
     const btn = document.getElementById('save-clinic');
+    const editId = btn.dataset.clinicId;
     btn.textContent='Αποθήκευση...'; btn.disabled=true;
-    const {error} = await sb.from('clinics').insert({
+    const payload = {
       name, email:document.getElementById('c-email').value,
       phone:document.getElementById('c-phone').value,
       city:document.getElementById('c-city').value,
       address:document.getElementById('c-address').value,
-      active:true
-    });
+    };
+    let error;
+    if (editId) {
+      const activeEl = document.getElementById('c-active');
+      if (activeEl) payload.active = activeEl.checked;
+      ({error} = await sb.from('clinics').update(payload).eq('id', editId));
+    } else {
+      payload.active = true;
+      ({error} = await sb.from('clinics').insert(payload));
+    }
     if (error) { alert(error.message); btn.textContent='Αποθήκευση'; btn.disabled=false; return; }
     closeModal(); await loadPageData();
   });
@@ -4802,6 +4866,9 @@ function openSmsModal(link, formName) {
 function normalizePhone(p) {
   if (!p) return '';
   let digits = (p+'').replace(/[^\d]/g,'');
+  // "00" international access code (π.χ. 0039...) ισοδυναμεί με "+" — αφαίρεσέ το
+  // πριν ελέγξουμε για ελληνικό κωδικό χώρας, αλλιώς π.χ. "0030..." δεν αναγνωριζόταν.
+  if (digits.startsWith('00') && digits.length > 10) digits = digits.slice(2);
   if (digits.startsWith('30') && digits.length > 10) digits = digits.slice(2);
   digits = digits.replace(/^0+/,'');
   return digits;
@@ -4812,6 +4879,128 @@ async function findDuplicatePatientByPhone(phone) {
   if (!norm || norm.length < 9) return null;
   const {data} = await sb.from('patients').select('id,full_name').eq('clinic_id',clinicId()).ilike('phone','%'+norm+'%').limit(1);
   return (data&&data[0])||null;
+}
+
+// ── ΣΥΓΧΩΝΕΥΣΗ ΔΙΠΛΟΤΥΠΩΝ ΑΣΘΕΝΩΝ ──
+const MERGE_REASSIGN_TABLES = ['appointments','laser_forms','laser_consents','service_consents','gdpr_consents','patient_photos','sms_log'];
+const MERGE_FILL_FIELDS = ['email','dob','city','source','medical_history','allergies','medications','previous_treatments','avoid_body_areas','gdpr_signed_at'];
+
+function detectDuplicatePatientGroups() {
+  const groups = {};
+  (S.patients||[]).forEach(p => {
+    const norm = normalizePhone(p.phone);
+    if (!norm || norm.length < 9) return;
+    (groups[norm] = groups[norm] || []).push(p);
+  });
+  return Object.values(groups).filter(list => list.length > 1);
+}
+
+function pickMergePrimary(list) {
+  const score = (p) => {
+    let s = 0;
+    ['email','dob','city','source','medical_history','allergies','medications','previous_treatments','avoid_body_areas'].forEach(f => { if (p[f]) s++; });
+    if (p.gdpr_signed) s += 2;
+    if (p.ltv) s += 1;
+    return s;
+  };
+  return [...list].sort((a,b) => score(b)-score(a) || new Date(a.created_at)-new Date(b.created_at))[0];
+}
+
+function openMergeDuplicatesModal() {
+  const groups = detectDuplicatePatientGroups();
+  const old = document.getElementById('merge-dup-overlay'); if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'merge-dup-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(20,24,34,.55);z-index:9400;overflow-y:auto;padding:24px 16px';
+  const groupHtml = (list, idx) => {
+    const primary = pickMergePrimary(list);
+    return `<div class="card merge-dup-group" data-group="${idx}" style="padding:16px;margin-bottom:14px">
+      <div style="font-size:11px;color:var(--text-2);margin-bottom:10px">Τηλέφωνο (κανονικοποιημένο): <strong>${esc(normalizePhone(list[0].phone))}</strong></div>
+      ${list.map(p => `<label style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid var(--border-2);cursor:pointer">
+        <input type="radio" name="merge-primary-${idx}" value="${p.id}" ${p.id===primary.id?'checked':''} style="margin-top:4px"/>
+        <div style="flex:1">
+          <div style="font-weight:500;font-size:13px">${esc(p.full_name||'—')} ${p.id===primary.id?'<span style="font-size:10px;color:var(--green);font-weight:700">ΠΡΟΤΕΙΝΟΜΕΝΟ ΚΥΡΙΟ</span>':''}</div>
+          <div style="font-size:11px;color:var(--text-2);font-family:var(--mono)">${esc(p.phone||'—')}${p.email?' · '+esc(p.email):''}</div>
+          <div style="font-size:11px;color:var(--text-2)">${p.city?esc(p.city)+' · ':''}${p.gdpr_signed?'✅ GDPR':'❌ GDPR'} · LTV ${euro(p.ltv)} · από ${fmt(p.created_at)}</div>
+        </div>
+      </label>`).join('')}
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px">
+        <div id="merge-result-${idx}" style="font-size:12px"></div>
+        <button class="btn btn-primary btn-sm" data-do-merge="${idx}">🔗 Συγχώνευση</button>
+      </div>
+    </div>`;
+  };
+  ov.innerHTML = `
+    <div style="max-width:760px;margin:0 auto;background:var(--white);border-radius:16px;padding:28px;box-shadow:var(--shadow-lg)">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px">
+        <div>
+          <div style="font-size:18px;font-weight:700;color:var(--navy)">Πιθανά Διπλότυπα Ασθενών</div>
+          <div style="font-size:12px;color:var(--text-2);margin-top:2px">Ίδιο τηλέφωνο (κανονικοποιημένο) σε περισσότερους από έναν ασθενείς. Επίλεξε ποιος θα παραμείνει ως κύριος — τα ραντεβού, laser forms, συναινέσεις και φωτογραφίες των υπολοίπων θα μεταφερθούν σε αυτόν, και τα κενά πεδία του θα συμπληρωθούν από τους άλλους.</div>
+        </div>
+        <button onclick="document.getElementById('merge-dup-overlay').remove()" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--text-2)">×</button>
+      </div>
+      ${groups.length?groups.map(groupHtml).join(''):'<div class="empty-state"><div class="empty-icon">✓</div><div>Δεν εντοπίστηκαν διπλότυπα αυτή τη στιγμή</div></div>'}
+    </div>`;
+  document.body.appendChild(ov);
+  ov.onclick = e => { if (e.target===ov) ov.remove(); };
+  ov.querySelectorAll('[data-do-merge]').forEach(btn => {
+    btn.onclick = async () => {
+      const idx = btn.dataset.doMerge;
+      const list = groups[idx];
+      const checked = ov.querySelector(`input[name="merge-primary-${idx}"]:checked`);
+      const primaryId = checked ? checked.value : pickMergePrimary(list).id;
+      const dupIds = list.map(p=>p.id).filter(id=>id!==primaryId);
+      const resultEl = document.getElementById('merge-result-'+idx);
+      btn.disabled = true; btn.textContent = 'Συγχώνευση...';
+      const err = await mergePatients(primaryId, dupIds);
+      if (err) {
+        resultEl.innerHTML = `<span style="color:var(--red)">✗ ${esc(err)}</span>`;
+        btn.disabled = false; btn.textContent = '🔗 Συγχώνευση';
+        return;
+      }
+      resultEl.innerHTML = '<span style="color:var(--green)">✓ Συγχωνεύτηκαν</span>';
+      btn.remove();
+      await loadPageData();
+      setTimeout(() => { if (document.getElementById('merge-dup-overlay')) openMergeDuplicatesModal(); render(); }, 900);
+    };
+  });
+}
+
+async function mergePatients(primaryId, dupIds) {
+  try {
+    for (const table of MERGE_REASSIGN_TABLES) {
+      for (const dupId of dupIds) {
+        await sb.from(table).update({patient_id: primaryId}).eq('patient_id', dupId);
+      }
+    }
+    const {data: rows, error: fetchErr} = await sb.from('patients').select('*').in('id', [primaryId, ...dupIds]);
+    if (fetchErr) return fetchErr.message;
+    const primary = (rows||[]).find(r=>r.id===primaryId);
+    const dups = (rows||[]).filter(r=>dupIds.includes(r.id));
+    if (!primary) return 'Δεν βρέθηκε ο κύριος ασθενής';
+    const patch = {};
+    MERGE_FILL_FIELDS.forEach(f => {
+      if (!primary[f]) {
+        const donor = dups.find(d=>d[f]);
+        if (donor) patch[f] = donor[f];
+      }
+    });
+    if (!primary.gdpr_signed && dups.some(d=>d.gdpr_signed)) patch.gdpr_signed = true;
+    if (!primary.marketing_opt_in && dups.some(d=>d.marketing_opt_in)) patch.marketing_opt_in = true;
+    const sumLtv = (primary.ltv||0) + dups.reduce((s,d)=>s+(d.ltv||0),0);
+    if (sumLtv !== (primary.ltv||0)) patch.ltv = sumLtv;
+    if (Object.keys(patch).length) {
+      const {error: updErr} = await sb.from('patients').update(patch).eq('id', primaryId);
+      if (updErr) return updErr.message;
+    }
+    for (const dupId of dupIds) {
+      const {error: delErr} = await sb.from('patients').delete().eq('id', dupId);
+      if (delErr) return delErr.message;
+    }
+    return null;
+  } catch (e) {
+    return e.message || String(e);
+  }
 }
 
 function parseBooking247Email(snippet) {
@@ -6508,7 +6697,6 @@ async function processVoiceCommand(text) {
   if (t.includes('ασθεν') || t.includes('πελάτ')) { S.page='patients'; S.voiceResult='✓ Άνοιξα τους Ασθενείς'; await loadPageData(); render(); return; }
   if (t.includes('ραντεβού') || t.includes('προγραμμα')) { S.page='appointments'; S.voiceResult='✓ Άνοιξα τα Ραντεβού'; await loadPageData(); render(); return; }
   if (t.includes('calendar') || t.includes('πρόγραμμα') || t.includes('ημερολόγιο')) { S.page='calendar'; S.voiceResult='✓ Άνοιξα το Πρόγραμμα'; await loadPageData(); render(); return; }
-  if (t.includes('pipeline') || t.includes('leads')) { S.page='pipeline'; S.voiceResult='✓ Άνοιξα το Pipeline'; await loadPageData(); render(); return; }
   if (t.includes('ρυθμίσεις') || t.includes('settings')) { S.page='settings'; S.voiceResult='✓ Άνοιξα τις Ρυθμίσεις'; render(); return; }
 
   // New appointment
