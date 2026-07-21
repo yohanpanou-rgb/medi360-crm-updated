@@ -1314,8 +1314,12 @@ function renderPatientPhotosTab() {
         ${selCount===2?`<button class="btn btn-primary btn-sm" onclick="openPhotoComparison()">🔍 Σύγκριση Before / After</button>`:''}
         ${selCount>0?`<button class="btn btn-ghost btn-sm" onclick="clearPhotoSelection()">Καθαρισμός επιλογής</button>`:''}
         <label class="btn btn-primary btn-sm" style="cursor:pointer;margin:0">
-          📷 Προσθήκη Φωτογραφίας
+          📷 Λήψη Φωτογραφίας
           <input type="file" id="photo-upload-input" accept="image/*" capture="environment" multiple style="display:none"/>
+        </label>
+        <label class="btn btn-ghost btn-sm" style="cursor:pointer;margin:0">
+          🖼 Από Βιβλιοθήκη
+          <input type="file" id="photo-library-input" accept="image/*" multiple style="display:none"/>
         </label>
       </div>
     </div>
@@ -3602,9 +3606,7 @@ function bindEvents() {
       render();
     });
   });
-  const _pui = document.getElementById('photo-upload-input');
-  if (_pui) _pui.addEventListener('change', async (e) => {
-    const files = Array.from(e.target.files||[]);
+  const handlePatientPhotoFiles = async (files) => {
     if (!files.length) return;
     const statusEl = document.getElementById('photo-upload-status');
     if (statusEl) statusEl.style.display = 'block';
@@ -3622,7 +3624,11 @@ function bindEvents() {
     }
     await loadPatientDetail(pid);
     render();
-  });
+  };
+  const _pui = document.getElementById('photo-upload-input');
+  if (_pui) _pui.addEventListener('change', (e) => handlePatientPhotoFiles(Array.from(e.target.files||[])));
+  const _pli = document.getElementById('photo-library-input');
+  if (_pli) _pli.addEventListener('change', (e) => handlePatientPhotoFiles(Array.from(e.target.files||[])));
 
   // Sortable επικεφαλίδες πίνακα Ασθενών
   document.querySelectorAll('th[data-sort]').forEach(th => {
