@@ -6028,13 +6028,25 @@ function _cfSplitLines(text) {
   return (text||'').split('\n').map(s=>s.trim()).filter(Boolean);
 }
 
-function openConsultationFormModal(opts) {
+async function _cfLoadServiceOptions() {
+  const cid = clinicId();
+  const {data} = await sb.from('appointments').select('service_name').eq('clinic_id',cid).not('service_name','is',null).limit(2000);
+  return [...new Set((data||[]).map(r=>(r.service_name||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'el'));
+}
+
+async function openConsultationFormModal(opts) {
   opts = opts || {};
   const standalone = !!opts.standalone;
   const p = opts.patient || (standalone ? {} : S.patientDetail);
   if (!standalone && !p) return;
   let selectedPatientId = (opts.patient && opts.patient.id) || (!standalone && p.id) || null;
   const old = document.getElementById('cf-overlay'); if (old) old.remove();
+  const serviceOptions = await _cfLoadServiceOptions();
+  const servicePickerHtml = (targetId) => `
+    <select class="form-control cf-service-picker" data-target="${targetId}" style="margin-bottom:6px">
+      <option value="">➕ Προσθήκη θεραπείας προσώπου από λίστα...</option>
+      ${serviceOptions.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('')}
+    </select>`;
 
   const ov = document.createElement('div');
   ov.id = 'cf-overlay';
@@ -6066,11 +6078,11 @@ function openConsultationFormModal(opts) {
       <div class="form-group"><label class="form-label">Τύπος Δέρματος / Κύρια Ανάγκη</label><input class="form-control" id="cf-skin-type" placeholder="π.χ. Anti-aging, Ξηρότητα/Αφυδάτωση"/></div>
       <div class="form-group"><label class="form-label">Παρατηρήσεις Θεραπευτή</label><textarea class="form-control" id="cf-notes" rows="2"></textarea></div>
 
-      <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin:16px 0 10px">🏥 In-Clinic (μία θεραπεία ανά γραμμή)</div>
-      <div class="form-group"><label class="form-label">1) Καθαρισμός &amp; Προετοιμασία</label><textarea class="form-control" id="cf-step1" rows="2"></textarea></div>
-      <div class="form-group"><label class="form-label">2) Θρέψη &amp; Αναζωογόνηση</label><textarea class="form-control" id="cf-step2" rows="2"></textarea></div>
-      <div class="form-group"><label class="form-label">Massage &amp; Θεραπείες Σώματος (προαιρετικό, μπαίνει στο βήμα 2)</label><textarea class="form-control" id="cf-body-extra" rows="2"></textarea></div>
-      <div class="form-group"><label class="form-label">3) Ενίσχυση &amp; Διατήρηση</label><textarea class="form-control" id="cf-step3" rows="2"></textarea></div>
+      <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin:16px 0 10px">🏥 In-Clinic (επίλεξε από τη λίστα ή γράψε ελεύθερα, μία θεραπεία ανά γραμμή)</div>
+      <div class="form-group"><label class="form-label">1) Καθαρισμός &amp; Προετοιμασία</label>${servicePickerHtml('cf-step1')}<textarea class="form-control" id="cf-step1" rows="2"></textarea></div>
+      <div class="form-group"><label class="form-label">2) Θρέψη &amp; Αναζωογόνηση</label>${servicePickerHtml('cf-step2')}<textarea class="form-control" id="cf-step2" rows="2"></textarea></div>
+      <div class="form-group"><label class="form-label">Massage &amp; Θεραπείες Σώματος (προαιρετικό, μπαίνει στο βήμα 2)</label>${servicePickerHtml('cf-body-extra')}<textarea class="form-control" id="cf-body-extra" rows="2"></textarea></div>
+      <div class="form-group"><label class="form-label">3) Ενίσχυση &amp; Διατήρηση</label>${servicePickerHtml('cf-step3')}<textarea class="form-control" id="cf-step3" rows="2"></textarea></div>
 
       <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin:16px 0 10px">🏠 Homecare (μία γραμμή ανά προϊόν)</div>
       <div class="form-group"><label class="form-label">Καθημερινός Καθαρισμός</label><textarea class="form-control" id="cf-prod-cleaning" rows="2"></textarea></div>
@@ -6087,6 +6099,17 @@ function openConsultationFormModal(opts) {
       </div>
     </div>`;
   document.body.appendChild(ov);
+
+  ov.querySelectorAll('.cf-service-picker').forEach(sel => {
+    sel.onchange = () => {
+      if (!sel.value) return;
+      const ta = document.getElementById(sel.dataset.target);
+      const lines = _cfSplitLines(ta.value);
+      if (!lines.includes(sel.value)) lines.push(sel.value);
+      ta.value = lines.join('\n');
+      sel.value = '';
+    };
+  });
 
   if (standalone) {
     const ps = document.getElementById('cf-patient-search');
