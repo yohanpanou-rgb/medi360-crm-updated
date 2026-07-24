@@ -2627,7 +2627,7 @@ function renderConsultations() {
           <option value="gdpr" ${filterType==='gdpr'?'selected':''}>GDPR</option>
           <option value="laser" ${filterType==='laser'?'selected':''}>Laser</option>
         </select>
-        <a href="${consultFormLink}" target="_blank" class="btn btn-primary btn-sm">+ Νέα Φόρμα</a>
+        <button class="btn btn-primary btn-sm" onclick="openConsultationFormModal({standalone:true})">+ Νέα Consultation</button>
         <button class="btn btn-ghost btn-sm" onclick="S.page='consultations';loadData().then(render)">🔄 Ανανέωση</button>
         <button class="btn btn-ghost btn-sm" onclick="openPasteImport()" title="Εισαγωγή από email">📋 Import από Email</button>
       </div>
@@ -6006,6 +6006,202 @@ async function sendLaserConsentEmail() {
   } catch(e) {
     alert('Σφάλμα αποστολής: ' + (e.message||e) + '\n\nΈλεγξε ότι η Edge Function send-consent-email είναι ενεργή.');
   }
+}
+
+// ── CONSULTATION FORM (in-CRM, αντικαθιστά το εξωτερικό Google Form) ──
+// Ίδια λογική με το getExpectedResults() του παλιού Apps Script — keyword
+// matching πάνω στο κείμενο του δέρματος/σημειώσεων/θεραπειών, μέχρι 4 αποτελέσματα.
+function getConsultationExpectedResults(skinType, notes, step1, step2, step3, bodyExtra) {
+  const txt = [skinType, notes, step1, step2, step3, bodyExtra].filter(Boolean).join(' ').toLowerCase();
+  let results = [];
+  if (txt.includes('βαθύ') || txt.includes('καθαρισ')) results.push('πιο καθαρή και ομοιόμορφη όψη','μείωση θαμπάδας','καλύτερη υφή δέρματος');
+  if (txt.includes('υδροδερμ') || txt.includes('hydro')) results.push('ήπια απολέπιση χωρίς ερεθισμό','καθαρότεροι πόροι','άμεση λάμψη');
+  if (txt.includes('dermapen') || txt.includes('microneed')) results.push('λείανση υφής','ενεργοποίηση κολλαγόνου','πιο σφριγηλό δέρμα');
+  if (txt.includes('μεσοθερ') || txt.includes('meso')) results.push('εντατική ενυδάτωση','ζωντάνια και λάμψη');
+  if (txt.includes('ακμ')) results.push('μείωση φλεγμονών','καθαρότερη και πιο ήρεμη επιδερμίδα');
+  if (txt.includes('ευαισθ') || txt.includes('barrier') || txt.includes('φραγμ')) results.push('πιο ήρεμο και ισορροπημένο δέρμα','λιγότερους ερεθισμούς στην καθημερινότητα');
+  if (!results.length) results = ['καλύτερη υφή','περισσότερη λάμψη','ενισχυμένη ενυδάτωση'];
+  return results.slice(0,4);
+}
+
+function _cfSplitLines(text) {
+  return (text||'').split('\n').map(s=>s.trim()).filter(Boolean);
+}
+
+function openConsultationFormModal(opts) {
+  opts = opts || {};
+  const standalone = !!opts.standalone;
+  const p = opts.patient || (standalone ? {} : S.patientDetail);
+  if (!standalone && !p) return;
+  let selectedPatientId = (opts.patient && opts.patient.id) || (!standalone && p.id) || null;
+  const old = document.getElementById('cf-overlay'); if (old) old.remove();
+
+  const ov = document.createElement('div');
+  ov.id = 'cf-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:var(--bg);z-index:9500;overflow-y:auto;padding:24px 16px';
+  ov.innerHTML = `
+    <div style="max-width:720px;margin:0 auto;background:var(--white);border-radius:16px;padding:28px;box-shadow:var(--shadow-lg)">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px">
+        <div>
+          <div style="font-size:18px;font-weight:700;color:var(--navy)">Φόρμα Consultation</div>
+          <div style="font-size:12px;color:var(--text-2);margin-top:2px">Αποθηκεύεται στην καρτέλα του ασθενή και στέλνεται αυτόματα το προσωποποιημένο skincare plan email</div>
+        </div>
+        <button onclick="document.getElementById('cf-overlay').remove()" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--text-2)">×</button>
+      </div>
+
+      ${standalone ? `
+      <div style="margin-bottom:18px;padding-bottom:18px;border-bottom:1px dashed var(--border-2);position:relative">
+        <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px">Ασθενής</div>
+        <input class="form-control" id="cf-patient-search" placeholder="Αναζήτηση ασθενή (όνομα/τηλέφωνο)..." value="${esc(p.full_name||'')}" autocomplete="off"/>
+        <div id="cf-patient-results" style="display:none;position:absolute;left:0;right:0;background:var(--white);border:1px solid var(--border-2);border-radius:8px;box-shadow:var(--shadow-lg);z-index:20;max-height:220px;overflow-y:auto;margin-top:4px"></div>
+        <div id="cf-patient-mode" style="margin-top:8px;font-size:12px;color:${selectedPatientId?'var(--green)':'var(--red)'}">${selectedPatientId?'✓ Επιλέχθηκε ασθενής':'⚠ Επίλεξε πρώτα έναν υπάρχοντα ασθενή'}</div>
+      </div>` : `<input type="hidden" id="cf-patient-search" value="${esc(p.full_name||'')}"/>`}
+
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Θεραπεύτρια/Θεραπευτής</label><input class="form-control" id="cf-therapist-name" value="${esc((S.profile&&S.profile.full_name)||'')}"/></div>
+        <div class="form-group"><label class="form-label">Email Θεραπευτή (bcc, προαιρετικό)</label><input class="form-control" id="cf-therapist-email" type="email" value="${esc((S.profile&&S.profile.email)||'')}"/></div>
+      </div>
+
+      <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin:16px 0 10px">📌 Skin Profile</div>
+      <div class="form-group"><label class="form-label">Τύπος Δέρματος / Κύρια Ανάγκη</label><input class="form-control" id="cf-skin-type" placeholder="π.χ. Anti-aging, Ξηρότητα/Αφυδάτωση"/></div>
+      <div class="form-group"><label class="form-label">Παρατηρήσεις Θεραπευτή</label><textarea class="form-control" id="cf-notes" rows="2"></textarea></div>
+
+      <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin:16px 0 10px">🏥 In-Clinic (μία θεραπεία ανά γραμμή)</div>
+      <div class="form-group"><label class="form-label">1) Καθαρισμός &amp; Προετοιμασία</label><textarea class="form-control" id="cf-step1" rows="2"></textarea></div>
+      <div class="form-group"><label class="form-label">2) Θρέψη &amp; Αναζωογόνηση</label><textarea class="form-control" id="cf-step2" rows="2"></textarea></div>
+      <div class="form-group"><label class="form-label">Massage &amp; Θεραπείες Σώματος (προαιρετικό, μπαίνει στο βήμα 2)</label><textarea class="form-control" id="cf-body-extra" rows="2"></textarea></div>
+      <div class="form-group"><label class="form-label">3) Ενίσχυση &amp; Διατήρηση</label><textarea class="form-control" id="cf-step3" rows="2"></textarea></div>
+
+      <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin:16px 0 10px">🏠 Homecare (μία γραμμή ανά προϊόν)</div>
+      <div class="form-group"><label class="form-label">Καθημερινός Καθαρισμός</label><textarea class="form-control" id="cf-prod-cleaning" rows="2"></textarea></div>
+      <div class="form-group"><label class="form-label">Ενεργή Περιποίηση</label><textarea class="form-control" id="cf-prod-care" rows="2"></textarea></div>
+      <div class="form-group"><label class="form-label">Προστασία</label><textarea class="form-control" id="cf-prod-protection" rows="2"></textarea></div>
+      <div class="form-group"><label class="form-label">Περιποίηση Σώματος</label><textarea class="form-control" id="cf-prod-body" rows="2"></textarea></div>
+
+      <div class="form-group"><label class="form-label">Σημειώσεις</label><textarea class="form-control" id="cf-additional-notes" rows="2"></textarea></div>
+
+      <div id="cf-error" style="color:var(--red);font-size:12px;margin-bottom:8px"></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px">
+        <button class="btn btn-ghost" onclick="document.getElementById('cf-overlay').remove()">Ακύρωση</button>
+        <button class="btn btn-primary" id="cf-save">Αποθήκευση &amp; Αποστολή Email</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+
+  if (standalone) {
+    const ps = document.getElementById('cf-patient-search');
+    let timer = null;
+    const showResults = async () => {
+      const q = ps.value.trim().replace(/[,()]/g,' ');
+      const res = document.getElementById('cf-patient-results');
+      if (!q.length) { res.style.display='none'; return; }
+      const {data} = await sb.from('patients').select('id,full_name,phone,email').eq('clinic_id',clinicId())
+        .or(`full_name.ilike.%${q}%,phone.ilike.%${q}%`).order('full_name').limit(8);
+      res.innerHTML = (data||[]).map(pt=>`<div class="cf-pt-opt" style="padding:9px 12px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--border-2)" data-pid="${pt.id}">${esc(pt.full_name)} · ${esc(pt.phone||'')}</div>`).join('')
+        || `<div style="padding:9px 12px;font-size:12px;color:var(--text-3)">Κανένα αποτέλεσμα</div>`;
+      res.style.display = 'block';
+      res.querySelectorAll('.cf-pt-opt').forEach(el => {
+        el.onclick = async () => {
+          const {data:pt} = await sb.from('patients').select('*').eq('id',el.dataset.pid).single();
+          if (pt) openConsultationFormModal({standalone:true, patient:pt});
+        };
+      });
+    };
+    ps.onfocus = showResults;
+    ps.oninput = () => { clearTimeout(timer); timer = setTimeout(showResults, 200); };
+  }
+
+  document.getElementById('cf-save').addEventListener('click', async () => {
+    const errEl = document.getElementById('cf-error');
+    errEl.textContent = '';
+    if (!selectedPatientId) { errEl.textContent = 'Επίλεξε πρώτα έναν υπάρχοντα ασθενή.'; return; }
+
+    const skinType = document.getElementById('cf-skin-type').value.trim();
+    const notes = document.getElementById('cf-notes').value.trim();
+    const step1 = document.getElementById('cf-step1').value.trim();
+    const step2 = document.getElementById('cf-step2').value.trim();
+    const bodyExtra = document.getElementById('cf-body-extra').value.trim();
+    const step3 = document.getElementById('cf-step3').value.trim();
+    const prodCleaning = document.getElementById('cf-prod-cleaning').value.trim();
+    const prodCare = document.getElementById('cf-prod-care').value.trim();
+    const prodProtection = document.getElementById('cf-prod-protection').value.trim();
+    const prodBody = document.getElementById('cf-prod-body').value.trim();
+    const additionalNotes = document.getElementById('cf-additional-notes').value.trim();
+    const therapistName = document.getElementById('cf-therapist-name').value.trim();
+    const therapistEmail = document.getElementById('cf-therapist-email').value.trim();
+
+    const skinLine = [skinType, notes].filter(Boolean).join(' — ');
+    const expectedResults = getConsultationExpectedResults(skinType, notes, step1, step2, step3, bodyExtra);
+
+    const step2Items = _cfSplitLines(step2).concat(_cfSplitLines(bodyExtra));
+    const inClinicStepsForEmail = [
+      {label:'Καθαρισμός & Προετοιμασία', items:_cfSplitLines(step1)},
+      {label:'Θρέψη & Αναζωογόνηση', items:step2Items},
+      {label:'Ενίσχυση & Διατήρηση', items:_cfSplitLines(step3)},
+    ].filter(s => s.items.length);
+    const homecareStepsForEmail = [
+      {label:'Καθημερινός καθαρισμός', items:_cfSplitLines(prodCleaning)},
+      {label:'Ενεργή περιποίηση', items:_cfSplitLines(prodCare)},
+      {label:'Προστασία', items:_cfSplitLines(prodProtection)},
+      {label:'Περιποίηση σώματος', items:_cfSplitLines(prodBody)},
+    ].filter(s => s.items.length);
+
+    const inClinicBlob = [
+      step1 ? '1) Καθαρισμός & Προετοιμασία: '+step1.replace(/\n/g,', ') : '',
+      step2Items.length ? '2) Θρέψη & Αναζωογόνηση: '+step2Items.join(', ') : '',
+      step3 ? '3) Ενίσχυση & Διατήρηση: '+step3.replace(/\n/g,', ') : '',
+    ].filter(Boolean).join('\n');
+    const homecareBlob = [
+      prodCleaning ? 'Καθημερινός καθαρισμός: '+prodCleaning.replace(/\n/g,', ') : '',
+      prodCare ? 'Ενεργή περιποίηση: '+prodCare.replace(/\n/g,', ') : '',
+      prodProtection ? 'Προστασία: '+prodProtection.replace(/\n/g,', ') : '',
+      prodBody ? 'Περιποίηση σώματος: '+prodBody.replace(/\n/g,', ') : '',
+    ].filter(Boolean).join('\n');
+
+    const consent_text = 'Skincare Plan | Θεραπεύτρια: '+therapistName
+      + (skinLine ? '\nSKIN PROFILE\nΤύπος δέρματος / κύρια ανάγκη:\n'+skinLine : '')
+      + (expectedResults.length ? '\nEXPECTED RESULTS\nΤι να περιμένετε:\n'+expectedResults.join(', ') : '')
+      + (inClinicBlob ? '\nIN-CLINIC\n'+inClinicBlob : '')
+      + (homecareBlob ? '\nHOMECARE\n'+homecareBlob : '');
+
+    const btn = document.getElementById('cf-save');
+    btn.textContent = 'Αποθήκευση...'; btn.disabled = true;
+
+    const {data: patient, error: ptErr} = await sb.from('patients').select('*').eq('id', selectedPatientId).single();
+    if (ptErr || !patient) { errEl.textContent = 'Σφάλμα: '+(ptErr&&ptErr.message||'δεν βρέθηκε ασθενής'); btn.textContent='Αποθήκευση & Αποστολή Email'; btn.disabled=false; return; }
+
+    const {error: insErr} = await sb.from('gdpr_consents').insert({
+      clinic_id: clinicId(), patient_id: selectedPatientId, consent_text, signed_at: new Date().toISOString(),
+    });
+    if (insErr) { errEl.textContent = 'Σφάλμα: '+insErr.message; btn.textContent='Αποθήκευση & Αποστολή Email'; btn.disabled=false; return; }
+
+    if (skinLine) await sb.from('patients').update({medical_history: skinLine}).eq('id', selectedPatientId).is('medical_history', null);
+
+    let emailStatus = '';
+    if (patient.email) {
+      const clinicInfo = S.clinic || {};
+      const {data: emailResult, error: emailErr} = await sb.functions.invoke('send-consultation-email', {
+        body: {
+          to: patient.email, therapist_email: therapistEmail || undefined,
+          clinic_name: clinicInfo.name, client_name: patient.full_name,
+          skin_line: skinLine, expected_results: expectedResults,
+          in_clinic_steps: inClinicStepsForEmail, homecare_steps: homecareStepsForEmail,
+          additional_notes: additionalNotes,
+          booking_link: clinicInfo.booking_link, website_link: clinicInfo.website,
+          instagram_link: clinicInfo.instagram, facebook_link: clinicInfo.facebook, maps_link: clinicInfo.maps_link,
+        },
+      });
+      emailStatus = (emailErr || (emailResult && emailResult.error)) ? ' (⚠ το email δεν στάλθηκε: '+(emailErr&&emailErr.message||emailResult&&emailResult.error||'')+')' : ' + email στάλθηκε ✓';
+    } else {
+      emailStatus = ' (χωρίς email καταχωρημένο — δεν στάλθηκε)';
+    }
+
+    document.getElementById('cf-overlay').remove();
+    if (S.patientDetail && S.patientDetail.id === selectedPatientId) await loadPatientDetail(selectedPatientId);
+    if (S.page === 'consultations') await loadData();
+    render();
+    alert('✓ Αποθηκεύτηκε το consultation'+emailStatus);
+  });
 }
 
 // ── ΕΚΚΡΕΜΕΙΣ CONSULTATIONS — χειροκίνητη σύνδεση με ασθενή ──
