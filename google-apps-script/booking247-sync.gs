@@ -75,16 +75,17 @@ function syncBooking247Emails() {
   const threads = GmailApp.search(`from:appointments@booking247.gr -label:${SYNCED_LABEL}`, 0, 100);
   if (!threads.length) return;
 
+  // Τα labels στο Gmail εφαρμόζονται σε επίπεδο THREAD, όχι μεμονωμένου
+  // μηνύματος — γι' αυτό το addLabel/removeLabel γίνεται πάντα στο thread.
   const rows = [];
-  const messagesByRow = [];
+  const threadsByRow = [];
   threads.forEach(thread => {
     thread.getMessages().forEach(message => {
-      if (message.getLabels().some(l => l.getName() === SYNCED_LABEL)) return;
       const text = message.getPlainBody() || message.getBody().replace(/<[^>]+>/g, ' ');
       const parsed = parseBooking247Email_(text);
-      if (!parsed) { message.addLabel(label); return; } // δεν έγινε parse — μην το ξαναδοκιμάζεις επ' άπειρον
+      if (!parsed) { thread.addLabel(label); return; } // δεν έγινε parse — μην το ξαναδοκιμάζεις επ' άπειρον
       rows.push(Object.assign({ messageId: message.getId() }, parsed));
-      messagesByRow.push(message);
+      threadsByRow.push(thread);
     });
   });
   if (!rows.length) return;
@@ -102,8 +103,8 @@ function syncBooking247Emails() {
   }
   const result = JSON.parse(resp.getContentText());
   const okIds = new Set((result.results || []).filter(r => r.ok).map(r => r.messageId));
-  messagesByRow.forEach(message => {
-    if (okIds.has(message.getId())) message.addLabel(label);
+  rows.forEach((row, i) => {
+    if (okIds.has(row.messageId)) threadsByRow[i].addLabel(label);
     // αν απέτυχε (π.χ. σφάλμα βάσης), ΔΕΝ κάνουμε label — ξαναδοκιμάζεται στο επόμενο τρέξιμο
   });
 }
