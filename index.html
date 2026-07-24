@@ -3189,6 +3189,26 @@ function renderSettings() {
         </div>
       </div>
 
+      <!-- CSV Έλεγχος Ραντεβού Booking247 (μόνο έλεγχος, καμία εγγραφή) -->
+      <div class="card">
+        <div class="card-header"><span class="card-title">🔍 Έλεγχος Ραντεβού Booking247 (CSV)</span></div>
+        <div style="padding:16px">
+          <div style="background:var(--surface);border-radius:8px;padding:12px;margin-bottom:14px;font-size:12px;color:var(--text-2)">
+            Ανέβασε το export ραντεβού από το Booking247 (στήλες: Ημερομηνία έναρξης, Πελάτης ή Τηλέφωνο, Αριθμός τηλεφώνου πελάτη, Υπηρεσία...) για να δεις ποια από αυτά υπάρχουν ήδη στο CRM και ποια λείπουν. <strong>Δεν γίνεται καμία εγγραφή/αλλαγή</strong> — μόνο έλεγχος.
+          </div>
+          <div id="csv-b247check-drop" style="border:2px dashed var(--border);border-radius:10px;padding:32px;text-align:center;cursor:pointer;transition:.15s" onclick="document.getElementById('csv-b247check-file').click()">
+            <div style="font-size:24px;margin-bottom:8px">📄</div>
+            <div style="font-size:13px;font-weight:500;margin-bottom:4px">Κλικ ή σύρε το CSV export εδώ</div>
+            <div style="font-size:11px;color:var(--text-2)">Το πλήρες export ραντεβού από το Booking247</div>
+          </div>
+          <input type="file" id="csv-b247check-file" accept=".csv,.txt" style="display:none"/>
+          <div style="display:flex;gap:8px;margin-top:12px">
+            <button class="btn btn-primary" id="run-b247check-btn" style="display:none">🔍 Έλεγχος</button>
+          </div>
+          <div id="b247check-result" style="margin-top:10px;font-size:12px"></div>
+        </div>
+      </div>
+
       <!-- Google Sheets sync now -->
       <div class="card">
         <div class="card-header"><span class="card-title">🔄 Συγχρονισμός από Google Sheets</span></div>
@@ -4302,6 +4322,85 @@ function bindEvents() {
     result.innerHTML=`<span style="color:var(--green)">✓ Εισήχθησαν: ${ok}</span> · <span style="color:var(--text-2)">Παραλείφθηκαν: ${skip}</span>${err?` · <span style="color:var(--red)">Σφάλματα: ${err}</span>`:''}`;
     _iab.disabled=false;
     await loadPageData();
+  });
+
+  // Έλεγχος Ραντεβού Booking247 (CSV) — read-only, καμία εγγραφή
+  const _b247cf = document.getElementById('csv-b247check-file');
+  if (_b247cf) _b247cf.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = (ev.target.result||'').replace(/^﻿/, '');
+      S._csvB247Check = parseCSV(text);
+      const result = document.getElementById('b247check-result');
+      result.innerHTML = `<span style="color:var(--text-2)">${S._csvB247Check.length} γραμμές έτοιμες για έλεγχο</span>`;
+      document.getElementById('run-b247check-btn').style.display = 'inline-flex';
+    };
+    reader.readAsText(file, 'UTF-8');
+  });
+
+  const _rb247 = document.getElementById('run-b247check-btn');
+  if (_rb247) _rb247.addEventListener('click', async () => {
+    const rows = S._csvB247Check||[];
+    if (!rows.length) return;
+    const result = document.getElementById('b247check-result');
+    _rb247.disabled = true;
+    result.innerHTML = '<span style="color:var(--text-2)">Φόρτωση πελατών κλινικής...</span>';
+    const cid = clinicId();
+
+    // Φόρτωσε ΟΛΟΥΣ τους πελάτες (σελιδοποιημένα, όχι μόνο τους πρώτους 1000)
+    const phoneToPatient = new Map();
+    {
+      let from = 0; const pageSize = 1000;
+      while (true) {
+        const {data, error} = await sb.from('patients').select('id,phone').eq('clinic_id',cid).range(from, from+pageSize-1);
+        if (error) { result.innerHTML = `<span style="color:var(--red)">✗ ${esc(error.message)}</span>`; _rb247.disabled=false; return; }
+        (data||[]).forEach(p => { const n = normalizePhone(p.phone); if (n) phoneToPatient.set(n, p.id); });
+        if (!data || data.length < pageSize) break;
+        from += pageSize;
+      }
+    }
+
+    const parsed = rows.map(row => {
+      const dtRaw = row['Ημερομηνία έναρξης']||'';
+      const m = dtRaw.match(/(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2})/);
+      if (!m) return null;
+      const [, d, mo, y, h, mi] = m;
+      const localTs = `${y}-${mo}-${d}T${h}:${mi}:00`; // ίδια μορφή (χωρίς offset) με του gmail-auto-sync
+      return {
+        localTs, dtRaw,
+        name: (row['Πελάτης ή Τηλέφωνο']||'').trim(),
+        phone: normalizePhone(row['Αριθμός τηλεφώνου πελάτη']||''),
+        service: (row['Υπηρεσία']||'').trim(),
+      };
+    }).filter(Boolean);
+
+    result.innerHTML = `<span style="color:var(--text-2)">Έλεγχος 0/${parsed.length}...</span>`;
+    let matched = 0, missingNoPatient = [], missingHasPatient = [];
+    const CONCURRENCY = 20;
+    for (let i = 0; i < parsed.length; i += CONCURRENCY) {
+      const batch = parsed.slice(i, i+CONCURRENCY);
+      await Promise.all(batch.map(async (r) => {
+        const patientId = phoneToPatient.get(r.phone);
+        if (!patientId) { missingNoPatient.push(r); return; }
+        const {data: ex} = await sb.rpc('match_appt_by_local_time', {p_clinic_id:cid, p_patient_id:patientId, p_local_ts:r.localTs});
+        if (ex && ex.length) matched++; else missingHasPatient.push(r);
+      }));
+      result.innerHTML = `<span style="color:var(--text-2)">Έλεγχος ${Math.min(i+CONCURRENCY,parsed.length)}/${parsed.length}...</span>`;
+    }
+
+    const allMissing = [...missingHasPatient, ...missingNoPatient];
+    const missingLines = allMissing.map(r => `${r.dtRaw} · ${esc(r.name)} · ${esc(r.phone)||'χωρίς τηλέφωνο'} · ${esc(r.service)}${phoneToPatient.get(r.phone)?'':' · (άγνωστος πελάτης στο CRM)'}`);
+    result.innerHTML = `
+      <div style="margin-bottom:8px">
+        <span style="color:var(--green)">✓ Ήδη στο CRM: ${matched}</span> ·
+        <span style="color:var(--red)">✗ Λείπουν: ${allMissing.length}</span>
+        ${parsed.length!==rows.length?` · <span style="color:var(--text-2)">${rows.length-parsed.length} γραμμές δεν αναγνωρίστηκαν</span>`:''}
+      </div>
+      ${allMissing.length?`<div style="max-height:320px;overflow-y:auto;border:1px solid var(--border-2);border-radius:8px;padding:8px;font-size:11px;color:var(--text-2);font-family:var(--mono)">${missingLines.join('<br>')}</div>`:''}
+    `;
+    _rb247.disabled = false;
   });
 
   // Sync GDPR Sheet now - reads BOTH tabs
