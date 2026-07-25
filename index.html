@@ -566,8 +566,8 @@ async function loadPageData() {
     const {data:staff} = await sb.from('profiles').select('*').eq('clinic_id',cid).in('role',['therapist','clinic_admin','super_admin']);
     S.staff = staff||[];
   }
-  if (S.page==='dashboard') {
-    // Ίδιο set συναινέσεων, χρειάζεται και το Dashboard για το KPI "Χωρίς Συναίνεση Laser"
+  if (S.page==='dashboard' || S.page==='appointments') {
+    // Ίδιο set συναινέσεων, χρειάζεται και το Dashboard (KPI) και το Ραντεβού (badges ανά ραντεβού)
     const {data:lcIds2} = await sb.from('laser_consents').select('patient_id').eq('clinic_id',cid);
     S.laserConsentIds = new Set((lcIds2||[]).map(r=>r.patient_id));
     const {data:scIds2} = await sb.from('service_consents').select('patient_id,consent_group').eq('clinic_id',cid);
@@ -1839,26 +1839,45 @@ function renderPatientDetail() {
 }
 
 // ── APPOINTMENTS ──
+const CONSENT_GROUP_LABELS = {laser:'Laser Αποτρίχωσης', cleansing:'Καθαρισμού', peelings:'Peelings', oxygen:'Οξυγόνου/Ενυδάτωσης'};
+function apptMissingConsent(a) {
+  const grp = classifyConsentGroup(a.service_name);
+  if (!grp || a.status==='cancelled' || !a.patient_id) return null;
+  const sets = {laser:S.laserConsentIds, cleansing:S.cleansingConsentIds, peelings:S.peelingsConsentIds, oxygen:S.oxygenConsentIds};
+  const set = sets[grp];
+  if (!set || set.has(a.patient_id)) return null;
+  return grp;
+}
 function renderAppointments() {
   const cid = clinicId();
   if (!cid) return '<div class="page"><div class="empty-state"><div class="empty-icon">⊞</div><div>Επίλεξε κλινική</div></div></div>';
-  const filtered = S.filter==='all'?S.appointments:S.appointments.filter(a=>a.status===S.filter);
+  const todayStr = new Date().toLocaleDateString('sv-SE'); // YYYY-MM-DD σε τοπική ώρα
+  const dateFilter = S.apptDateFilter||'';
+  let filtered = S.filter==='all'?S.appointments:S.appointments.filter(a=>a.status===S.filter);
+  if (dateFilter) filtered = filtered.filter(a=>a.start_time && new Date(a.start_time).toLocaleDateString('sv-SE')===dateFilter);
   return `<div class="page">
     <div class="page-header">
       <div><h1 class="page-title">Ραντεβού</h1><p class="page-sub">${S.appointments.length} συνολικά</p></div>
       <button class="btn btn-primary" data-modal="new-appt">+ Νέο Ραντεβού</button>
     </div>
-    <div class="filter-tabs" style="margin-bottom:16px">
+    <div class="filter-tabs" style="margin-bottom:12px">
       ${['all',...Object.keys(STATUS_APPT)].map(f=>`<button class="filter-tab ${S.filter===f?'active':''}" data-filter="${f}">${f==='all'?`Όλα (${S.appointments.length})`:(STATUS_APPT[f]&&STATUS_APPT[f].l)||f}</button>`).join('')}
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap">
+      <button class="btn btn-ghost btn-sm" id="appt-date-today" style="${dateFilter===todayStr?'background:var(--blue-soft);border-color:var(--blue)':''}">📅 Σήμερα</button>
+      <input type="date" id="appt-date-input" class="form-control" style="width:auto;padding:6px 10px;font-size:12px" value="${dateFilter}"/>
+      ${dateFilter?`<button class="btn btn-ghost btn-sm" id="appt-date-clear">✕ Όλες οι ημέρες</button>`:''}
     </div>
     <div style="display:flex;flex-direction:column;gap:8px">
       ${filtered.length?filtered.map(a=>{
         const st=STATUS_APPT[a.status]||STATUS_APPT.pending;
+        const missingGrp = apptMissingConsent(a);
         return `<div class="appt-card">
           <div style="width:4px;align-self:stretch;border-radius:2px;background:${st.c};flex-shrink:0"></div>
           <div style="flex:1;min-width:0;cursor:pointer" ${a.patient_id?`data-patient="${a.patient_id}"`:''}  >
             <div style="font-size:13px;font-weight:500">${esc(a.patients&&a.patients.full_name||'—')}</div>
             <div style="font-size:11px;color:var(--text-2)">${esc(a.service_name||'')} · ${esc(a.patients&&a.patients.phone||'')}</div>
+            ${missingGrp?`<div style="margin-top:3px"><span class="badge badge-red" style="font-size:10px">⚠ Χωρίς Συναίνεση ${CONSENT_GROUP_LABELS[missingGrp]}</span></div>`:''}
           </div>
           <div style="font-size:12px;color:var(--text-2);white-space:nowrap;flex-shrink:0">${fmtDt(a.start_time)}</div>
           ${a.price?`<div style="font-size:13px;font-weight:500;color:#0F6E56;flex-shrink:0">${euro(a.price)}</div>`:''}
@@ -3587,6 +3606,14 @@ function bindEvents() {
   document.querySelectorAll('[data-filter]').forEach(el => {
     el.onclick = () => { S.filter=el.dataset.filter; render(); };
   });
+
+  // Ραντεβού — φίλτρο ημέρας (Σήμερα / συγκεκριμένη ημέρα / όλες)
+  const _apptToday = document.getElementById('appt-date-today');
+  if (_apptToday) _apptToday.onclick = () => { S.apptDateFilter = new Date().toLocaleDateString('sv-SE'); render(); };
+  const _apptDateInput = document.getElementById('appt-date-input');
+  if (_apptDateInput) _apptDateInput.onchange = () => { S.apptDateFilter = _apptDateInput.value; render(); };
+  const _apptDateClear = document.getElementById('appt-date-clear');
+  if (_apptDateClear) _apptDateClear.onclick = () => { S.apptDateFilter = ''; render(); };
 
   const _openMergeDup = document.getElementById('open-merge-duplicates');
   if (_openMergeDup) _openMergeDup.onclick = () => openMergeDuplicatesModal();
