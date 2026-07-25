@@ -5192,6 +5192,15 @@ async function mergePatients(primaryId, dupIds) {
     });
     if (!primary.gdpr_signed && dups.some(d=>d.gdpr_signed)) patch.gdpr_signed = true;
     if (!primary.marketing_opt_in && dups.some(d=>d.marketing_opt_in)) patch.marketing_opt_in = true;
+    // Αν μετά τη συγχώνευση ο κύριος ασθενής έχει (ή αποκτά) υπογεγραμμένο GDPR, ή κάποιος από
+    // τους διπλότυπους είχε ήδη ολοκληρωμένο ιατρικό ιστορικό, βάλε τη σημαία τώρα — αλλιώς μένει
+    // "❌ Όχι" στα Στοιχεία παρότι το ιατρικό ιστορικό μεταφέρθηκε κανονικά (MERGE_FILL_FIELDS).
+    const finalGdprSigned = patch.gdpr_signed !== undefined ? patch.gdpr_signed : primary.gdpr_signed;
+    const donorHadCompleted = dups.some(d=>d.medical_history_completed);
+    if (!primary.medical_history_completed && (finalGdprSigned || donorHadCompleted)) {
+      patch.medical_history_completed = true;
+      patch.medical_history_completed_at = primary.medical_history_completed_at || dups.map(d=>d.medical_history_completed_at).find(Boolean) || primary.gdpr_signed_at || new Date().toISOString();
+    }
     const sumLtv = (primary.ltv||0) + dups.reduce((s,d)=>s+(d.ltv||0),0);
     if (sumLtv !== (primary.ltv||0)) patch.ltv = sumLtv;
     if (Object.keys(patch).length) {
