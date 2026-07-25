@@ -42,9 +42,25 @@ interface ReportStats {
   appointments: number;
   revenue: number | null;
   new_patients: number;
+  new_patients_delta?: number | null;
+  new_patients_pct?: number | null;
   no_show_rate: number | null;
   gdpr_rate: number | null;
+  utilization_rate?: number | null;
+  consultations?: number | null;
+  consultations_delta?: number | null;
+  consultations_pct?: number | null;
+  recommended_done?: number | null;
+  recommended_total?: number | null;
   top_services: TopService[];
+}
+
+function deltaLabel(diff?: number | null, pct?: number | null) {
+  if (diff === null || diff === undefined) return '';
+  const color = diff > 0 ? '#0F6E56' : diff < 0 ? '#A32D2D' : '#5b6380';
+  const arrow = diff > 0 ? '▲' : diff < 0 ? '▼' : '▬';
+  const pctAbs = Math.abs(pct ?? 0);
+  return ` <span style="color:${color};font-weight:700">${diff > 0 ? '+' : ''}${diff} (${arrow}${pctAbs}%)</span> vs προηγ. περίοδο`;
 }
 
 function renderReportEmailHtml(opts: {
@@ -87,10 +103,18 @@ function renderReportEmailHtml(opts: {
           </td>
         </tr>
       </table>
-      <div style="font-size:13px;color:#5b6380;margin-bottom:16px">
+      <div style="font-size:13px;color:#5b6380;margin-bottom:8px">
         No-show rate: <b style="color:#1a1f3a">${stats.no_show_rate === null ? '—' : stats.no_show_rate + '%'}</b>
         &nbsp;·&nbsp;
         GDPR συμμόρφωση: <b style="color:#1a1f3a">${stats.gdpr_rate === null ? '—' : stats.gdpr_rate + '%'}</b>
+        &nbsp;·&nbsp;
+        Κάλυψη ωραρίου: <b style="color:#1a1f3a">${stats.utilization_rate == null ? '—' : stats.utilization_rate + '%'}</b>
+      </div>
+      <div style="font-size:13px;color:#5b6380;margin-bottom:16px">
+        Νέοι πελάτες:${deltaLabel(stats.new_patients_delta, stats.new_patients_pct)}
+        &nbsp;·&nbsp;
+        Consultations (${stats.consultations ?? 0}):${deltaLabel(stats.consultations_delta, stats.consultations_pct)}
+        ${stats.recommended_total ? `&nbsp;·&nbsp; Υπηρεσίες από consultation που έγιναν: <b style="color:#1a1f3a">${stats.recommended_done}/${stats.recommended_total}</b>` : ''}
       </div>
       <div style="font-size:14px;font-weight:600;color:#1a1f3a;margin-bottom:8px">Κορυφαίες Υπηρεσίες</div>
       <table style="width:100%;border-collapse:collapse;font-size:13px" cellpadding="0" cellspacing="0">

@@ -649,6 +649,36 @@ async function loadPageData() {
     S.reportNewPatients = newPts||[];
     const {data:allPts} = await sb.from('patients').select('id,status,gdpr_signed').eq('clinic_id',cid);
     S.reportAllPatients = allPts||[];
+
+    // Ισόχρονη προηγούμενη περίοδος (ίδιος αριθμός ημερών, αμέσως πριν) — για τα
+    // deltas Νέων Πελατών & Consultations, ίδια λογική με το widget "Από πού μας βρήκαν".
+    const fromDate = new Date(fromISO), toDate = new Date(toISO);
+    const rangeDays = Math.max(1, Math.round((toDate-fromDate)/86400000)+1);
+    const prevTo = new Date(fromDate); prevTo.setDate(prevTo.getDate()-1); prevTo.setHours(23,59,59,999);
+    const prevFrom = new Date(prevTo); prevFrom.setDate(prevFrom.getDate()-(rangeDays-1)); prevFrom.setHours(0,0,0,0);
+    const {data:prevNewPts} = await sb.from('patients').select('id').eq('clinic_id',cid).gte('created_at',prevFrom.toISOString()).lte('created_at',prevTo.toISOString());
+    S.reportPrevNewPatients = prevNewPts||[];
+
+    // Consultations (Skincare Plan) — φέτος και ισόχρονη προηγούμενη περίοδος
+    const {data:consults} = await sb.from('gdpr_consents').select('id,patient_id,signed_at,consent_text').eq('clinic_id',cid).ilike('consent_text','%Skincare Plan%').gte('signed_at',fromISO).lte('signed_at',toISO);
+    S.reportConsultations = consults||[];
+    const {data:prevConsults} = await sb.from('gdpr_consents').select('id').eq('clinic_id',cid).ilike('consent_text','%Skincare Plan%').gte('signed_at',prevFrom.toISOString()).lte('signed_at',prevTo.toISOString());
+    S.reportPrevConsultations = prevConsults||[];
+
+    // Ραντεβού των ασθενών που έκαναν consultation (μετά την ημ/νία του), για να δούμε
+    // πόσες από τις προτεινόμενες υπηρεσίες (IN-CLINIC) πραγματοποιήθηκαν τελικά.
+    const consultPatientIds = [...new Set((consults||[]).map(c=>c.patient_id).filter(Boolean))];
+    if (consultPatientIds.length) {
+      const {data:consultApts} = await sb.from('appointments').select('patient_id,service_name,status,start_time').eq('clinic_id',cid).in('patient_id',consultPatientIds).neq('status','cancelled');
+      S.reportConsultAppointments = consultApts||[];
+    } else {
+      S.reportConsultAppointments = [];
+    }
+
+    // Αριθμός ενεργού προσωπικού (θεραπεύτριες/admins) — χρησιμοποιείται ως πολλαπλασιαστής
+    // χωρητικότητας στο % Κάλυψης Ωραρίου (πολλαπλά ραντεβού μπορούν να τρέχουν ταυτόχρονα).
+    const {data:staffRows} = await sb.from('profiles').select('id').eq('clinic_id',cid).in('role',['therapist','clinic_admin','super_admin']);
+    S.reportStaffCount = (staffRows||[]).length || 1;
   }
   if (S.page==='settings') {
     const {data:uc} = await sb.from('unmatched_consultations').select('*').eq('clinic_id',cid).order('received_at',{ascending:false});
@@ -2900,6 +2930,21 @@ function renderConsents() {
 }
 
 // ── ΑΝΑΦΟΡΕΣ (REPORTS) ──
+// Εξάγει τα ονόματα υπηρεσιών που προτάθηκαν στο IN-CLINIC μέρος ενός consultation
+// (μορφή: "1) Ετικέτα: Υπηρεσία Α, Υπηρεσία Β" ανά γραμμή — βλ. openConsultationFormModal).
+function parseConsultInClinicItems(text) {
+  const m = (text||'').match(/IN-CLINIC\s*:?\s*\n?([\s\S]+?)(?:\nHOMECARE|$)/i);
+  if (!m) return [];
+  const items = [];
+  m[1].split('\n').forEach(line => {
+    const idx = line.indexOf(':');
+    const rest = idx>=0 ? line.slice(idx+1) : line;
+    rest.split(',').map(x=>x.trim()).filter(Boolean).forEach(x=>items.push(x));
+  });
+  return items;
+}
+function _normGr(s) { return (s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim(); }
+
 function computeReportStats() {
   const apts = S.reportAppointments||[];
   const newPatients = S.reportNewPatients||[];
@@ -2912,9 +2957,61 @@ function computeReportStats() {
   const gdprSigned = activePatients.filter(p=>p.gdpr_signed).length;
   const gdprRate = activePatients.length ? Math.round((gdprSigned/activePatients.length)*100) : null;
   const svc = {};
-  apts.forEach(a=>{ if(a.service_name) { svc[a.service_name]=svc[a.service_name]||{count:0,revenue:0}; svc[a.service_name].count++; svc[a.service_name].revenue+=(a.price||0); } });
+  // Το "Ραντεβού" μετράει όλα τα κλεισμένα ραντεβού της υπηρεσίας, αλλά τα "Έσοδα" μετράνε
+  // ΜΟΝΟ τα πληρωμένα/ολοκληρωμένα — αλλιώς το άθροισμα ανά υπηρεσία ξεπερνούσε το συνολικό
+  // KPI "Έσοδα" (που μετράει μόνο paid/completed), δείχνοντας ασυνεπή νούμερα στην αναφορά.
+  apts.forEach(a=>{ if(a.service_name) { svc[a.service_name]=svc[a.service_name]||{count:0,revenue:0}; svc[a.service_name].count++; if(a.status==='paid'||a.status==='completed') svc[a.service_name].revenue+=(a.price||0); } });
   const topServices = Object.entries(svc).sort((a,b)=>b[1].revenue-a[1].revenue).slice(0,8);
-  return { apts, newPatients, allPatients, revenue, noShowRate, noShows, gdprRate, gdprSigned, activeCount:activePatients.length, topServices };
+
+  // Νέοι πελάτες vs ισόχρονη προηγούμενη περίοδος
+  const prevNewPatientsCount = (S.reportPrevNewPatients||[]).length;
+  const newPatientsDelta = newPatients.length - prevNewPatientsCount;
+  const newPatientsPct = prevNewPatientsCount>0 ? Math.round((newPatientsDelta/prevNewPatientsCount)*100) : (newPatients.length>0?100:0);
+
+  // Consultations vs ισόχρονη προηγούμενη περίοδος
+  const consultations = S.reportConsultations||[];
+  const prevConsultCount = (S.reportPrevConsultations||[]).length;
+  const consultDelta = consultations.length - prevConsultCount;
+  const consultPct = prevConsultCount>0 ? Math.round((consultDelta/prevConsultCount)*100) : (consultations.length>0?100:0);
+
+  // % Κάλυψης Ωραρίου Λειτουργίας: κλεισμένα λεπτά ραντεβού / διαθέσιμα λεπτά χωρητικότητας
+  // (ώρες λειτουργίας × ημέρες περιόδου × αριθμός ενεργού προσωπικού — εκτίμηση χωρητικότητας
+  // όταν δουλεύουν παράλληλα περισσότερες από μία θεραπεύτριες).
+  const fromDate = new Date((S.reportRange&&S.reportRange.from)+'T00:00:00');
+  const toDate = new Date((S.reportRange&&S.reportRange.to)+'T23:59:59');
+  const rangeDays = Math.max(1, Math.round((toDate-fromDate)/86400000)+1);
+  const startHour = (S.clinic&&S.clinic.settings&&S.clinic.settings.start_hour!=null) ? S.clinic.settings.start_hour : 9;
+  const endHour = (S.clinic&&S.clinic.settings&&S.clinic.settings.end_hour!=null) ? S.clinic.settings.end_hour : 20;
+  const staffCount = Math.max(1, S.reportStaffCount||1);
+  const capacityMinutes = Math.max(0, endHour-startHour) * 60 * rangeDays * staffCount;
+  const bookedMinutes = apts.filter(a=>a.status!=='cancelled').reduce((s,a)=>s+(a.duration_minutes||60),0);
+  const utilizationRate = capacityMinutes ? Math.round((bookedMinutes/capacityMinutes)*100) : null;
+
+  // Πόσες προτεινόμενες υπηρεσίες από consultations πραγματοποιήθηκαν τελικά (fuzzy match
+  // ονόματος υπηρεσίας σε ραντεβού του ίδιου ασθενή, μετά την ημ/νία του consultation).
+  const apptsByPatient = {};
+  (S.reportConsultAppointments||[]).forEach(a=>{ (apptsByPatient[a.patient_id]=apptsByPatient[a.patient_id]||[]).push(a); });
+  let recommendedTotal = 0, recommendedDone = 0;
+  consultations.forEach(c=>{
+    const items = parseConsultInClinicItems(c.consent_text);
+    const patientAppts = (apptsByPatient[c.patient_id]||[]).filter(a=>new Date(a.start_time) >= new Date(c.signed_at));
+    items.forEach(item=>{
+      recommendedTotal++;
+      const n = _normGr(item);
+      if (n && patientAppts.some(a=>{ const sn=_normGr(a.service_name); return sn && (sn.includes(n)||n.includes(sn)); })) recommendedDone++;
+    });
+  });
+
+  return { apts, newPatients, allPatients, revenue, noShowRate, noShows, gdprRate, gdprSigned, activeCount:activePatients.length, topServices,
+    newPatientsDelta, newPatientsPct, consultations, prevConsultCount, consultDelta, consultPct,
+    utilizationRate, recommendedTotal, recommendedDone };
+}
+
+// Ίδια σύμβαση εμφάνισης delta με το widget "Από πού μας βρήκαν" του Dashboard
+function reportDeltaLabel(diff, pct) {
+  const color = diff>0?'#0F6E56':diff<0?'var(--red)':'var(--text-3)';
+  const arrow = diff>0?'▲':diff<0?'▼':'▬';
+  return `<span style="font-weight:600;color:${color}">${diff>0?'+':''}${diff} (${arrow}${Math.abs(pct)}%)</span> vs προηγούμενη ισόχρονη περίοδο`;
 }
 
 function renderReports() {
@@ -2954,13 +3051,25 @@ function renderReports() {
         <div class="stat-icon" style="background:#eef0fe;color:var(--blue)">◎</div>
         <div class="stat-label">Νέοι Πελάτες</div>
         <div class="stat-value" style="color:var(--blue)">${s.newPatients.length}</div>
-        <div class="stat-change">μέσα στο διάστημα</div>
+        <div class="stat-change">${reportDeltaLabel(s.newPatientsDelta, s.newPatientsPct)}</div>
       </div>
       <div class="stat-card">
         <div class="stat-icon" style="background:#EEEDFE;color:#3C3489">✓</div>
         <div class="stat-label">GDPR Συμμόρφωση</div>
         <div class="stat-value" style="color:#3C3489">${s.gdprRate===null?'—':s.gdprRate+'%'}</div>
         <div class="stat-change">${s.gdprSigned} / ${s.activeCount} ενεργοί ασθενείς</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon" style="background:#FCEBEB;color:#A32D2D">📋</div>
+        <div class="stat-label">Consultations</div>
+        <div class="stat-value" style="color:#A32D2D">${s.consultations.length}</div>
+        <div class="stat-change">${reportDeltaLabel(s.consultDelta, s.consultPct)}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon" style="background:#E6F1FB;color:#185FA5">◔</div>
+        <div class="stat-label">Κάλυψη Ωραρίου</div>
+        <div class="stat-value" style="color:#185FA5">${s.utilizationRate===null?'—':s.utilizationRate+'%'}</div>
+        <div class="stat-change">εκτίμηση βάσει ωραρίου × ενεργού προσωπικού</div>
       </div>
     </div>
 
@@ -2976,6 +3085,19 @@ function renderReports() {
           </tr>`).join('')}
         </tbody>
       </table>`:`<div class="empty-state"><div class="empty-icon">▤</div><div>Δεν υπάρχουν ραντεβού στο διάστημα</div></div>`}
+    </div>
+
+    <div class="card" style="padding:16px;margin-bottom:16px">
+      <div class="card-title" style="margin-bottom:6px">Υπηρεσίες που προτάθηκαν σε Consultation</div>
+      <div style="font-size:12px;color:var(--text-2);margin-bottom:10px">Από τις προτάσεις IN-CLINIC των consultation του διαστήματος, πόσες έγιναν τελικά ραντεβού στον ίδιο ασθενή.</div>
+      ${s.recommendedTotal?`
+      <div style="display:flex;align-items:center;gap:12px">
+        <div style="font-size:22px;font-weight:700;color:#0F6E56">${s.recommendedDone} / ${s.recommendedTotal}</div>
+        <div style="flex:1;height:8px;background:var(--surface);border-radius:99px;overflow:hidden">
+          <div style="height:100%;width:${Math.round(s.recommendedDone/s.recommendedTotal*100)}%;background:#0F6E56;border-radius:99px"></div>
+        </div>
+        <div style="font-size:13px;font-weight:600;color:var(--text-2)">${Math.round(s.recommendedDone/s.recommendedTotal*100)}%</div>
+      </div>`:`<div style="font-size:12px;color:var(--text-2)">Δεν υπάρχουν consultation με προτεινόμενες υπηρεσίες στο διάστημα.</div>`}
     </div>
 
     <div class="card" style="padding:16px">
@@ -4834,8 +4956,16 @@ function bindEvents() {
             appointments: s.apts.length,
             revenue: canSee(['super_admin','clinic_admin']) ? s.revenue : null,
             new_patients: s.newPatients.length,
+            new_patients_delta: s.newPatientsDelta,
+            new_patients_pct: s.newPatientsPct,
             no_show_rate: s.noShowRate,
             gdpr_rate: s.gdprRate,
+            utilization_rate: s.utilizationRate,
+            consultations: s.consultations.length,
+            consultations_delta: s.consultDelta,
+            consultations_pct: s.consultPct,
+            recommended_done: s.recommendedDone,
+            recommended_total: s.recommendedTotal,
             top_services: s.topServices.map(([name,d])=>({name, count:d.count, revenue:d.revenue})),
           }
         }
