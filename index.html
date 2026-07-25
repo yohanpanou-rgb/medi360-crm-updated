@@ -575,6 +575,26 @@ async function loadPageData() {
     S.peelingsConsentIds = new Set((scIds2||[]).filter(r=>r.consent_group==='peelings_microneedling').map(r=>r.patient_id));
     S.oxygenConsentIds = new Set((scIds2||[]).filter(r=>r.consent_group==='oxygen_facetreatments').map(r=>r.patient_id));
   }
+  if (S.page==='appointments') {
+    // Χάρτης κανονικοποιημένο τηλέφωνο → σύνολο patient_id — ώστε μια ένδειξη "Χωρίς Συναίνεση"
+    // να μπορεί να ξεχωρίσει αν πρόκειται για διπλότυπη καρτέλα που ΗΔΗ έχει τη συναίνεση
+    // (βλ. apptMissingConsent), αντί να μοιάζει με πραγματικά ανυπόγραφο πελάτη.
+    const phoneGroups = new Map();
+    let from = 0; const pageSize = 1000;
+    while (true) {
+      const {data, error} = await sb.from('patients').select('id,phone').eq('clinic_id',cid).range(from, from+pageSize-1);
+      if (error) break;
+      (data||[]).forEach(p => {
+        const n = normalizePhone(p.phone);
+        if (!n) return;
+        if (!phoneGroups.has(n)) phoneGroups.set(n, new Set());
+        phoneGroups.get(n).add(p.id);
+      });
+      if (!data || data.length < pageSize) break;
+      from += pageSize;
+    }
+    S.patientPhoneGroups = phoneGroups;
+  }
   if (S.page==='pipeline' || S.page==='dashboard') {
     const {data} = await sb.from('pipeline_deals').select('*').eq('clinic_id',cid).order('created_at',{ascending:false});
     S.pipeline = data||[];
@@ -1840,13 +1860,20 @@ function renderPatientDetail() {
 
 // ── APPOINTMENTS ──
 const CONSENT_GROUP_LABELS = {laser:'Laser Αποτρίχωσης', cleansing:'Καθαρισμού', peelings:'Peelings', oxygen:'Οξυγόνου/Ενυδάτωσης'};
+// Επιστρέφει null αν δεν χρειάζεται συναίνεση ή την έχει ήδη ο ίδιος ο πελάτης.
+// Αλλιώς {grp, duplicateHasIt}: duplicateHasIt=true σημαίνει ότι ΥΠΑΡΧΕΙ ήδη υπογεγραμμένη
+// συναίνεση, αλλά καταχωρημένη σε ΑΛΛΗ καρτέλα με το ίδιο τηλέφωνο (πιθανό διπλότυπο) —
+// διαφορετική κατάσταση από το να μην έχει υπογραφεί καθόλου.
 function apptMissingConsent(a) {
   const grp = classifyConsentGroup(a.service_name);
   if (!grp || a.status==='cancelled' || !a.patient_id) return null;
   const sets = {laser:S.laserConsentIds, cleansing:S.cleansingConsentIds, peelings:S.peelingsConsentIds, oxygen:S.oxygenConsentIds};
   const set = sets[grp];
   if (!set || set.has(a.patient_id)) return null;
-  return grp;
+  const phone = normalizePhone((a.patients&&a.patients.phone)||'');
+  const siblingIds = phone && S.patientPhoneGroups ? S.patientPhoneGroups.get(phone) : null;
+  const duplicateHasIt = !!(siblingIds && [...siblingIds].some(id => id!==a.patient_id && set.has(id)));
+  return {grp, duplicateHasIt};
 }
 function renderAppointments() {
   const cid = clinicId();
@@ -1877,7 +1904,10 @@ function renderAppointments() {
           <div style="flex:1;min-width:0;cursor:pointer" ${a.patient_id?`data-patient="${a.patient_id}"`:''}  >
             <div style="font-size:13px;font-weight:500">${esc(a.patients&&a.patients.full_name||'—')}</div>
             <div style="font-size:11px;color:var(--text-2)">${esc(a.service_name||'')} · ${esc(a.patients&&a.patients.phone||'')}</div>
-            ${missingGrp?`<div style="margin-top:3px"><span class="badge badge-red" style="font-size:10px">⚠ Χωρίς Συναίνεση ${CONSENT_GROUP_LABELS[missingGrp]}</span></div>`:''}
+            ${missingGrp?`<div style="margin-top:3px">${missingGrp.duplicateHasIt
+              ?`<span class="badge" style="font-size:10px;background:#FAEEDA;color:#854F0B">⚠ Υπάρχει συναίνεση ${CONSENT_GROUP_LABELS[missingGrp.grp]} σε άλλη (πιθανό διπλότυπη) καρτέλα</span>`
+              :`<span class="badge badge-red" style="font-size:10px">⚠ Χωρίς Συναίνεση ${CONSENT_GROUP_LABELS[missingGrp.grp]}</span>`
+            }</div>`:''}
           </div>
           <div style="font-size:12px;color:var(--text-2);white-space:nowrap;flex-shrink:0">${fmtDt(a.start_time)}</div>
           ${a.price?`<div style="font-size:13px;font-weight:500;color:#0F6E56;flex-shrink:0">${euro(a.price)}</div>`:''}
