@@ -2667,6 +2667,15 @@ function renderSms() {
 }
 
 // ── CONSULTATIONS MODULE ──
+// Ταξινομεί μια εγγραφή gdpr_consents στον τύπο της, βάσει του περιεχομένου του consent_text —
+// ο πίνακας αυτός φιλοξενεί ΚΑΙ πραγματικά consultation (Skincare Plan) ΚΑΙ απλές υπογραφές GDPR
+// ΚΑΙ συναινέσεις Laser, οπότε χρειάζεται σωστή ταξινόμηση αντί να δείχνει τα πάντα "Consultation".
+function classifyConsultationType(text) {
+  const t = text||'';
+  if (t.includes('Skincare Plan')) return 'consultation';
+  if (/laser/i.test(t)) return 'laser';
+  return 'gdpr';
+}
 function renderConsultations() {
   const cid = clinicId();
   if (!cid) return '<div class="page"><div class="empty-state"><div class="empty-icon">📋</div><div>Επίλεξε κλινική</div></div></div>';
@@ -2678,7 +2687,7 @@ function renderConsultations() {
   const filtered = items.filter(c=>{
     const name = (c.patients&&c.patients.full_name||c.patient_name||'').toLowerCase();
     const matchQ = !q || name.includes(q);
-    const matchF = filterType==='all' || (c.consent_text&&c.consent_text.toLowerCase().includes(filterType));
+    const matchF = filterType==='all' || classifyConsultationType(c.consent_text)===filterType;
     return matchQ && matchF;
   });
 
@@ -2770,7 +2779,7 @@ function renderConsultations() {
           const date = c.signed_at||'';
           const notes = c.notes||c.details||c.service_name||'';
           const gdprOk = pt.gdpr_signed||c.gdpr_signed||false;
-          const typ = (c.consent_text||'').includes('Skincare')?'consultation':'consultation';
+          const typ = classifyConsultationType(c.consent_text);
           const ptId = pt.id||c.patient_id||'';
           return `<tr style="cursor:pointer" onclick="${ptId?`loadPatientDetail('${ptId}')`:''}">
             <td>
@@ -2794,6 +2803,7 @@ function renderConsultations() {
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-top:16px">
       ${[
         {l:'Σύνολο',v:items.length,c:'#185FA5',bg:'#E6F1FB'},
+        {l:'Πραγματικά Consultation',v:items.filter(c=>classifyConsultationType(c.consent_text)==='consultation').length,c:'#A32D2D',bg:'#FCEBEB'},
         {l:'Με GDPR',v:items.filter(c=>c.patients&&c.patients.gdpr_signed||c.gdpr_signed).length,c:'#0F6E56',bg:'#E1F5EE'},
         {l:'Χωρίς GDPR',v:items.filter(c=>!(c.patients&&c.patients.gdpr_signed||c.gdpr_signed)).length,c:'#A32D2D',bg:'#FDECEA'},
         {l:'Αυτό τον μήνα',v:items.filter(c=>{
@@ -3097,7 +3107,9 @@ function renderReports() {
           <div style="height:100%;width:${Math.round(s.recommendedDone/s.recommendedTotal*100)}%;background:#0F6E56;border-radius:99px"></div>
         </div>
         <div style="font-size:13px;font-weight:600;color:var(--text-2)">${Math.round(s.recommendedDone/s.recommendedTotal*100)}%</div>
-      </div>`:`<div style="font-size:12px;color:var(--text-2)">Δεν υπάρχουν consultation με προτεινόμενες υπηρεσίες στο διάστημα.</div>`}
+      </div>`:(s.consultations.length
+        ? `<div style="font-size:12px;color:var(--text-2)">Υπήρχαν ${s.consultations.length} consultation στο διάστημα, αλλά καμία δεν είχε καταγεγραμμένες προτάσεις IN-CLINIC (προαιρετικό πεδίο στη φόρμα).</div>`
+        : `<div style="font-size:12px;color:var(--text-2)">Δεν υπήρχαν consultation (Skincare Plan) στο διάστημα.</div>`)}
     </div>
 
     <div class="card" style="padding:16px">
