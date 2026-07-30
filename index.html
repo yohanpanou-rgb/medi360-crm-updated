@@ -707,11 +707,16 @@ async function loadPageData() {
     const {data:prevNewPts} = await sb.from('patients').select('id').eq('clinic_id',cid).gte('created_at',prevFrom.toISOString()).lte('created_at',prevTo.toISOString());
     S.reportPrevNewPatients = prevNewPts||[];
 
-    // Consultations (Skincare Plan) — φέτος και ισόχρονη προηγούμενη περίοδος
-    const {data:consults} = await sb.from('gdpr_consents').select('id,patient_id,signed_at,consent_text,patients(full_name,phone)').eq('clinic_id',cid).ilike('consent_text','%Skincare Plan%').gte('signed_at',fromISO).lte('signed_at',toISO);
-    S.reportConsultations = consults||[];
-    const {data:prevConsults} = await sb.from('gdpr_consents').select('id').eq('clinic_id',cid).ilike('consent_text','%Skincare Plan%').gte('signed_at',prevFrom.toISOString()).lte('signed_at',prevTo.toISOString());
-    S.reportPrevConsultations = prevConsults||[];
+    // Consultations — φέτος και ισόχρονη προηγούμενη περίοδος. Φέρνουμε ΟΛΕΣ τις συναινέσεις της
+    // περιόδου (όχι μόνο όσες έχουν το literal "Skincare Plan |" πρόθεμα) και τις ταξινομούμε με το
+    // ίδιο classifyConsultationType() που χρησιμοποιεί η σελίδα Consultation — έτσι ένα consultation
+    // από παλαιότερο/εξωτερικό pipeline (χωρίς αυτό το πρόθεμα, αλλά με πραγματικό IN-CLINIC κ.λπ.)
+    // μετράει το ίδιο παντού, αντί να λείπει μόνο από την Αναφορά.
+    const {data:consentsInRange} = await sb.from('gdpr_consents').select('id,patient_id,signed_at,consent_text,patients(full_name,phone)').eq('clinic_id',cid).gte('signed_at',fromISO).lte('signed_at',toISO);
+    const consults = (consentsInRange||[]).filter(c=>classifyConsultationType(c.consent_text)==='consultation');
+    S.reportConsultations = consults;
+    const {data:prevConsentsInRange} = await sb.from('gdpr_consents').select('id,consent_text').eq('clinic_id',cid).gte('signed_at',prevFrom.toISOString()).lte('signed_at',prevTo.toISOString());
+    S.reportPrevConsultations = (prevConsentsInRange||[]).filter(c=>classifyConsultationType(c.consent_text)==='consultation');
 
     // Ραντεβού των ασθενών που έκαναν consultation (μετά την ημ/νία του), για να δούμε
     // πόσες από τις προτεινόμενες υπηρεσίες (IN-CLINIC) πραγματοποιήθηκαν τελικά.
@@ -2771,11 +2776,14 @@ function renderSms() {
 
 // ── CONSULTATIONS MODULE ──
 // Ταξινομεί μια εγγραφή gdpr_consents στον τύπο της, βάσει του περιεχομένου του consent_text —
-// ο πίνακας αυτός φιλοξενεί ΚΑΙ πραγματικά consultation (Skincare Plan) ΚΑΙ απλές υπογραφές GDPR
-// ΚΑΙ συναινέσεις Laser, οπότε χρειάζεται σωστή ταξινόμηση αντί να δείχνει τα πάντα "Consultation".
+// ο πίνακας αυτός φιλοξενεί ΚΑΙ πραγματικά consultation ΚΑΙ απλές υπογραφές GDPR ΚΑΙ συναινέσεις
+// Laser, οπότε χρειάζεται σωστή ταξινόμηση αντί να δείχνει τα πάντα "Consultation". Δεν στηριζόμαστε
+// ΜΟΝΟ στο literal "Skincare Plan |" πρόθεμα (αυτό το βάζει μόνο η νέα φόρμα μέσα στο CRM) — records
+// από παλαιότερα/εξωτερικά pipelines (π.χ. το πρώην Google Form/Apps Script) έχουν πραγματικό
+// IN-CLINIC/SKIN PROFILE/HOMECARE περιεχόμενο χωρίς αυτό το πρόθεμα, και πρέπει να μετρήσουν το ίδιο.
 function classifyConsultationType(text) {
   const t = text||'';
-  if (t.includes('Skincare Plan')) return 'consultation';
+  if (t.includes('Skincare Plan') || /IN-CLINIC|SKIN PROFILE|HOMECARE/.test(t)) return 'consultation';
   if (/laser/i.test(t)) return 'laser';
   return 'gdpr';
 }
