@@ -528,12 +528,33 @@ const panicActive = () => !!(S.clinic && S.clinic.settings && S.clinic.settings.
 const clinicId = () => S.selectedClinicId;
 const canSee = (roles) => roles.includes((S.profile&&S.profile.role));
 
+// supabase-js's FunctionsHttpError.message is ALWAYS the generic "Edge Function
+// returned a non-2xx status code", regardless of what the function actually
+// responded with — the real reason lives in error.context (the raw Response),
+// unread by default. Without this, every Edge Function failure in the app
+// shows the same useless message and the real cause can never be diagnosed
+// from the UI alone (this is exactly what happened with send-consultation-email).
+async function extractInvokeErrorMessage(error) {
+  if (!error) return '';
+  if (error.context && typeof error.context.clone === 'function') {
+    try {
+      const body = await error.context.clone().json();
+      if (body && body.error) return body.error;
+    } catch(e) {}
+    try {
+      const text = await error.context.clone().text();
+      if (text) return text;
+    } catch(e) {}
+  }
+  return error.message || 'Άγνωστο σφάλμα';
+}
+
 // ── SECURE SERVER-SIDE ACTIONS ──
 async function createUserSecurely({ name, email, password, role, clinic_id }) {
   const { data, error } = await sb.functions.invoke('admin-create-user', {
     body: { full_name: name, email, password, role, clinic_id: clinic_id || null }
   });
-  if (error) throw new Error(error.message || JSON.stringify(error));
+  if (error) throw new Error(await extractInvokeErrorMessage(error));
   if (data && data.error) throw new Error(data.error);
   return data;
 }
@@ -4527,7 +4548,7 @@ function bindEvents() {
     if (!key) { result.innerHTML = '<span style="color:var(--red)">Βάλε πρώτα το API Key</span>'; return; }
     result.innerHTML = '<span style="color:var(--text-2)">Έλεγχος...</span>';
     const {data, error} = await sb.functions.invoke('booking247-api-sync', {body:{clinic_id: clinicId(), mode:'test'}});
-    if (error) { result.innerHTML = `<span style="color:var(--red)">✗ ${esc(error.message||'Το API δεν είναι ακόμα συνδεδεμένο')}</span>`; return; }
+    if (error) { result.innerHTML = `<span style="color:var(--red)">✗ ${esc(await extractInvokeErrorMessage(error))}</span>`; return; }
     result.innerHTML = `<span style="color:${data&&data.ready?'var(--green)':'#D97706'}">${esc((data&&data.message)||'Το κλειδί αποθηκεύτηκε — περιμένει τα στοιχεία του πραγματικού Booking247 API')}</span>`;
   });
 
@@ -5097,7 +5118,7 @@ function bindEvents() {
           }
         }
       });
-      if (error) throw error;
+      if (error) { result.innerHTML = '<span style="color:var(--red)">✗ Αποτυχία αποστολής: '+esc(await extractInvokeErrorMessage(error))+'</span>'; return; }
       if (result) result.innerHTML = '<span style="color:var(--green)">✓ Η αναφορά στάλθηκε στο '+esc(to)+'</span>';
     } catch(e) {
       if (result) result.innerHTML = '<span style="color:var(--red)">✗ Αποτυχία αποστολής: '+esc(e.message||'άγνωστο σφάλμα')+'</span>';
@@ -6383,7 +6404,7 @@ async function sendLaserConsentEmail() {
         attachment_name: `Synainesi_Laser_${(pname||'pelatis').replace(/[^a-zA-Zα-ωΑ-Ωίϊΐόάέύϋΰήώ0-9]+/g,'_')}.html`
       }
     });
-    if (error) throw error;
+    if (error) throw new Error(await extractInvokeErrorMessage(error));
     if (data && data.error) throw new Error(data.error);
     alert('✓ Η συναίνεση στάλθηκε στο ' + to);
   } catch(e) {
@@ -6417,6 +6438,29 @@ async function _cfLoadServiceOptions() {
   return [...new Set((data||[]).map(r=>(r.service_name||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'el'));
 }
 
+// Εξάγει τα προϊόντα μιας γραμμής HOMECARE (μορφή "Ετικέτα: Προϊόν Α, Προϊόν Β")
+// βάσει της ετικέτας — ίδια μορφή με αυτή που γράφει το ίδιο το cf-save παρακάτω.
+function _cfParseHomecareLine(text, label) {
+  const m = (text||'').match(new RegExp(label+'\\s*:\\s*([^\\n]+)','i'));
+  if (!m) return [];
+  return m[1].split(',').map(s=>s.trim()).filter(Boolean);
+}
+// Λίστα προϊόντων ανά κατηγορία (Καθαρισμός/Περιποίηση/Προστασία) από ό,τι έχει ήδη
+// χρησιμοποιηθεί σε προηγούμενα consultation της κλινικής — ίδια λογική με το
+// _cfLoadServiceOptions() (άντληση από πραγματικά ιστορικά δεδομένα, όχι hardcoded λίστα).
+async function _cfLoadHomecareOptions() {
+  const cid = clinicId();
+  const {data} = await sb.from('gdpr_consents').select('consent_text').eq('clinic_id',cid).ilike('consent_text','%HOMECARE%').limit(500);
+  const cleaning = new Set(), care = new Set(), protection = new Set();
+  (data||[]).forEach(r => {
+    _cfParseHomecareLine(r.consent_text,'Καθημερινός καθαρισμός').forEach(x=>cleaning.add(x));
+    _cfParseHomecareLine(r.consent_text,'Ενεργή περιποίηση').forEach(x=>care.add(x));
+    _cfParseHomecareLine(r.consent_text,'Προστασία').forEach(x=>protection.add(x));
+  });
+  const sortGr = s => [...s].sort((a,b)=>a.localeCompare(b,'el'));
+  return { cleaning: sortGr(cleaning), care: sortGr(care), protection: sortGr(protection) };
+}
+
 async function openConsultationFormModal(opts) {
   opts = opts || {};
   const standalone = !!opts.standalone;
@@ -6429,6 +6473,15 @@ async function openConsultationFormModal(opts) {
     <select class="form-control cf-service-picker" data-target="${targetId}" style="margin-bottom:6px">
       <option value="">➕ Προσθήκη θεραπείας προσώπου από λίστα...</option>
       ${serviceOptions.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('')}
+    </select>`;
+  const homecareOptions = await _cfLoadHomecareOptions();
+  // Ένα μόνο προϊόν ανά κατηγορία (καθαρισμός/περιποίηση/αντιηλιακό) — η επιλογή
+  // ΑΝΤΙΚΑΘΙΣΤΑ το πεδίο, δεν προστίθεται σαν νέα γραμμή (σε αντίθεση με τον
+  // παραπάνω picker των in-clinic θεραπειών, όπου έχει νόημα να προστεθούν πολλές).
+  const homecarePickerHtml = (targetId, options) => `
+    <select class="form-control cf-homecare-picker" data-target="${targetId}" style="margin-bottom:6px">
+      <option value="">➕ Επιλογή από προϊόντα που έχουν ξαναχρησιμοποιηθεί...</option>
+      ${options.map(o=>`<option value="${esc(o)}">${esc(o)}</option>`).join('')}
     </select>`;
 
   const ov = document.createElement('div');
@@ -6467,10 +6520,10 @@ async function openConsultationFormModal(opts) {
       <div class="form-group"><label class="form-label">Massage &amp; Θεραπείες Σώματος (προαιρετικό, μπαίνει στο βήμα 2)</label>${servicePickerHtml('cf-body-extra')}<textarea class="form-control" id="cf-body-extra" rows="2"></textarea></div>
       <div class="form-group"><label class="form-label">3) Ενίσχυση &amp; Διατήρηση</label>${servicePickerHtml('cf-step3')}<textarea class="form-control" id="cf-step3" rows="2"></textarea></div>
 
-      <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin:16px 0 10px">🏠 Homecare (μία γραμμή ανά προϊόν)</div>
-      <div class="form-group"><label class="form-label">Καθημερινός Καθαρισμός</label><textarea class="form-control" id="cf-prod-cleaning" rows="2"></textarea></div>
-      <div class="form-group"><label class="form-label">Ενεργή Περιποίηση</label><textarea class="form-control" id="cf-prod-care" rows="2"></textarea></div>
-      <div class="form-group"><label class="form-label">Προστασία</label><textarea class="form-control" id="cf-prod-protection" rows="2"></textarea></div>
+      <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin:16px 0 10px">🏠 Homecare (επίλεξε από τη λίστα ή γράψε ελεύθερα, ένα προϊόν ανά κατηγορία)</div>
+      <div class="form-group"><label class="form-label">Καθημερινός Καθαρισμός</label>${homecarePickerHtml('cf-prod-cleaning', homecareOptions.cleaning)}<textarea class="form-control" id="cf-prod-cleaning" rows="2"></textarea></div>
+      <div class="form-group"><label class="form-label">Ενεργή Περιποίηση</label>${homecarePickerHtml('cf-prod-care', homecareOptions.care)}<textarea class="form-control" id="cf-prod-care" rows="2"></textarea></div>
+      <div class="form-group"><label class="form-label">Προστασία</label>${homecarePickerHtml('cf-prod-protection', homecareOptions.protection)}<textarea class="form-control" id="cf-prod-protection" rows="2"></textarea></div>
       <div class="form-group"><label class="form-label">Περιποίηση Σώματος</label><textarea class="form-control" id="cf-prod-body" rows="2"></textarea></div>
 
       <div class="form-group"><label class="form-label">Σημειώσεις</label><textarea class="form-control" id="cf-additional-notes" rows="2"></textarea></div>
@@ -6490,6 +6543,14 @@ async function openConsultationFormModal(opts) {
       const lines = _cfSplitLines(ta.value);
       if (!lines.includes(sel.value)) lines.push(sel.value);
       ta.value = lines.join('\n');
+      sel.value = '';
+    };
+  });
+
+  ov.querySelectorAll('.cf-homecare-picker').forEach(sel => {
+    sel.onchange = () => {
+      if (!sel.value) return;
+      document.getElementById(sel.dataset.target).value = sel.value;
       sel.value = '';
     };
   });
@@ -6597,7 +6658,8 @@ async function openConsultationFormModal(opts) {
           instagram_link: clinicInfo.instagram, facebook_link: clinicInfo.facebook, maps_link: clinicInfo.maps_link,
         },
       });
-      emailStatus = (emailErr || (emailResult && emailResult.error)) ? ' (⚠ το email δεν στάλθηκε: '+(emailErr&&emailErr.message||emailResult&&emailResult.error||'')+')' : ' + email στάλθηκε ✓';
+      const emailErrMsg = emailErr ? await extractInvokeErrorMessage(emailErr) : (emailResult&&emailResult.error||'');
+      emailStatus = emailErrMsg ? ' (⚠ το email δεν στάλθηκε: '+emailErrMsg+')' : ' + email στάλθηκε ✓';
     } else {
       emailStatus = ' (χωρίς email καταχωρημένο — δεν στάλθηκε)';
     }
