@@ -2797,7 +2797,6 @@ function classifyConsultationType(text) {
 function renderConsultations() {
   const cid = clinicId();
   if (!cid) return '<div class="page"><div class="empty-state"><div class="empty-icon">📋</div><div>Επίλεξε κλινική</div></div></div>';
-  const consultFormLink = (S.integrations||{}).consultation_form_link || 'https://docs.google.com/forms/d/e/1FAIpQLSctJ9i3x26jEpvCqIGLxts-YEK_7q9um64mLwtst_4-dkaXAg/viewform?usp=header';
   const items = S.allConsultations||[];
   const q = (S.consultSearch||'').toLowerCase();
   const filterType = S.consultFilter||'all';
@@ -2876,8 +2875,8 @@ function renderConsultations() {
       <div class="empty-state">
         <div class="empty-icon">📋</div>
         <div style="margin-bottom:8px">${items.length===0?'Δεν υπάρχουν consultations ακόμα':'Δεν βρέθηκαν αποτελέσματα'}</div>
-        <div style="font-size:12px;color:var(--text-2);margin-bottom:16px">Τα consultations μπαίνουν αυτόματα όταν οι ασθενείς συμπληρώσουν τη φόρμα</div>
-        <a href="${consultFormLink}" target="_blank" class="btn btn-primary btn-sm">🔗 Αποστολή Φόρμας</a>
+        <div style="font-size:12px;color:var(--text-2);margin-bottom:16px">Συμπλήρωσε ένα consultation μέσα από το CRM για να ξεκινήσεις</div>
+        <button class="btn btn-primary btn-sm" onclick="openConsultationFormModal({standalone:true})">+ Νέα Consultation</button>
       </div>
     `:`
     <div class="card" style="overflow:hidden">
@@ -2948,7 +2947,6 @@ function renderConsents() {
   const tmpl = S.consentTemplates||[];
   const integrations = (S.clinic&&S.clinic.integrations)||{};
   const gdprFormLink = integrations.gdpr_form_link || 'https://docs.google.com/forms/d/e/1FAIpQLSe5XiCNxnDOYMxgUbzlOP8G8ZDe-R3VBaJPlZeM1gthPElHiA/viewform?usp=header';
-  const consultFormLink = integrations.consultation_form_link || 'https://docs.google.com/forms/d/e/1FAIpQLSctJ9i3x26jEpvCqIGLxts-YEK_7q9um64mLwtst_4-dkaXAg/viewform?usp=header';
   return `<div class="page">
     <div class="page-header">
       <div><h1 class="page-title">Συναινέσεις & Φόρμες</h1></div>
@@ -2972,16 +2970,8 @@ function renderConsents() {
       </div>
       <div class="card" style="padding:20px;border-left:4px solid #534AB7">
         <div style="font-size:14px;font-weight:600;color:var(--navy);margin-bottom:4px">📋 Consultation</div>
-        <div style="font-size:12px;color:var(--text-2);margin-bottom:12px;line-height:1.5">Φόρμα consultation. Αποστείλετε πριν από consultation session ή αισθητική θεραπεία.</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
-          <a href="${consultFormLink}" target="_blank" class="btn btn-primary btn-sm" style="background:#534AB7">🔗 Άνοιγμα Φόρμας</a>
-          <button class="btn btn-ghost btn-sm" onclick="copyToClipboard('${consultFormLink}','consult-copy-msg')">📋 Αντιγραφή</button>
-          <button class="btn btn-ghost btn-sm" onclick="openSmsModal('${consultFormLink}','Consultation')">📱 SMS</button>
-        </div>
-        <div id="consult-copy-msg" style="font-size:11px;color:#0F6E56;display:none">✓ Αντιγράφηκε!</div>
-        <div style="padding:8px 10px;background:var(--surface);border-radius:6px;font-size:10px;color:var(--text-3);font-family:var(--mono);word-break:break-all">${consultFormLink}</div>
-        <div style="margin-top:8px"><button class="btn btn-ghost btn-xs" onclick="toggleQR('consult-qr','${consultFormLink}')">QR Code</button></div>
-        <div id="consult-qr" style="display:none;text-align:center;margin-top:8px"></div>
+        <div style="font-size:12px;color:var(--text-2);margin-bottom:12px;line-height:1.5">Φόρμα consultation. Συμπληρώνεται από τη θεραπεύτρια μέσα στο CRM — αποθηκεύεται στην καρτέλα του ασθενή και στέλνεται αυτόματα email στον πελάτη.</div>
+        <button class="btn btn-primary btn-sm" style="background:#534AB7" onclick="openConsultationFormModal({standalone:true})">+ Νέα Consultation</button>
       </div>
     </div>
     <!-- SMS Modal -->
@@ -3018,8 +3008,8 @@ function renderConsents() {
         <td>${badge(c.service_name||'—','#E6F1FB','#185FA5')}</td>
         <td>${c.signed?badge('✓ Υπογεγραμμένο','#E1F5EE','#0F6E56'):badge('Εκκρεμεί','#FAEEDA','#854F0B')}</td>
         <td style="font-size:12px;color:var(--text-2)">${fmt(c.signed_at)}</td>
-        <td><a href="${consultFormLink}" target="_blank" class="btn btn-ghost btn-xs">🔗</a></td>
-      </tr>`).join(''):`<tr><td colspan="5"><div class="empty-state"><div class="empty-icon">📋</div><div style="margin-bottom:10px">Δεν υπάρχουν συναινέσεις</div><a href="${consultFormLink}" target="_blank" class="btn btn-primary btn-sm" style="background:#534AB7">🔗 Φόρμα Consultation</a></div></td></tr>`}
+        <td><button class="btn btn-ghost btn-xs" onclick="openConsultationFormModal({standalone:true})">+</button></td>
+      </tr>`).join(''):`<tr><td colspan="5"><div class="empty-state"><div class="empty-icon">📋</div><div style="margin-bottom:10px">Δεν υπάρχουν συναινέσεις</div><button class="btn btn-primary btn-sm" style="background:#534AB7" onclick="openConsultationFormModal({standalone:true})">+ Νέα Consultation</button></div></td></tr>`}
       </tbody></table></div></div>`:''}
     ${conTab==='templates'?`<div>
       <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
