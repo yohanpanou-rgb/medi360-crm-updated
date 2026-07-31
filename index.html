@@ -2196,15 +2196,22 @@ function renderCalendar() {
   const PX_PER_MIN = 1.2;
   const HOUR_H = 60 * PX_PER_MIN;
 
-  // Θεραπευτής ραντεβού: από therapist_id (αν υπάρχει) ή από το notes "Προσωπικό: X"
-  // (το Booking247 sync αποθηκεύει τον θεραπευτή στα notes — δεν βάζει therapist_id)
+  // Θεραπευτής ραντεβού: από therapist_id (αν υπάρχει) ή από τις σημειώσεις.
+  // Δύο γνωστές μορφές σημειώσεων αποθηκεύουν το προσωπικό διαφορετικά:
+  //  - "Προσωπικό: X" — gmail-auto-sync, booking247-ingest, το CSV import εργαλείο
+  //  - "booking247_id:NNN | X" — ένα άλλο (deployed αλλά όχι στο repo) sync pipeline
+  // Χωρίς και τα δύο patterns, ραντεβού από τη 2η πηγή καταλήγουν πάντα στη
+  // στήλη "Μη ανατεθειμένα" παρότι η σημείωση περιέχει το σωστό όνομα.
   const apptTherapist = (a) => {
     if (a.therapist_id) {
       const st = staff.find(s=>s.id===a.therapist_id);
       if (st) return st.full_name;
     }
-    const m = (a.notes||'').match(/Προσωπικό:\s*([^\n·|]+)/i);
-    return m ? m[1].trim() : null;
+    const notes = a.notes||'';
+    const m = notes.match(/Προσωπικό:\s*([^\n·|]+)/i);
+    if (m) return m[1].trim();
+    const m2 = notes.match(/booking247_id:\S+\s*\|\s*([^\n·|]+)/i);
+    return m2 ? m2[1].trim() : null;
   };
 
   // Στήλες θεραπευτών: ΔΥΝΑΜΙΚΑ από τα ραντεβού της ημέρας — όχι από τη λίστα users.
