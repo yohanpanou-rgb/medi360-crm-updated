@@ -4255,6 +4255,7 @@ function bindEvents() {
         </div>
         ${[
           ['Υπηρεσία', a.service_name],
+          ['Ημερομηνία', start.toLocaleDateString('el-GR',{weekday:'long',day:'numeric',month:'long',year:'numeric'})],
           ['Ώρα', start.toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'})+' – '+end.toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'})],
           ['Διάρκεια', (a.duration_minutes||60)+' λεπτά'],
           ['Κατάσταση', (STATUS_APPT[a.status]||STATUS_APPT.pending).l],
