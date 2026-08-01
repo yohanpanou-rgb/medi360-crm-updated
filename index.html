@@ -1943,6 +1943,7 @@ function renderPatientDetail() {
                 </div>
               </div>
               <div style="display:flex;align-items:center;gap:8px">
+                ${isSkincareplan?`<button onclick="event.stopPropagation();resendConsultationToPatient('${c.id}')" class="btn btn-ghost btn-sm" style="font-size:11px" title="Επαναποστολή στον πελάτη">📧</button>`:''}
                 <button onclick="event.stopPropagation();openConsultEdit('${c.id}')" class="btn btn-ghost btn-sm" style="font-size:11px">✏️</button>
                 <span style="font-size:18px;color:var(--text-3)">${isExpanded?'−':'+'}</span>
               </div>
@@ -3824,7 +3825,6 @@ function modalNewClinic() {
 }
 
 function modalNewLaser() {
-  const patients = S.patients||[];
   // Αν ανοίξαμε από καρτέλα ασθενή (S.page==='patient-detail'), προσυμπλήρωσε τον ασθενή
   const currentPatient = S.page==='patient-detail' ? S.patientDetail : null;
   return `<div class="modal">
@@ -3839,11 +3839,12 @@ function modalNewLaser() {
         </div>
         <input type="hidden" id="lf-patient" value="${currentPatient.id}"/>
       </div>`:`
-      <div class="form-group"><label class="form-label">Ασθενής *</label>
-        <select class="form-control" id="lf-patient">
-          <option value="">Επίλεξε ασθενή...</option>
-          ${patients.map(p=>`<option value="${p.id}">${esc(p.full_name)} · ${esc(p.phone||'')}</option>`).join('')}
-        </select></div>`}
+      <div class="form-group" style="position:relative"><label class="form-label">Ασθενής *</label>
+        <input class="form-control" id="lf-patient-search" placeholder="Αναζήτηση ασθενή (όνομα/τηλέφωνο)..." autocomplete="off"/>
+        <div id="lf-patient-results" style="display:none;position:absolute;left:0;right:0;background:var(--white);border:1px solid var(--border-2);border-radius:8px;box-shadow:var(--shadow-lg);z-index:20;max-height:220px;overflow-y:auto;margin-top:4px"></div>
+        <input type="hidden" id="lf-patient" value=""/>
+        <div id="lf-patient-mode" style="margin-top:6px;font-size:12px;color:var(--red)">⚠ Γράψε όνομα ή τηλέφωνο για αναζήτηση</div>
+      </div>`}
       <div class="form-row">
         <div class="form-group"><label class="form-label">Φύλο</label>
           <select class="form-control" id="lf-gender"><option value="female">Γυναίκα</option><option value="male">Άνδρας</option></select></div>
@@ -5367,6 +5368,39 @@ function bindModalEvents() {
     });
   });
 
+  // Laser form patient search (αντικατέστησε το native <select> με ολόκληρη τη λίστα —
+  // δεν φιλτράριζε καθόλου, μόνο άλμα στο πρώτο γράμμα, δυσχρηστο με πολλούς ασθενείς)
+  const _lfps = document.getElementById('lf-patient-search');
+  if (_lfps) {
+    let lfTimer = null;
+    const lfShowResults = async () => {
+      const q = _lfps.value.trim().replace(/[,()]/g,' ');
+      const res = document.getElementById('lf-patient-results');
+      if (!q.length) { res.style.display='none'; return; }
+      const {data} = await sb.from('patients').select('id,full_name,phone').eq('clinic_id',clinicId())
+        .or(`full_name.ilike.%${q}%,phone.ilike.%${q}%`).order('full_name').limit(8);
+      res.innerHTML = (data||[]).map(pt=>`<div class="lf-pt-opt" style="padding:9px 12px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--border-2)" data-pid="${pt.id}" data-pname="${esc(pt.full_name)}" data-pphone="${esc(pt.phone||'')}">${esc(pt.full_name)} · ${esc(pt.phone||'')}</div>`).join('')
+        || `<div style="padding:9px 12px;font-size:12px;color:var(--text-3)">Κανένα αποτέλεσμα</div>`;
+      res.style.display = 'block';
+      res.querySelectorAll('.lf-pt-opt').forEach(el => {
+        el.onclick = () => {
+          document.getElementById('lf-patient').value = el.dataset.pid;
+          _lfps.value = el.dataset.pname + (el.dataset.pphone ? ' · '+el.dataset.pphone : '');
+          res.style.display = 'none';
+          const mode = document.getElementById('lf-patient-mode');
+          if (mode) { mode.textContent = '✓ Επιλέχθηκε ασθενής'; mode.style.color = 'var(--green)'; }
+        };
+      });
+    };
+    _lfps.onfocus = lfShowResults;
+    _lfps.oninput = () => {
+      document.getElementById('lf-patient').value = '';
+      const mode = document.getElementById('lf-patient-mode');
+      if (mode) { mode.textContent = '⚠ Γράψε όνομα ή τηλέφωνο για αναζήτηση'; mode.style.color = 'var(--red)'; }
+      clearTimeout(lfTimer); lfTimer = setTimeout(lfShowResults, 200);
+    };
+  }
+
   // Save laser form
   const _slr=document.getElementById('save-laser');if(_slr)_slr.addEventListener('click', async () => {
     const pid = document.getElementById('lf-patient').value;
@@ -5723,6 +5757,59 @@ async function saveConsultEdit() {
     document.getElementById('consult-edit-modal').style.display = 'none';
     render();
   }, 800);
+}
+
+// Σπάει ένα IN-CLINIC/HOMECARE block σε {label, items} ανά γραμμή — ίδια μορφή με
+// αυτή που γράφει το cf-save (index.html) στο consent_text ("1) Ετικέτα: Α, Β").
+function _parseConsentStepLines(raw) {
+  return (raw||'').split('\n').map(l=>l.trim()).filter(Boolean).map(line => {
+    const m = line.match(/^(?:\d\)\s*)?([^:]+):\s*(.*)$/);
+    if (!m) return null;
+    const items = m[2].split(',').map(s=>s.trim()).filter(Boolean);
+    return items.length ? {label: m[1].trim(), items} : null;
+  }).filter(Boolean);
+}
+
+// Επαναποστολή ενός ΠΑΛΑΙΟΤΕΡΟΥ, ήδη αποθηκευμένου consultation στον πελάτη —
+// ξαναπαρσάρει το αποθηκευμένο consent_text (ό,τι είναι πραγματικά αποθηκευμένο,
+// άρα και τυχόν επεξεργασία μέσω saveConsultEdit) και καλεί το ίδιο edge function
+// με το αρχικό Consultation Form.
+async function resendConsultationToPatient(consultId) {
+  const c = (S.patConsultations||[]).find(x=>x.id===consultId);
+  const p = S.patientDetail;
+  if (!c || !p) return;
+  if (!p.email) { alert('Ο/Η '+(p.full_name||'ασθενής')+' δεν έχει καταχωρημένο email — δεν μπορεί να σταλεί.'); return; }
+
+  const text = c.consent_text||'';
+  const skinMatch = text.match(/SKIN PROFILE\s*:?\s*\n?([\s\S]+?)(?:\n\s*(?:EXPECTED|IN-CLINIC|HOMECARE|Σημειώσεις)|$)/i);
+  const expectedMatch = text.match(/EXPECTED[^\n]*\n?([\s\S]+?)(?:\n\s*(?:IN-CLINIC|HOMECARE|Σημειώσεις)|$)/i);
+  const inClinicMatch = text.match(/IN-CLINIC\s*:?\s*\n?([\s\S]+?)(?:\n\s*(?:HOMECARE|EXPECTED|Σημειώσεις)|$)/i);
+  const homecareMatch = text.match(/HOMECARE\s*:?\s*\n?([\s\S]+?)(?:\n\s*(?:EXPECTED|Σημειώσεις)|$)/i);
+  const notesMatch = text.match(/Σημειώσεις:?\s*\n?([\s\S]+?)$/i);
+
+  const skinLine = (skinMatch ? skinMatch[1] : '').replace(/^Τύπος δέρματος[^\n]*:\s*\n?/i, '').trim();
+  const expectedRaw = (expectedMatch ? expectedMatch[1] : '').replace(/^Τι να περιμένετε[^\n]*:\s*\n?/i, '').trim();
+  const expectedResults = expectedRaw.split(',').map(s=>s.trim()).filter(Boolean);
+  const inClinicSteps = _parseConsentStepLines(inClinicMatch ? inClinicMatch[1] : '');
+  const homecareSteps = _parseConsentStepLines(homecareMatch ? homecareMatch[1] : '');
+  const additionalNotes = notesMatch ? notesMatch[1].trim() : '';
+
+  if (!confirm('Επαναποστολή αυτού του consultation στον/στην '+p.full_name+' ('+p.email+');')) return;
+
+  const clinicInfo = S.clinic || {};
+  const {data, error} = await sb.functions.invoke('send-consultation-email', {
+    body: {
+      to: p.email, clinic_name: clinicInfo.name, client_name: p.full_name,
+      skin_line: skinLine, expected_results: expectedResults,
+      in_clinic_steps: inClinicSteps, homecare_steps: homecareSteps,
+      additional_notes: additionalNotes,
+      booking_link: clinicInfo.booking_link, website_link: clinicInfo.website,
+      instagram_link: clinicInfo.instagram, facebook_link: clinicInfo.facebook, maps_link: clinicInfo.maps_link,
+    },
+  });
+  const errMsg = error ? await extractInvokeErrorMessage(error) : ((data&&data.error)||'');
+  if (errMsg) { alert('⚠ Δεν στάλθηκε: '+errMsg); return; }
+  alert('✓ Στάλθηκε ξανά στον/στην '+p.full_name);
 }
 
 // ── PASTE & IMPORT (Skincare Plan από πλήρες email text) ──
