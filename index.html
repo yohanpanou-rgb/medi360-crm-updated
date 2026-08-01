@@ -474,6 +474,13 @@ const STAGE_LABELS = {new_lead:'Νέο Lead',contacted:'Επαφή',interested:'
 
 function badge(label,bg,c){return `<span class="badge" style="background:${bg};color:${c}">${esc(label)}</span>`}
 function patBadge(status){const s=STATUS_PAT[status]||STATUS_PAT.lead;return badge(s.l,s.bg,s.c)}
+// Το medical_history_completed σημαίνει "υπέβαλε τη φόρμα Ιατρικού Ιστορικού/GDPR" —
+// αλλά το ίδιο το πεδίο medical_history μπορεί να γεμίσει και από αλλού (π.χ. Consultation
+// Form, sync από Sheet) χωρίς ποτέ να μπει αυτή η σημαία. Η εμφάνιση πρέπει να βασίζεται
+// στο αν υπάρχει ΠΡΑΓΜΑΤΙΚΟ περιεχόμενο, όχι μόνο στη σημαία, αλλιώς δείχνει λάθος "❌ Όχι".
+function hasMedicalHistoryData(p) {
+  return !!(p.medical_history_completed || [p.medical_history, p.allergies, p.medications, p.previous_treatments].some(v => v && String(v).trim()));
+}
 function apptBadge(status){const s=STATUS_APPT[status]||STATUS_APPT.pending;return badge(s.l,s.bg,s.c)}
 
 // ── AUTH ──
@@ -1391,7 +1398,7 @@ function renderPatients() {
       if (sortKey==='phone') return p.phone||'';
       if (sortKey==='status') return p.status||'';
       if (sortKey==='gdpr_signed') return p.gdpr_signed?1:0;
-      if (sortKey==='medical_history') return p.medical_history_completed?1:0;
+      if (sortKey==='medical_history') return hasMedicalHistoryData(p)?1:0;
       if (sortKey==='consult') return ((S.consultDates||{})[p.id]) ? new Date((S.consultDates||{})[p.id]).getTime() : 0;
       if (sortKey==='ltv') return p.ltv||0;
       return '';
@@ -1451,7 +1458,7 @@ function renderPatients() {
           <td class="hide-mobile" style="font-family:var(--mono);font-size:12px;color:var(--text-2)">${esc(p.phone||'—')}</td>
           <td>${patBadge(p.status)}</td>
           <td class="hide-mobile">${p.gdpr_signed?'✅':'❌'}</td>
-          <td class="hide-mobile">${p.medical_history_completed?'<span style="color:#0F6E56;font-weight:600" title="Έχει συμπληρώσει ιατρικό ιστορικό">✓</span>':'<span style="color:var(--text-3)">—</span>'}</td>
+          <td class="hide-mobile">${hasMedicalHistoryData(p)?'<span style="color:#0F6E56;font-weight:600" title="Έχει συμπληρώσει ιατρικό ιστορικό">✓</span>':'<span style="color:var(--text-3)">—</span>'}</td>
           <td class="hide-mobile">${consultDate?`<span style="color:#185FA5;font-weight:500;font-size:12px">${new Date(consultDate).toLocaleDateString('el-GR',{day:'2-digit',month:'2-digit',year:'numeric'})}</span>`:'<span style="color:var(--text-3)">—</span>'}</td>
           <td class="hide-mobile" style="font-weight:500;color:#0F6E56">${euro(p.ltv)}</td>
           <td><button class="btn btn-ghost btn-xs" data-patient="${p.id}">Άνοιγμα</button></td>
@@ -1623,7 +1630,7 @@ function renderPatientDetail() {
         {id:'overview',l:'Στοιχεία'},
         {id:'timeline',l:'Timeline'},
         {id:'appointments',l:`Ραντεβού (${(p.appointments&&p.appointments.length)||0})`},
-        {id:'medical',l:`Ιατρικό Ιστορικό${p.medical_history_completed?' ✓':''}`},
+        {id:'medical',l:`Ιατρικό Ιστορικό${hasMedicalHistoryData(p)?' ✓':''}`},
         {id:'laser',l:`Laser Forms (${laserForms.length})`},
         {id:'photos',l:`Φωτογραφίες (${(S.patientPhotos||[]).length})`},
         {id:'patconsents',l:'Συναινέσεις'},
@@ -1644,7 +1651,7 @@ function renderPatientDetail() {
         // GDPR
         if (p.gdpr_signed) events.push({date:p.gdpr_signed_at||p.created_at,type:'gdpr',icon:'✓',color:'#0F6E56',bg:'#E1F5EE',title:'GDPR Υπογεγραμμένο',desc:'Συναίνεση δεδομένων'});
         // Medical history
-        if (p.medical_history_completed) events.push({date:p.medical_history_completed_at||p.created_at,type:'medical',icon:'🏥',color:'#185FA5',bg:'#E6F1FB',title:'Ιατρικό Ιστορικό',desc:p.medical_history?(p.medical_history.slice(0,80)+(p.medical_history.length>80?'...':'')):'Ελεύθερο ιστορικό — τίποτα προς δήλωση'});
+        if (hasMedicalHistoryData(p)) events.push({date:p.medical_history_completed_at||p.created_at,type:'medical',icon:'🏥',color:'#185FA5',bg:'#E6F1FB',title:'Ιατρικό Ιστορικό',desc:p.medical_history?(p.medical_history.slice(0,80)+(p.medical_history.length>80?'...':'')):'Ελεύθερο ιστορικό — τίποτα προς δήλωση'});
         // Appointments
         (p.appointments||[]).forEach(a=>{
           const st=STATUS_APPT[a.status]||STATUS_APPT.pending;
@@ -1722,7 +1729,7 @@ function renderPatientDetail() {
             ['Πόλη', p.city],
             ['Πηγή', p.source],
             ['GDPR', p.gdpr_signed?'✅ Υπογεγραμμένο':'❌ Όχι'],
-            ['Ιατρικό Ιστορικό', p.medical_history_completed?([p.medical_history,p.allergies,p.medications,p.previous_treatments].some(v=>v&&v.trim())?'✅ Συμπληρωμένο':'✅ Συμπληρωμένο — Ελεύθερο ιστορικό'):'❌ Όχι'],
+            ['Ιατρικό Ιστορικό', [p.medical_history,p.allergies,p.medications,p.previous_treatments].some(v=>v&&v.trim())?'✅ Συμπληρωμένο':(p.medical_history_completed?'✅ Συμπληρωμένο — Ελεύθερο ιστορικό':'❌ Όχι')],
             ...(canSeeFinancials?[['LTV', euro(p.ltv)]]:[] ),
             ['Εγγραφή', fmt(p.created_at)],
           ].map(([k,v])=>`
