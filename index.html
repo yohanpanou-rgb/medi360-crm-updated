@@ -768,7 +768,7 @@ async function loadPageData() {
   render();
 }
 
-async function loadPatientDetail(id) {
+async function loadPatientDetail(id, tab) {
   S.patientDetail = null;
   S.patientLoadError = null;
   set({page:'patient-detail'}); // Show loading state immediately
@@ -792,7 +792,7 @@ async function loadPatientDetail(id) {
     S.serviceConsentOxygen = (svcCon3&&svcCon3[0])||null;
     S.patientDetail = {...p, appointments: a||[]};
     S.laserForms = lf||[];
-    S.patTab = 'overview';
+    S.patTab = tab || 'overview';
 
     // Φωτογραφίες ασθενή — μεταδεδομένα + signed URLs (private bucket)
     S.patientPhotos = [];
@@ -2924,7 +2924,8 @@ function renderConsultations() {
           const gdprOk = pt.gdpr_signed||c.gdpr_signed||false;
           const typ = classifyConsultationType(c.consent_text);
           const ptId = pt.id||c.patient_id||'';
-          return `<tr style="cursor:pointer" onclick="${ptId?`loadPatientDetail('${ptId}')`:''}">
+          const targetTab = typ==='consultation' ? 'consultation' : 'patconsents';
+          return `<tr style="cursor:pointer" onclick="${ptId?`loadPatientDetail('${ptId}','${targetTab}')`:''}">
             <td>
               <div style="font-weight:500">${esc(name)}</div>
               ${phone?`<div style="font-size:11px;color:var(--text-2)">${esc(phone)}</div>`:''}
@@ -3021,7 +3022,7 @@ function renderConsents() {
     ${conTab==='gdpr'?`<div class="card"><div class="table-wrap"><table>
       <thead><tr><th>Ασθενής</th><th>Τηλέφωνο</th><th>Υπογραφή</th><th>Ημ/νία</th><th></th></tr></thead>
       <tbody>${gdpr.length?gdpr.map(c=>`<tr>
-        <td style="font-weight:500;cursor:pointer" ${c.patients?`data-patient="${c.patients.id}"`:''}>${esc((c.patients&&c.patients.full_name)||'—')}</td>
+        <td style="font-weight:500;cursor:pointer" ${c.patients?`data-patient="${c.patients.id}" data-patient-tab="patconsents"`:''}>${esc((c.patients&&c.patients.full_name)||'—')}</td>
         <td style="font-family:var(--mono);font-size:12px;color:var(--text-2)">${esc((c.patients&&c.patients.phone)||'—')}</td>
         <td>${c.signed?badge('✓ Υπογεγραμμένο','#E1F5EE','#0F6E56'):badge('Εκκρεμεί','#FAEEDA','#854F0B')}</td>
         <td style="font-size:12px;color:var(--text-2)">${fmt(c.signed_at)}</td>
@@ -3936,7 +3937,7 @@ function bindEvents() {
 
   // Patients
   document.querySelectorAll('[data-patient]').forEach(el => {
-    el.onclick = e => { if(!e.target.closest('button[data-patient]')&&!e.target.matches('button[data-patient]')) { loadPatientDetail(el.dataset.patient); } };
+    el.onclick = e => { if(!e.target.closest('button[data-patient]')&&!e.target.matches('button[data-patient]')) { loadPatientDetail(el.dataset.patient, el.dataset.patientTab); } };
   });
   document.querySelectorAll('button[data-patient]').forEach(el => {
     el.onclick = e => { e.stopPropagation(); loadPatientDetail(el.dataset.patient); };
