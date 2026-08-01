@@ -290,6 +290,7 @@ document.getElementById('app-build-info').textContent = `v${APP_VERSION} · ${BU
 
 // ── ΑΠΛΟΠΟΙΗΜΕΝΕΣ ΟΜΑΔΕΣ ΣΥΝΑΙΝΕΣΗΣ (όλα εκτός Laser, που κρατά τη δική του λεπτομερή φόρμα) ──
 const CONSENT_GROUPS = ['Καθαρισμός Προσώπου','Θεραπεία Προσώπου','Μεσοθεραπεία','Peeling','Ηλεκτρόλυση'];
+const CF_SKIN_TYPE_OPTIONS = ['Ακμή','Anti-aging','Ευαισθησία','Υπερλιπαρότητα','Ξηρότητα/Αφυδάτωση','Πανάδες/Ρυτίδες'];
 const CONSENT_AFTERCARE = 'Μετά τη θεραπεία αποφεύγω για μερικές ώρες την έντονη σωματική άσκηση, το χαμάμ και τη σάουνα, την άμεση έκθεση στον ήλιο, την έντονη τριβή και το πολύ ζεστό νερό στην περιοχή. Η χρήση αντηλιακού με πολύ υψηλό δείκτη προστασίας είναι απαραίτητη, και η έκθεση στον ήλιο γίνεται σύμφωνα με την καθοδήγηση του θεραπευτή. Σε περίπτωση οποιασδήποτε μη αναμενόμενης αντίδρασης, οφείλω να επικοινωνήσω άμεσα με τον θεραπευτή.';
 const CONSENT_GROUP_TEXTS = {
   'Καθαρισμός Προσώπου': `Η θεραπεία καθαρισμού προσώπου περιλαμβάνει καθαρισμό, ατμό, εξαγωγή σμήγματος/ακαθαρσιών από τους πόρους και εφαρμογή κατάλληλης μάσκας. Σκοπός είναι η βελτίωση της υφής και της καθαριότητας της επιδερμίδας.
@@ -6613,7 +6614,13 @@ async function openConsultationFormModal(opts) {
       </div>
 
       <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin:16px 0 10px">📌 Skin Profile</div>
-      <div class="form-group"><label class="form-label">Τύπος Δέρματος / Κύρια Ανάγκη</label><input class="form-control" id="cf-skin-type" placeholder="π.χ. Anti-aging, Ξηρότητα/Αφυδάτωση"/></div>
+      <div class="form-group"><label class="form-label">Τύπος Δέρματος / Πρόβλημα</label>
+        <div style="display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:4px">
+          ${CF_SKIN_TYPE_OPTIONS.map(opt=>`<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" class="cf-skin-checkbox" value="${esc(opt)}"/> ${esc(opt)}</label>`).join('')}
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="cf-skin-other-check"/> Άλλο:</label>
+          <input class="form-control" id="cf-skin-other" placeholder="διευκρίνιση" style="max-width:200px"/>
+        </div>
+      </div>
       <div class="form-group"><label class="form-label">Παρατηρήσεις Θεραπευτή</label><textarea class="form-control" id="cf-notes" rows="2"></textarea></div>
 
       <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin:16px 0 10px">🏥 In-Clinic (επίλεξε από τη λίστα ή γράψε ελεύθερα, μία θεραπεία ανά γραμμή)</div>
@@ -6685,7 +6692,10 @@ async function openConsultationFormModal(opts) {
     errEl.textContent = '';
     if (!selectedPatientId) { errEl.textContent = 'Επίλεξε πρώτα έναν υπάρχοντα ασθενή.'; return; }
 
-    const skinType = document.getElementById('cf-skin-type').value.trim();
+    const skinChecks = Array.from(document.querySelectorAll('.cf-skin-checkbox:checked')).map(el=>el.value);
+    const skinOther = document.getElementById('cf-skin-other').value.trim();
+    if (document.getElementById('cf-skin-other-check').checked && skinOther) skinChecks.push(skinOther);
+    const skinType = skinChecks.join(', ');
     const notes = document.getElementById('cf-notes').value.trim();
     const step1 = document.getElementById('cf-step1').value.trim();
     const step2 = document.getElementById('cf-step2').value.trim();
