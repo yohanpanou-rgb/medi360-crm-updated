@@ -216,7 +216,7 @@ Deno.serve(async (req: Request) => {
     const senderName = String(body.clinic_name || 'Beauty Line').replace(/[\r\n]/g, '');
     const subject = `Your personalised skincare plan — ${body.clinic_name || 'Beauty Line'}`;
 
-    const parts = [
+    const headerLines = [
       `From: ${senderName} <yourbeautyline@gmail.com>`,
       `To: ${to}`,
       body.therapist_email ? `Bcc: ${body.therapist_email}` : '',
@@ -224,11 +224,13 @@ Deno.serve(async (req: Request) => {
       `MIME-Version: 1.0`,
       `Content-Type: text/html; charset="UTF-8"`,
       `Content-Transfer-Encoding: base64`,
-      ``,
-      b64utf8(html),
     ].filter((line) => line !== '');
 
-    const raw = b64utf8(parts.join('\r\n'))
+    // Η κενή γραμμή εδώ ΕΙΝΑΙ ο διαχωριστής headers/σώματος (RFC 2045) — προσοχή να
+    // μην περάσει ποτέ ξανά μέσα από ένα filter(line !== '') σαν τα headers, αλλιώς
+    // η Gmail παίρνει το μήνυμα χωρίς σαφές όριο headers/body και το σώμα βγαίνει κενό.
+    const message = headerLines.join('\r\n') + '\r\n\r\n' + b64utf8(html);
+    const raw = b64utf8(message)
       .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
     const gmailRes = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {

@@ -6,9 +6,11 @@
 // Deploy with:
 //   supabase functions deploy send-report-email
 //
-// Required secrets (set once via `supabase secrets set`, see README further down):
-//   RESEND_API_KEY     — API key from resend.com
-//   REPORT_FROM_EMAIL  — a sender address verified in Resend (e.g. reports@yourdomain.gr)
+// Sends via the Gmail API (same mechanism as send-consultation-email/send-consent-email),
+// not Resend — Resend requires verifying a domain you own before it will deliver to real
+// recipients, which yourbeautyline@gmail.com can never satisfy. Shares the
+// GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET/BL_REFRESH_TOKEN secrets with those other
+// two functions — no separate secrets needed here.
 //
 // SUPABASE_URL and SUPABASE_ANON_KEY are injected automatically by the Supabase
 // runtime — no need to set those as secrets yourself.
@@ -133,6 +135,30 @@ function renderReportEmailHtml(opts: {
 </body></html>`;
 }
 
+async function getGmailAccessToken(): Promise<string> {
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: Deno.env.get('GOOGLE_CLIENT_ID')!,
+      client_secret: Deno.env.get('GOOGLE_CLIENT_SECRET')!,
+      refresh_token: Deno.env.get('BL_REFRESH_TOKEN')!,
+      grant_type: 'refresh_token',
+    }),
+  });
+  const data = await res.json();
+  if (!data.access_token) throw new Error('Token error: ' + JSON.stringify(data));
+  return data.access_token;
+}
+
+// UTF-8 safe base64
+function b64utf8(s: string): string {
+  const bytes = new TextEncoder().encode(s);
+  let bin = '';
+  bytes.forEach((b) => { bin += String.fromCharCode(b); });
+  return btoa(bin);
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS });
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
@@ -170,10 +196,6 @@ Deno.serve(async (req: Request) => {
     const stats = body?.stats;
     if (!to || !stats) return json({ error: 'Λείπουν στοιχεία (to/stats)' }, 400);
 
-    const resendKey = Deno.env.get('RESEND_API_KEY');
-    if (!resendKey) return json({ error: 'RESEND_API_KEY δεν έχει ρυθμιστεί στα Supabase secrets' }, 500);
-    const fromEmail = Deno.env.get('REPORT_FROM_EMAIL') || 'onboarding@resend.dev';
-
     const html = renderReportEmailHtml({
       clinic_name: body.clinic_name,
       range: body.range,
@@ -181,26 +203,33 @@ Deno.serve(async (req: Request) => {
       sender: profile.full_name,
     });
 
-    const resendRes = await fetch('https://api.resend.com/emails', {
+    const token = await getGmailAccessToken();
+    const senderName = String(body.clinic_name || 'Beauty Line').replace(/[\r\n]/g, '');
+    const subject = `Αναφορά ${body.clinic_name || 'Κλινικής'} (${body.range?.from} — ${body.range?.to})`;
+
+    const headerLines = [
+      `From: ${senderName} <yourbeautyline@gmail.com>`,
+      `To: ${to}`,
+      `Subject: =?UTF-8?B?${b64utf8(subject)}?=`,
+      `MIME-Version: 1.0`,
+      `Content-Type: text/html; charset="UTF-8"`,
+      `Content-Transfer-Encoding: base64`,
+    ];
+    // Η κενή γραμμή εδώ ΕΙΝΑΙ ο διαχωριστής headers/σώματος (RFC 2045) — βλ. σχόλιο
+    // στο ίδιο σημείο του send-consultation-email/index.ts.
+    const message = headerLines.join('\r\n') + '\r\n\r\n' + b64utf8(html);
+    const raw = b64utf8(message)
+      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+    const gmailRes = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${resendKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        from: fromEmail,
-        to: [to],
-        subject: `Αναφορά ${body.clinic_name || 'Κλινικής'} (${body.range?.from} — ${body.range?.to})`,
-        html,
-      }),
+      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ raw }),
     });
+    const out = await gmailRes.json();
+    if (out.error) return json({ error: `Αποτυχία αποστολής email: ${JSON.stringify(out.error)}` }, 502);
 
-    if (!resendRes.ok) {
-      const errText = await resendRes.text();
-      return json({ error: `Αποτυχία αποστολής email: ${errText}` }, 502);
-    }
-
-    return json({ ok: true });
+    return json({ ok: true, id: out.id });
   } catch (e) {
     return json({ error: e instanceof Error ? e.message : 'Άγνωστο σφάλμα' }, 500);
   }
