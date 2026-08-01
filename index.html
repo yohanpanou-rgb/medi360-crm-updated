@@ -7239,18 +7239,18 @@ async function openHistoryFormModal(opts) {
       <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px">📌 Προσωπικά Στοιχεία</div>
       <div class="form-group"><label class="form-label">Ονοματεπώνυμο *</label><input class="form-control" id="hf-name" value="${esc(p.full_name || '')}"/></div>
       <div class="form-row">
-        <div class="form-group"><label class="form-label">Ημερομηνία Γέννησης *</label><input class="form-control" id="hf-dob" type="date" value="${p.dob || ''}"/></div>
+        <div class="form-group"><label class="form-label">Ημερομηνία Γέννησης</label><input class="form-control" id="hf-dob" type="date" value="${p.dob || ''}"/></div>
         <div class="form-group"><label class="form-label">Τηλέφωνο *</label><input class="form-control" id="hf-phone" value="${esc(p.phone || '')}"/></div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label class="form-label">Email *</label><input class="form-control" id="hf-email" type="email" value="${esc(p.email || '')}"/></div>
-        <div class="form-group"><label class="form-label">Περιοχή Κατοικίας *</label>
+        <div class="form-group"><label class="form-label">Email</label><input class="form-control" id="hf-email" type="email" value="${esc(p.email || '')}"/></div>
+        <div class="form-group"><label class="form-label">Περιοχή Κατοικίας</label>
           <input class="form-control" id="hf-city" list="hf-city-list" placeholder="Επίλεξε από τη λίστα ή γράψε νέα περιοχή" value="${esc(p.city || '')}"/>
           <datalist id="hf-city-list">${knownCities.map(c => `<option value="${esc(c)}"></option>`).join('')}</datalist>
         </div>
       </div>
 
-      <div style="margin-top:18px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px">Από πού μας γνωρίσατε *</div>
+      <div style="margin-top:18px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px">Από πού μας γνωρίσατε</div>
       <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px">
         ${HISTORY_FORM_SOURCES.map(s => `<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
           <input type="radio" name="hf-source" value="${esc(s)}" ${srcKnown === s ? 'checked' : ''} style="accent-color:var(--blue)"/> ${esc(s)}
@@ -7283,7 +7283,7 @@ async function openHistoryFormModal(opts) {
       </div>
 
       <div style="margin-top:14px">
-        <div style="font-size:13px;margin-bottom:8px">Θέλω να λαμβάνω email από το Beauty Line με επιστημονικά νέα, οδηγίες και tips για την φροντίδα της επιδερμίδας μου. *</div>
+        <div style="font-size:13px;margin-bottom:8px">Θέλω να λαμβάνω email από το Beauty Line με επιστημονικά νέα, οδηγίες και tips για την φροντίδα της επιδερμίδας μου.</div>
         <div style="display:flex;gap:16px">
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px"><input type="radio" name="hf-marketing" value="yes" ${p.marketing_opt_in === true ? 'checked' : ''} style="accent-color:var(--blue)"/> Ναι</label>
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px"><input type="radio" name="hf-marketing" value="no" ${p.marketing_opt_in === false ? 'checked' : ''} style="accent-color:var(--blue)"/> Όχι</label>
@@ -7346,15 +7346,23 @@ async function openHistoryFormModal(opts) {
     const source = sourceEl && sourceEl.value === '__other__' ? document.getElementById('hf-source-other').value.trim() : (sourceEl ? sourceEl.value : '');
     const gdpr = document.getElementById('hf-gdpr').checked;
     const marketingEl = document.querySelector('input[name="hf-marketing"]:checked');
-    if (!name || !dob || !phone || !email || !city || !source || !gdpr || !marketingEl) {
-      errEl.textContent = 'Συμπλήρωσε όλα τα υποχρεωτικά πεδία (*) και αποδέξου τη συναίνεση GDPR.';
+    // Μόνο ό,τι χρειάζεται πραγματικά για να καταγραφεί έγκυρα η συναίνεση GDPR είναι
+    // υποχρεωτικό (Όνομα, Τηλέφωνο, αποδοχή GDPR) — τα υπόλοιπα (DOB/Email/Περιοχή/Πηγή/
+    // marketing) είναι χρήσιμα αλλά δεν πρέπει να μπλοκάρουν την καταχώρηση όταν απλά δεν
+    // είναι γνωστά τη στιγμή που συμπληρώνεται η φόρμα στο ταμείο.
+    if (!name || !phone || !gdpr) {
+      errEl.textContent = 'Συμπλήρωσε Ονοματεπώνυμο, Τηλέφωνο και αποδέξου τη συναίνεση GDPR.';
+      errEl.scrollIntoView({behavior:'smooth', block:'center'});
       return;
     }
-    const dobDate = new Date(dob + 'T00:00:00');
-    const age = (Date.now() - dobDate.getTime()) / (365.25 * 24 * 3600 * 1000);
-    if (dobDate.getTime() > Date.now() || age > 120) {
-      errEl.textContent = 'Η ημερομηνία γέννησης δεν είναι έγκυρη — έλεγξε ξανά την τιμή.';
-      return;
+    if (dob) {
+      const dobDate = new Date(dob + 'T00:00:00');
+      const age = (Date.now() - dobDate.getTime()) / (365.25 * 24 * 3600 * 1000);
+      if (dobDate.getTime() > Date.now() || age > 120) {
+        errEl.textContent = 'Η ημερομηνία γέννησης δεν είναι έγκυρη — έλεγξε ξανά την τιμή.';
+        errEl.scrollIntoView({behavior:'smooth', block:'center'});
+        return;
+      }
     }
     const conditions = Array.from(document.querySelectorAll('.hf-condition:checked')).map(el => el.value);
     const conditionOther = document.getElementById('hf-condition-other').value.trim();
@@ -7363,8 +7371,8 @@ async function openHistoryFormModal(opts) {
     const btn = document.getElementById('hf-save');
     btn.textContent = 'Αποθήκευση...'; btn.disabled = true;
     const patch = {
-      full_name: normalizePatientName(name), dob, phone, email: email, city,
-      source,
+      full_name: normalizePatientName(name), dob: dob || null, phone, email: email || null, city: city || null,
+      source: source || null,
       medical_history: medicalHistory || null,
       allergies: document.getElementById('hf-allergies').value.trim() || null,
       medications: document.getElementById('hf-medications').value.trim() || null,
@@ -7372,7 +7380,7 @@ async function openHistoryFormModal(opts) {
       avoid_body_areas: document.getElementById('hf-avoid-areas').value.trim() || null,
       gdpr_signed: true,
       gdpr_signed_at: p.gdpr_signed ? undefined : new Date().toISOString(),
-      marketing_opt_in: marketingEl.value === 'yes',
+      marketing_opt_in: marketingEl ? marketingEl.value === 'yes' : undefined,
       medical_history_completed: true,
       medical_history_completed_at: p.medical_history_completed ? undefined : new Date().toISOString(),
     };
