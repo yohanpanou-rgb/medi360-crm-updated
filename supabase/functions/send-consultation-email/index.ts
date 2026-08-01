@@ -5,15 +5,21 @@
 // iPhone-Gmail-dark-mode contrast fix — solid hex backgrounds instead of
 // rgba, explicit -webkit-text-fill-color on every colored text node).
 //
+// Sends via the Gmail API (same mechanism as send-consent-email), not Resend —
+// Resend requires verifying a domain you own before it will deliver to real
+// recipients, which yourbeautyline@gmail.com can never satisfy (nobody can
+// verify ownership of gmail.com). Sending through Gmail's own API as the
+// already-authorized yourbeautyline@gmail.com account has no such
+// restriction and reuses infrastructure already proven to work.
+//
 // Called from index.html via:
 //   sb.functions.invoke('send-consultation-email', { body: { to, therapist_email, clinic_name, booking_link, website_link, instagram_link, facebook_link, maps_link, client_name, skin_line, expected_results, in_clinic, homecare, additional_notes } })
 //
 // Deploy with:
 //   supabase functions deploy send-consultation-email
 //
-// Required secrets (reuses the ones already set for send-report-email):
-//   RESEND_API_KEY     — API key from resend.com
-//   REPORT_FROM_EMAIL  — a sender address verified in Resend
+// Required secrets (already set — shared with send-consent-email):
+//   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, BL_REFRESH_TOKEN
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -139,6 +145,30 @@ ${d.additionalNotes ? section('Notes', 'Σημειώσεις', `<div style="colo
 </html>`;
 }
 
+async function getGmailAccessToken(): Promise<string> {
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: Deno.env.get('GOOGLE_CLIENT_ID')!,
+      client_secret: Deno.env.get('GOOGLE_CLIENT_SECRET')!,
+      refresh_token: Deno.env.get('BL_REFRESH_TOKEN')!,
+      grant_type: 'refresh_token',
+    }),
+  });
+  const data = await res.json();
+  if (!data.access_token) throw new Error('Token error: ' + JSON.stringify(data));
+  return data.access_token;
+}
+
+// UTF-8 safe base64
+function b64utf8(s: string): string {
+  const bytes = new TextEncoder().encode(s);
+  let bin = '';
+  bytes.forEach((b) => { bin += String.fromCharCode(b); });
+  return btoa(bin);
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS });
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
@@ -167,10 +197,6 @@ Deno.serve(async (req: Request) => {
     const to = body?.to;
     if (!to) return json({ error: 'Λείπει το email παραλήπτη (to)' }, 400);
 
-    const resendKey = Deno.env.get('RESEND_API_KEY');
-    if (!resendKey) return json({ error: 'RESEND_API_KEY δεν έχει ρυθμιστεί στα Supabase secrets' }, 500);
-    const fromEmail = Deno.env.get('REPORT_FROM_EMAIL') || 'onboarding@resend.dev';
-
     const html = renderConsultationEmailHtml({
       clientName: body.client_name,
       skinLine: body.skin_line,
@@ -186,24 +212,34 @@ Deno.serve(async (req: Request) => {
       senderName: body.clinic_name,
     });
 
-    const resendRes = await fetch('https://api.resend.com/emails', {
+    const token = await getGmailAccessToken();
+    const senderName = String(body.clinic_name || 'Beauty Line').replace(/[\r\n]/g, '');
+    const subject = `Your personalised skincare plan — ${body.clinic_name || 'Beauty Line'}`;
+
+    const parts = [
+      `From: ${senderName} <yourbeautyline@gmail.com>`,
+      `To: ${to}`,
+      body.therapist_email ? `Bcc: ${body.therapist_email}` : '',
+      `Subject: =?UTF-8?B?${b64utf8(subject)}?=`,
+      `MIME-Version: 1.0`,
+      `Content-Type: text/html; charset="UTF-8"`,
+      `Content-Transfer-Encoding: base64`,
+      ``,
+      b64utf8(html),
+    ].filter((line) => line !== '');
+
+    const raw = b64utf8(parts.join('\r\n'))
+      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+    const gmailRes = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        from: fromEmail,
-        to: [to],
-        bcc: body.therapist_email ? [body.therapist_email] : undefined,
-        subject: `Your personalised skincare plan — ${body.clinic_name || 'Beauty Line'}`,
-        html,
-      }),
+      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ raw }),
     });
+    const out = await gmailRes.json();
+    if (out.error) return json({ error: `Αποτυχία αποστολής email: ${JSON.stringify(out.error)}` }, 502);
 
-    if (!resendRes.ok) {
-      const errText = await resendRes.text();
-      return json({ error: `Αποτυχία αποστολής email: ${errText}` }, 502);
-    }
-
-    return json({ ok: true });
+    return json({ ok: true, id: out.id });
   } catch (e) {
     return json({ error: e instanceof Error ? e.message : 'Άγνωστο σφάλμα' }, 500);
   }
