@@ -703,6 +703,8 @@ async function loadPageData() {
     const {data:svcRows} = await sb.from('appointments').select('service_name').eq('clinic_id',cid).not('service_name','is',null);
     S.allServiceNames = [...new Set((svcRows||[]).map(r=>(r.service_name||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'el'));
     S.serviceConsentMap = (S.clinic&&S.clinic.settings&&S.clinic.settings.service_consent_groups)||{};
+    S._consultServicesDraft = [...((S.clinic&&S.clinic.settings&&S.clinic.settings.consultation_services)||[])];
+    S._consultProductsDraft = JSON.parse(JSON.stringify((S.clinic&&S.clinic.settings&&S.clinic.settings.consultation_products)||{cleaning:[],care:[],protection:[]}));
   }
   if (S.page==='reports') {
     if (!S.reportRange) {
@@ -3010,7 +3012,7 @@ function renderConsents() {
     </div>
     <!-- Tabs -->
     <div style="display:flex;gap:0;border-bottom:1px solid var(--border-2);margin-bottom:20px">
-      ${[{id:'gdpr',l:`GDPR (${gdpr.length})`},{id:'service',l:`Υπηρεσιών (${svc.length})`},{id:'templates',l:'Templates'},{id:'mapping',l:'Αντιστοίχιση Υπηρεσιών'}].map(t=>`<button class="btn" style="border-radius:0;border-bottom:2px solid ${conTab===t.id?'var(--blue)':'transparent'};color:${conTab===t.id?'var(--blue)':'var(--text-2)'};background:transparent;padding:8px 16px;font-size:12px" data-con-tab="${t.id}">${t.l}</button>`).join('')}
+      ${[{id:'gdpr',l:`GDPR (${gdpr.length})`},{id:'service',l:`Υπηρεσιών (${svc.length})`},{id:'templates',l:'Templates'},{id:'mapping',l:'Αντιστοίχιση Υπηρεσιών'},{id:'consult-lists',l:'Λίστες Consultation'}].map(t=>`<button class="btn" style="border-radius:0;border-bottom:2px solid ${conTab===t.id?'var(--blue)':'transparent'};color:${conTab===t.id?'var(--blue)':'var(--text-2)'};background:transparent;padding:8px 16px;font-size:12px" data-con-tab="${t.id}">${t.l}</button>`).join('')}
     </div>
     ${conTab==='gdpr'?`<div class="card"><div class="table-wrap"><table>
       <thead><tr><th>Ασθενής</th><th>Τηλέφωνο</th><th>Υπογραφή</th><th>Ημ/νία</th><th></th></tr></thead>
@@ -3065,6 +3067,41 @@ function renderConsents() {
         <div id="save-service-consent-map-result" style="font-size:12px"></div>
       </div>
     </div>`:''}
+    ${conTab==='consult-lists'?(()=>{
+      const chipList = (items, removeAttr, cat) => (items&&items.length)
+        ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">${items.map((v,i)=>`<span style="display:inline-flex;align-items:center;gap:6px;background:var(--surface-2);border-radius:20px;padding:5px 6px 5px 12px;font-size:12px">${esc(v)}<span style="cursor:pointer;color:var(--red);font-weight:700;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%" ${removeAttr}="${i}"${cat?` data-cat="${esc(cat)}"`:''}>×</span></span>`).join('')}</div>`
+        : `<div style="font-size:12px;color:var(--text-2);margin-bottom:12px">Δεν έχει προστεθεί τίποτα ακόμα — χωρίς λίστα, η φόρμα Consultation θα δείχνει αυτόματα ό,τι έχει χρησιμοποιηθεί ξανά.</div>`;
+      const addRow = (inputId, btnAttr, placeholder) => `
+        <div style="display:flex;gap:8px">
+          <input class="form-control" id="${inputId}" placeholder="${esc(placeholder)}" style="max-width:320px"/>
+          <button class="btn btn-ghost btn-sm" ${btnAttr}>+ Προσθήκη</button>
+        </div>`;
+      return `
+      <div class="card" style="margin-bottom:16px">
+        <div style="padding:16px 20px;border-bottom:1px solid var(--border-2)">
+          <div style="font-size:13px;font-weight:600;color:var(--navy)">Υπηρεσίες In-Clinic</div>
+          <div style="font-size:12px;color:var(--text-2);margin-top:4px">Ποιες υπηρεσίες εμφανίζονται στη λίστα επιλογής της φόρμας Consultation (In-Clinic).</div>
+        </div>
+        <div style="padding:16px 20px">
+          ${chipList(S._consultServicesDraft, 'data-remove-consult-service')}
+          ${addRow('new-consult-service', 'id="add-consult-service"', 'π.χ. Βαθύς Καθαρισμός')}
+        </div>
+      </div>
+      ${[['cleaning','Καθημερινός Καθαρισμός'],['care','Ενεργή Περιποίηση'],['protection','Προστασία']].map(([cat,label])=>`
+      <div class="card" style="margin-bottom:16px">
+        <div style="padding:16px 20px;border-bottom:1px solid var(--border-2)">
+          <div style="font-size:13px;font-weight:600;color:var(--navy)">${esc(label)}</div>
+        </div>
+        <div style="padding:16px 20px">
+          ${chipList((S._consultProductsDraft||{})[cat], 'data-remove-consult-product', cat)}
+          ${addRow('new-consult-product-'+cat, `data-add-consult-product="${cat}"`, 'όνομα προϊόντος')}
+        </div>
+      </div>`).join('')}
+      <div style="display:flex;align-items:center;gap:12px">
+        <button class="btn btn-primary" id="save-consult-lists">Αποθήκευση Λιστών</button>
+        <div id="save-consult-lists-result" style="font-size:12px"></div>
+      </div>`;
+    })():''}
   </div>`;
 }
 
@@ -5049,6 +5086,58 @@ function bindEvents() {
     if (result) { result.innerHTML = '<span style="color:var(--green)">✓ Αποθηκεύτηκε</span>'; setTimeout(()=>{ if(result) result.innerHTML=''; }, 2500); }
   });
 
+  // Consultation curated services/products lists
+  const _addSvc = document.getElementById('add-consult-service');
+  if (_addSvc) _addSvc.addEventListener('click', () => {
+    const inp = document.getElementById('new-consult-service');
+    const v = (inp&&inp.value||'').trim();
+    if (!v) return;
+    S._consultServicesDraft = S._consultServicesDraft||[];
+    if (!S._consultServicesDraft.includes(v)) S._consultServicesDraft.push(v);
+    render();
+  });
+  document.querySelectorAll('[data-remove-consult-service]').forEach(el => {
+    el.addEventListener('click', () => {
+      const i = Number(el.dataset.removeConsultService);
+      S._consultServicesDraft.splice(i,1);
+      render();
+    });
+  });
+  document.querySelectorAll('[data-add-consult-product]').forEach(el => {
+    el.addEventListener('click', () => {
+      const cat = el.dataset.addConsultProduct;
+      const inp = document.getElementById('new-consult-product-'+cat);
+      const v = (inp&&inp.value||'').trim();
+      if (!v) return;
+      S._consultProductsDraft = S._consultProductsDraft||{cleaning:[],care:[],protection:[]};
+      S._consultProductsDraft[cat] = S._consultProductsDraft[cat]||[];
+      if (!S._consultProductsDraft[cat].includes(v)) S._consultProductsDraft[cat].push(v);
+      render();
+    });
+  });
+  document.querySelectorAll('[data-remove-consult-product]').forEach(el => {
+    el.addEventListener('click', () => {
+      const cat = el.dataset.cat;
+      const i = Number(el.dataset.removeConsultProduct);
+      S._consultProductsDraft[cat].splice(i,1);
+      render();
+    });
+  });
+  const _scl = document.getElementById('save-consult-lists');
+  if (_scl) _scl.addEventListener('click', async () => {
+    const result = document.getElementById('save-consult-lists-result');
+    _scl.textContent = 'Αποθήκευση...'; _scl.disabled = true;
+    const settings = Object.assign({}, (S.clinic&&S.clinic.settings)||{}, {
+      consultation_services: S._consultServicesDraft||[],
+      consultation_products: S._consultProductsDraft||{cleaning:[],care:[],protection:[]}
+    });
+    const {error} = await sb.from('clinics').update({settings}).eq('id', clinicId());
+    _scl.textContent = 'Αποθήκευση Λιστών'; _scl.disabled = false;
+    if (error) { if(result) result.innerHTML = '<span style="color:var(--red)">✗ '+esc(error.message)+'</span>'; return; }
+    if (S.clinic) S.clinic.settings = settings;
+    if (result) { result.innerHTML = '<span style="color:var(--green)">✓ Αποθηκεύτηκε</span>'; setTimeout(()=>{ if(result) result.innerHTML=''; }, 2500); }
+  });
+
   // Laser form click
   document.querySelectorAll('[data-laser]').forEach(el => {
     el.onclick = () => { loadLaserForm(el.dataset.laser); };
@@ -6433,6 +6522,8 @@ function _cfSplitLines(text) {
 }
 
 async function _cfLoadServiceOptions() {
+  const curated = (S.clinic&&S.clinic.settings&&S.clinic.settings.consultation_services)||[];
+  if (curated.length) return [...curated].sort((a,b)=>a.localeCompare(b,'el'));
   const cid = clinicId();
   const {data} = await sb.from('appointments').select('service_name').eq('clinic_id',cid).not('service_name','is',null).limit(2000);
   return [...new Set((data||[]).map(r=>(r.service_name||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'el'));
@@ -6449,6 +6540,16 @@ function _cfParseHomecareLine(text, label) {
 // χρησιμοποιηθεί σε προηγούμενα consultation της κλινικής — ίδια λογική με το
 // _cfLoadServiceOptions() (άντληση από πραγματικά ιστορικά δεδομένα, όχι hardcoded λίστα).
 async function _cfLoadHomecareOptions() {
+  const sortGr = s => [...s].sort((a,b)=>a.localeCompare(b,'el'));
+  const curated = (S.clinic&&S.clinic.settings&&S.clinic.settings.consultation_products)||{};
+  const hasCurated = ['cleaning','care','protection'].some(cat=>(curated[cat]||[]).length);
+  if (hasCurated) {
+    return {
+      cleaning: sortGr(curated.cleaning||[]),
+      care: sortGr(curated.care||[]),
+      protection: sortGr(curated.protection||[])
+    };
+  }
   const cid = clinicId();
   const {data} = await sb.from('gdpr_consents').select('consent_text').eq('clinic_id',cid).ilike('consent_text','%HOMECARE%').limit(500);
   const cleaning = new Set(), care = new Set(), protection = new Set();
@@ -6457,7 +6558,6 @@ async function _cfLoadHomecareOptions() {
     _cfParseHomecareLine(r.consent_text,'Ενεργή περιποίηση').forEach(x=>care.add(x));
     _cfParseHomecareLine(r.consent_text,'Προστασία').forEach(x=>protection.add(x));
   });
-  const sortGr = s => [...s].sort((a,b)=>a.localeCompare(b,'el'));
   return { cleaning: sortGr(cleaning), care: sortGr(care), protection: sortGr(protection) };
 }
 
