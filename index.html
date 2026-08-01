@@ -6586,6 +6586,13 @@ async function openConsultationFormModal(opts) {
       <option value="">➕ Επιλογή από προϊόντα που έχουν ξαναχρησιμοποιηθεί...</option>
       ${options.map(o=>`<option value="${esc(o)}">${esc(o)}</option>`).join('')}
     </select>`;
+  // Ίδια λογική προσθήκης με το .cf-service-picker (append γραμμή στο target textarea,
+  // όχι αντικατάσταση) — έχει νόημα να επιλεγούν πολλαπλά προβλήματα δέρματος.
+  const skinTypePickerHtml = (targetId) => `
+    <select class="form-control cf-service-picker" data-target="${targetId}" style="margin-bottom:6px">
+      <option value="">➕ Προσθήκη από λίστα...</option>
+      ${CF_SKIN_TYPE_OPTIONS.map(o=>`<option value="${esc(o)}">${esc(o)}</option>`).join('')}
+    </select>`;
 
   const ov = document.createElement('div');
   ov.id = 'cf-overlay';
@@ -6614,13 +6621,7 @@ async function openConsultationFormModal(opts) {
       </div>
 
       <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin:16px 0 10px">📌 Skin Profile</div>
-      <div class="form-group"><label class="form-label">Τύπος Δέρματος / Πρόβλημα</label>
-        <div style="display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:4px">
-          ${CF_SKIN_TYPE_OPTIONS.map(opt=>`<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" class="cf-skin-checkbox" value="${esc(opt)}"/> ${esc(opt)}</label>`).join('')}
-          <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="cf-skin-other-check"/> Άλλο:</label>
-          <input class="form-control" id="cf-skin-other" placeholder="διευκρίνιση" style="max-width:200px"/>
-        </div>
-      </div>
+      <div class="form-group"><label class="form-label">Τύπος Δέρματος / Πρόβλημα</label>${skinTypePickerHtml('cf-skin-type')}<textarea class="form-control" id="cf-skin-type" rows="2" placeholder="π.χ. Anti-aging, Ξηρότητα/Αφυδάτωση (ή γράψε ελεύθερα, μία ανά γραμμή)"></textarea></div>
       <div class="form-group"><label class="form-label">Παρατηρήσεις Θεραπευτή</label><textarea class="form-control" id="cf-notes" rows="2"></textarea></div>
 
       <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin:16px 0 10px">🏥 In-Clinic (επίλεξε από τη λίστα ή γράψε ελεύθερα, μία θεραπεία ανά γραμμή)</div>
@@ -6692,10 +6693,7 @@ async function openConsultationFormModal(opts) {
     errEl.textContent = '';
     if (!selectedPatientId) { errEl.textContent = 'Επίλεξε πρώτα έναν υπάρχοντα ασθενή.'; return; }
 
-    const skinChecks = Array.from(document.querySelectorAll('.cf-skin-checkbox:checked')).map(el=>el.value);
-    const skinOther = document.getElementById('cf-skin-other').value.trim();
-    if (document.getElementById('cf-skin-other-check').checked && skinOther) skinChecks.push(skinOther);
-    const skinType = skinChecks.join(', ');
+    const skinType = _cfSplitLines(document.getElementById('cf-skin-type').value).join(', ');
     const notes = document.getElementById('cf-notes').value.trim();
     const step1 = document.getElementById('cf-step1').value.trim();
     const step2 = document.getElementById('cf-step2').value.trim();
