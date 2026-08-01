@@ -704,7 +704,7 @@ async function loadPageData() {
     S.allServiceNames = [...new Set((svcRows||[]).map(r=>(r.service_name||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'el'));
     S.serviceConsentMap = (S.clinic&&S.clinic.settings&&S.clinic.settings.service_consent_groups)||{};
     S._consultServicesDraft = [...((S.clinic&&S.clinic.settings&&S.clinic.settings.consultation_services)||[])];
-    S._consultProductsDraft = JSON.parse(JSON.stringify((S.clinic&&S.clinic.settings&&S.clinic.settings.consultation_products)||{cleaning:[],care:[],protection:[]}));
+    S._consultProductsDraft = JSON.parse(JSON.stringify((S.clinic&&S.clinic.settings&&S.clinic.settings.consultation_products)||{cleaning:[],care:[],protection:[],body:[]}));
   }
   if (S.page==='reports') {
     if (!S.reportRange) {
@@ -3087,7 +3087,7 @@ function renderConsents() {
           ${addRow('new-consult-service', 'id="add-consult-service"', 'π.χ. Βαθύς Καθαρισμός')}
         </div>
       </div>
-      ${[['cleaning','Καθημερινός Καθαρισμός'],['care','Ενεργή Περιποίηση'],['protection','Προστασία']].map(([cat,label])=>`
+      ${[['cleaning','Καθημερινός Καθαρισμός'],['care','Ενεργή Περιποίηση'],['protection','Προστασία'],['body','Περιποίηση Σώματος']].map(([cat,label])=>`
       <div class="card" style="margin-bottom:16px">
         <div style="padding:16px 20px;border-bottom:1px solid var(--border-2)">
           <div style="font-size:13px;font-weight:600;color:var(--navy)">${esc(label)}</div>
@@ -5109,7 +5109,7 @@ function bindEvents() {
       const inp = document.getElementById('new-consult-product-'+cat);
       const v = (inp&&inp.value||'').trim();
       if (!v) return;
-      S._consultProductsDraft = S._consultProductsDraft||{cleaning:[],care:[],protection:[]};
+      S._consultProductsDraft = S._consultProductsDraft||{cleaning:[],care:[],protection:[],body:[]};
       S._consultProductsDraft[cat] = S._consultProductsDraft[cat]||[];
       if (!S._consultProductsDraft[cat].includes(v)) S._consultProductsDraft[cat].push(v);
       render();
@@ -5129,7 +5129,7 @@ function bindEvents() {
     _scl.textContent = 'Αποθήκευση...'; _scl.disabled = true;
     const settings = Object.assign({}, (S.clinic&&S.clinic.settings)||{}, {
       consultation_services: S._consultServicesDraft||[],
-      consultation_products: S._consultProductsDraft||{cleaning:[],care:[],protection:[]}
+      consultation_products: S._consultProductsDraft||{cleaning:[],care:[],protection:[],body:[]}
     });
     const {error} = await sb.from('clinics').update({settings}).eq('id', clinicId());
     _scl.textContent = 'Αποθήκευση Λιστών'; _scl.disabled = false;
@@ -6542,23 +6542,25 @@ function _cfParseHomecareLine(text, label) {
 async function _cfLoadHomecareOptions() {
   const sortGr = s => [...s].sort((a,b)=>a.localeCompare(b,'el'));
   const curated = (S.clinic&&S.clinic.settings&&S.clinic.settings.consultation_products)||{};
-  const hasCurated = ['cleaning','care','protection'].some(cat=>(curated[cat]||[]).length);
+  const hasCurated = ['cleaning','care','protection','body'].some(cat=>(curated[cat]||[]).length);
   if (hasCurated) {
     return {
       cleaning: sortGr(curated.cleaning||[]),
       care: sortGr(curated.care||[]),
-      protection: sortGr(curated.protection||[])
+      protection: sortGr(curated.protection||[]),
+      body: sortGr(curated.body||[])
     };
   }
   const cid = clinicId();
   const {data} = await sb.from('gdpr_consents').select('consent_text').eq('clinic_id',cid).ilike('consent_text','%HOMECARE%').limit(500);
-  const cleaning = new Set(), care = new Set(), protection = new Set();
+  const cleaning = new Set(), care = new Set(), protection = new Set(), body = new Set();
   (data||[]).forEach(r => {
     _cfParseHomecareLine(r.consent_text,'Καθημερινός καθαρισμός').forEach(x=>cleaning.add(x));
     _cfParseHomecareLine(r.consent_text,'Ενεργή περιποίηση').forEach(x=>care.add(x));
     _cfParseHomecareLine(r.consent_text,'Προστασία').forEach(x=>protection.add(x));
+    _cfParseHomecareLine(r.consent_text,'Περιποίηση σώματος').forEach(x=>body.add(x));
   });
-  return { cleaning: sortGr(cleaning), care: sortGr(care), protection: sortGr(protection) };
+  return { cleaning: sortGr(cleaning), care: sortGr(care), protection: sortGr(protection), body: sortGr(body) };
 }
 
 async function openConsultationFormModal(opts) {
@@ -6624,7 +6626,7 @@ async function openConsultationFormModal(opts) {
       <div class="form-group"><label class="form-label">Καθημερινός Καθαρισμός</label>${homecarePickerHtml('cf-prod-cleaning', homecareOptions.cleaning)}<textarea class="form-control" id="cf-prod-cleaning" rows="2"></textarea></div>
       <div class="form-group"><label class="form-label">Ενεργή Περιποίηση</label>${homecarePickerHtml('cf-prod-care', homecareOptions.care)}<textarea class="form-control" id="cf-prod-care" rows="2"></textarea></div>
       <div class="form-group"><label class="form-label">Προστασία</label>${homecarePickerHtml('cf-prod-protection', homecareOptions.protection)}<textarea class="form-control" id="cf-prod-protection" rows="2"></textarea></div>
-      <div class="form-group"><label class="form-label">Περιποίηση Σώματος</label><textarea class="form-control" id="cf-prod-body" rows="2"></textarea></div>
+      <div class="form-group"><label class="form-label">Περιποίηση Σώματος</label>${homecarePickerHtml('cf-prod-body', homecareOptions.body)}<textarea class="form-control" id="cf-prod-body" rows="2"></textarea></div>
 
       <div class="form-group"><label class="form-label">Σημειώσεις</label><textarea class="form-control" id="cf-additional-notes" rows="2"></textarea></div>
 
