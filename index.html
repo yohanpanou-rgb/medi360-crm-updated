@@ -2835,6 +2835,7 @@ function renderConsultations() {
   const fmtDate = d => d ? new Date(d).toLocaleDateString('el-GR',{day:'2-digit',month:'2-digit',year:'numeric'}) : '—';
   const fmtTime = d => d ? new Date(d).toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'}) : '';
 
+  const canDeleteConsult = ['clinic_admin','super_admin'].includes(S.profile&&S.profile.role);
   const typeLabel = t => ({consultation:'Consultation',gdpr:'GDPR','laser':'Laser',general:'Γενική'}[t]||t||'Consultation');
   const typeBadge = t => {
     const map = {consultation:'#E6F1FB|#185FA5',gdpr:'#E1F5EE|#0F6E56',laser:'#EEEDFE|#534AB7'};
@@ -2911,6 +2912,7 @@ function renderConsultations() {
           <th>Ημερομηνία</th>
           <th>Στοιχεία</th>
           <th>GDPR</th>
+          ${canDeleteConsult?'<th></th>':''}
         </tr></thead>
         <tbody>
         ${filtered.map(c=>{
@@ -2934,6 +2936,7 @@ function renderConsultations() {
             </td>
             <td style="font-size:12px;color:var(--text-2);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(notes)}</td>
             <td>${gdprOk?'<span style="color:#0F6E56;font-weight:600">✓</span>':'<span style="color:#A32D2D;font-weight:500">⚠ Όχι</span>'}</td>
+            ${canDeleteConsult?`<td onclick="event.stopPropagation()">${typ==='consultation'?`<button class="btn btn-ghost btn-sm" style="color:var(--red)" data-del-consult="${c.id}">🗑</button>`:''}</td>`:''}
           </tr>`;
         }).join('')}
         </tbody>
@@ -5053,6 +5056,17 @@ function bindEvents() {
     };
   });
 
+  // Delete consultation (μόνο clinic_admin/super_admin, βλ. canDeleteConsult στο renderConsultations)
+  document.querySelectorAll('[data-del-consult]').forEach(el => {
+    el.onclick = async () => {
+      if (!confirm('Σίγουρα θέλεις να διαγράψεις οριστικά αυτό το consultation; Δεν αναιρείται.')) return;
+      const {error} = await sb.from('gdpr_consents').delete().eq('id', el.dataset.delConsult);
+      if (error) { alert('Σφάλμα: '+error.message); return; }
+      await loadData();
+      render();
+    };
+  });
+
   // Seed the 5 standard consent-group templates (skips ones that already exist)
   const _scg = document.getElementById('seed-consent-groups');
   if (_scg) _scg.addEventListener('click', async () => {
@@ -6639,9 +6653,11 @@ async function openConsultationFormModal(opts) {
       <div class="form-group"><label class="form-label">Σημειώσεις</label><textarea class="form-control" id="cf-additional-notes" rows="2"></textarea></div>
 
       <div id="cf-error" style="color:var(--red);font-size:12px;margin-bottom:8px"></div>
+      <div id="cf-send-status" style="font-size:12px;margin-bottom:8px"></div>
       <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px">
-        <button class="btn btn-ghost" onclick="document.getElementById('cf-overlay').remove()">Ακύρωση</button>
-        <button class="btn btn-primary" id="cf-save">Αποθήκευση &amp; Αποστολή Email</button>
+        <button class="btn btn-ghost" onclick="document.getElementById('cf-overlay').remove()">Κλείσιμο</button>
+        <button class="btn btn-ghost" id="cf-send-email" style="display:none">📧 Αποστολή στον Πελάτη</button>
+        <button class="btn btn-primary" id="cf-save">Αποθήκευση</button>
       </div>
     </div>`;
   document.body.appendChild(ov);
@@ -6688,11 +6704,12 @@ async function openConsultationFormModal(opts) {
     ps.oninput = () => { clearTimeout(timer); timer = setTimeout(showResults, 200); };
   }
 
-  document.getElementById('cf-save').addEventListener('click', async () => {
-    const errEl = document.getElementById('cf-error');
-    errEl.textContent = '';
-    if (!selectedPatientId) { errEl.textContent = 'Επίλεξε πρώτα έναν υπάρχοντα ασθενή.'; return; }
+  // savedConsentId: null μέχρι το πρώτο επιτυχημένο Αποθήκευση — από κει και πέρα
+  // ξαναπατώντας Αποθήκευση κάνει UPDATE στην ίδια εγγραφή αντί για νέο INSERT,
+  // ώστε ο χειριστής να μπορεί να διορθώσει κάτι πριν πατήσει τελικά Αποστολή.
+  let savedConsentId = null;
 
+  function _cfBuildPayload() {
     const skinType = _cfSplitLines(document.getElementById('cf-skin-type').value).join(', ');
     const notes = document.getElementById('cf-notes').value.trim();
     const step1 = document.getElementById('cf-step1').value.trim();
@@ -6741,44 +6758,105 @@ async function openConsultationFormModal(opts) {
       + (inClinicBlob ? '\nIN-CLINIC\n'+inClinicBlob : '')
       + (homecareBlob ? '\nHOMECARE\n'+homecareBlob : '');
 
+    return {consent_text, skinLine, expectedResults, inClinicStepsForEmail, homecareStepsForEmail, additionalNotes, therapistEmail};
+  }
+
+  // Διορθώνει αυτόματα ορθογραφικά/τυπογραφικά λάθη στα δύο ελεύθερα πεδία
+  // κειμένου (όχι στα πεδία που γεμίζουν από curated λίστες — αυτά είναι ήδη
+  // σωστά γραμμένα). Αποτυγχάνει σιωπηλά (κρατάει το αρχικό κείμενο) αν η
+  // συνάρτηση δεν έχει ακόμα το ANTHROPIC_API_KEY ρυθμισμένο/deployed.
+  async function _cfApplyAiSpellcheck() {
+    const notesEl = document.getElementById('cf-notes');
+    const addEl = document.getElementById('cf-additional-notes');
+    const fields = {};
+    if (notesEl.value.trim()) fields.notes = notesEl.value.trim();
+    if (addEl.value.trim()) fields.additionalNotes = addEl.value.trim();
+    if (!Object.keys(fields).length) return;
+    try {
+      const {data, error} = await sb.functions.invoke('ai-fix-text', {body: {fields}});
+      if (error || !data || !data.fields) return;
+      if (data.fields.notes) notesEl.value = data.fields.notes;
+      if (data.fields.additionalNotes) addEl.value = data.fields.additionalNotes;
+    } catch (e) { /* κρατάμε το αρχικό κείμενο του χειριστή */ }
+  }
+
+  document.getElementById('cf-save').addEventListener('click', async () => {
+    const errEl = document.getElementById('cf-error');
+    const statusEl = document.getElementById('cf-send-status');
+    errEl.textContent = '';
+    if (!selectedPatientId) { errEl.textContent = 'Επίλεξε πρώτα έναν υπάρχοντα ασθενή.'; return; }
+
     const btn = document.getElementById('cf-save');
-    btn.textContent = 'Αποθήκευση...'; btn.disabled = true;
+    const wasAlreadySaved = !!savedConsentId;
+    btn.textContent = 'Έλεγχος ορθογραφίας...'; btn.disabled = true;
+    await _cfApplyAiSpellcheck();
+
+    const payload = _cfBuildPayload();
+    btn.textContent = wasAlreadySaved ? 'Ενημέρωση...' : 'Αποθήκευση...';
 
     const {data: patient, error: ptErr} = await sb.from('patients').select('*').eq('id', selectedPatientId).single();
-    if (ptErr || !patient) { errEl.textContent = 'Σφάλμα: '+(ptErr&&ptErr.message||'δεν βρέθηκε ασθενής'); btn.textContent='Αποθήκευση & Αποστολή Email'; btn.disabled=false; return; }
+    if (ptErr || !patient) { errEl.textContent = 'Σφάλμα: '+(ptErr&&ptErr.message||'δεν βρέθηκε ασθενής'); btn.textContent = wasAlreadySaved?'Ενημέρωση':'Αποθήκευση'; btn.disabled=false; return; }
 
-    const {error: insErr} = await sb.from('gdpr_consents').insert({
-      clinic_id: clinicId(), patient_id: selectedPatientId, consent_text, signed_at: new Date().toISOString(),
-    });
-    if (insErr) { errEl.textContent = 'Σφάλμα: '+insErr.message; btn.textContent='Αποθήκευση & Αποστολή Email'; btn.disabled=false; return; }
-
-    if (skinLine) await sb.from('patients').update({medical_history: skinLine}).eq('id', selectedPatientId).is('medical_history', null);
-
-    let emailStatus = '';
-    if (patient.email) {
-      const clinicInfo = S.clinic || {};
-      const {data: emailResult, error: emailErr} = await sb.functions.invoke('send-consultation-email', {
-        body: {
-          to: patient.email, therapist_email: therapistEmail || undefined,
-          clinic_name: clinicInfo.name, client_name: patient.full_name,
-          skin_line: skinLine, expected_results: expectedResults,
-          in_clinic_steps: inClinicStepsForEmail, homecare_steps: homecareStepsForEmail,
-          additional_notes: additionalNotes,
-          booking_link: clinicInfo.booking_link, website_link: clinicInfo.website,
-          instagram_link: clinicInfo.instagram, facebook_link: clinicInfo.facebook, maps_link: clinicInfo.maps_link,
-        },
-      });
-      const emailErrMsg = emailErr ? await extractInvokeErrorMessage(emailErr) : (emailResult&&emailResult.error||'');
-      emailStatus = emailErrMsg ? ' (⚠ το email δεν στάλθηκε: '+emailErrMsg+')' : ' + email στάλθηκε ✓';
+    if (wasAlreadySaved) {
+      const {error: updErr} = await sb.from('gdpr_consents').update({consent_text: payload.consent_text}).eq('id', savedConsentId);
+      if (updErr) { errEl.textContent = 'Σφάλμα: '+updErr.message; btn.textContent='Ενημέρωση'; btn.disabled=false; return; }
     } else {
-      emailStatus = ' (χωρίς email καταχωρημένο — δεν στάλθηκε)';
+      const {data: inserted, error: insErr} = await sb.from('gdpr_consents').insert({
+        clinic_id: clinicId(), patient_id: selectedPatientId, consent_text: payload.consent_text, signed_at: new Date().toISOString(),
+      }).select('id').single();
+      if (insErr) { errEl.textContent = 'Σφάλμα: '+insErr.message; btn.textContent='Αποθήκευση'; btn.disabled=false; return; }
+      savedConsentId = inserted.id;
     }
 
-    document.getElementById('cf-overlay').remove();
+    if (payload.skinLine) await sb.from('patients').update({medical_history: payload.skinLine}).eq('id', selectedPatientId).is('medical_history', null);
+
+    btn.textContent = 'Ενημέρωση'; btn.disabled = false;
+    const sendBtn = document.getElementById('cf-send-email');
+    if (patient.email) {
+      sendBtn.style.display = '';
+      statusEl.innerHTML = '<span style="color:var(--green)">✓ Αποθηκεύτηκε. Έλεγξε τα στοιχεία και πάτησε «Αποστολή στον Πελάτη» όταν είσαι έτοιμος/η — δεν στέλνεται αυτόματα.</span>';
+    } else {
+      statusEl.innerHTML = '<span style="color:var(--text-2)">✓ Αποθηκεύτηκε (ο ασθενής δεν έχει καταχωρημένο email — δεν μπορεί να σταλεί).</span>';
+    }
+
     if (S.patientDetail && S.patientDetail.id === selectedPatientId) await loadPatientDetail(selectedPatientId);
     if (S.page === 'consultations') await loadData();
-    render();
-    alert('✓ Αποθηκεύτηκε το consultation'+emailStatus);
+  });
+
+  document.getElementById('cf-send-email').addEventListener('click', async () => {
+    if (!savedConsentId) return;
+    const statusEl = document.getElementById('cf-send-status');
+    const sendBtn = document.getElementById('cf-send-email');
+    sendBtn.textContent = 'Αποστολή...'; sendBtn.disabled = true;
+
+    // Ξανα-χτίζουμε το payload εδώ (όχι από το save) γιατί ο χειριστής μπορεί να
+    // διόρθωσε κάτι στη φόρμα μετά το τελευταίο Αποθήκευση· κρατάμε και την
+    // εγγραφή στη βάση συγχρονισμένη με ό,τι στέλνεται τελικά.
+    const payload = _cfBuildPayload();
+    await sb.from('gdpr_consents').update({consent_text: payload.consent_text}).eq('id', savedConsentId);
+
+    const {data: patient} = await sb.from('patients').select('email,full_name').eq('id', selectedPatientId).single();
+    const clinicInfo = S.clinic || {};
+    const {data: emailResult, error: emailErr} = await sb.functions.invoke('send-consultation-email', {
+      body: {
+        to: patient&&patient.email, therapist_email: payload.therapistEmail || undefined,
+        clinic_name: clinicInfo.name, client_name: patient&&patient.full_name,
+        skin_line: payload.skinLine, expected_results: payload.expectedResults,
+        in_clinic_steps: payload.inClinicStepsForEmail, homecare_steps: payload.homecareStepsForEmail,
+        additional_notes: payload.additionalNotes,
+        booking_link: clinicInfo.booking_link, website_link: clinicInfo.website,
+        instagram_link: clinicInfo.instagram, facebook_link: clinicInfo.facebook, maps_link: clinicInfo.maps_link,
+      },
+    });
+    const emailErrMsg = emailErr ? await extractInvokeErrorMessage(emailErr) : (emailResult&&emailResult.error||'');
+    sendBtn.disabled = false;
+    if (emailErrMsg) {
+      sendBtn.textContent = '📧 Αποστολή στον Πελάτη';
+      statusEl.innerHTML = '<span style="color:var(--red)">⚠ Το email δεν στάλθηκε: '+esc(emailErrMsg)+'</span>';
+    } else {
+      sendBtn.textContent = '✓ Στάλθηκε';
+      statusEl.innerHTML = '<span style="color:var(--green)">✓ Το email στάλθηκε στον πελάτη.</span>';
+    }
   });
 }
 
