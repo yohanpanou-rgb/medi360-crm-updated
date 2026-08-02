@@ -413,6 +413,60 @@ function normalizeGreek(s) {
     .replace(/[^\wα-ωΑ-Ω0-9\s]/g,' ')
     .replace(/\s+/g,' ').trim();
 }
+
+// ── ΠΕΡΙΟΧΗ (Πόλη/Περιοχή) — dropdown αντί για ελεύθερο κείμενο, ώστε να μη
+// δημιουργούνται άλλες παραλλαγές της ίδιας περιοχής (π.χ. 9 διαφορετικές
+// γραφές του "Βριλήσσια"). Η λίστα φτιάχνεται ΖΩΝΤΑΝΑ από τα υπάρχοντα
+// patients.city της κλινικής: ομαδοποιούνται οι παραλλαγές (χωρίς τόνους/
+// κεφαλαία) και κρατάμε την πιο συχνή ΑΚΡΙΒΗ γραφή ανά ομάδα ως κανονική.
+async function getCanonicalCities() {
+  const cid = clinicId();
+  const {data} = await sb.from('patients').select('city').eq('clinic_id', cid).not('city', 'is', null);
+  const groups = {};
+  (data || []).forEach(r => {
+    const raw = (r.city || '').trim();
+    if (!raw) return;
+    const key = normalizeGreek(raw);
+    if (!key) return;
+    groups[key] = groups[key] || {};
+    groups[key][raw] = (groups[key][raw] || 0) + 1;
+  });
+  return Object.values(groups)
+    .map(variants => Object.entries(variants).sort((a, b) => b[1] - a[1])[0][0])
+    .sort((a, b) => a.localeCompare(b, 'el'));
+}
+// prefix: μοναδικό πρόθεμα id (π.χ. 'ep', 'hf') ώστε να μπαίνουν πολλά πεδία περιοχής στην ίδια σελίδα.
+function cityFieldHtml(prefix, currentValue, canonicalCities) {
+  const norm = normalizeGreek(currentValue || '');
+  const matched = norm ? canonicalCities.find(c => normalizeGreek(c) === norm) : null;
+  const isNew = !!currentValue && !matched;
+  return `
+    <select class="form-control" id="${prefix}-city-select">
+      <option value="" ${!currentValue ? 'selected' : ''}>— Επίλεξε περιοχή —</option>
+      ${canonicalCities.map(c => `<option value="${esc(c)}" ${matched === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}
+      <option value="__new__" ${isNew ? 'selected' : ''}>+ Νέα περιοχή…</option>
+    </select>
+    <input class="form-control" id="${prefix}-city-new" placeholder="Γράψε τη νέα περιοχή" style="margin-top:6px;${isNew ? '' : 'display:none'}" value="${esc(isNew ? currentValue : '')}"/>`;
+}
+function wireCityField(prefix) {
+  const sel = document.getElementById(prefix + '-city-select');
+  const inp = document.getElementById(prefix + '-city-new');
+  if (!sel || !inp) return;
+  sel.addEventListener('change', () => {
+    inp.style.display = sel.value === '__new__' ? '' : 'none';
+    if (sel.value === '__new__') inp.focus();
+  });
+}
+function getCityFieldValue(prefix) {
+  const sel = document.getElementById(prefix + '-city-select');
+  if (!sel) return '';
+  if (sel.value === '__new__') {
+    const inp = document.getElementById(prefix + '-city-new');
+    return (inp && inp.value || '').trim();
+  }
+  return sel.value;
+}
+
 function findServiceMatch(appointments, afterDateStr, treatmentText) {
   const afterDate = new Date(afterDateStr);
   const normTreatment = normalizeGreek(treatmentText);
@@ -7255,8 +7309,9 @@ async function discardUnmatchedConsultation(ucId) {
 }
 
 // ── ΕΠΕΞΕΡΓΑΣΙΑ ΣΤΟΙΧΕΙΩΝ ΑΣΘΕΝΗ (καρτέλα) ──
-function openEditPatientModal() {
+async function openEditPatientModal() {
   const p = S.patientDetail; if (!p) return;
+  const canonicalCities = await getCanonicalCities();
   const old = document.getElementById('lc-overlay'); if (old) old.remove();
   const ov = document.createElement('div');
   ov.id = 'lc-overlay';
@@ -7281,7 +7336,7 @@ function openEditPatientModal() {
             <option value="other" ${p.gender==='other'?'selected':''}>Άλλο</option>
           </select>
         </div>
-        <div class="form-group" style="grid-column:1/-1"><label class="form-label">Πόλη / Περιοχή</label><input class="form-control" id="ep-city" value="${esc(p.city||'')}"/></div>
+        <div class="form-group" style="grid-column:1/-1"><label class="form-label">Πόλη / Περιοχή</label>${cityFieldHtml('ep', p.city, canonicalCities)}</div>
         <div class="form-group" style="grid-column:1/-1">
           <label class="form-label">Κατάσταση</label>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -7299,6 +7354,7 @@ function openEditPatientModal() {
       </div>
     </div>`;
   document.body.appendChild(ov);
+  wireCityField('ep');
 
   document.getElementById('ep-save').addEventListener('click', async () => {
     const name = document.getElementById('ep-name').value.trim();
@@ -7311,7 +7367,7 @@ function openEditPatientModal() {
       email: document.getElementById('ep-email').value.trim() || null,
       dob: document.getElementById('ep-dob').value || null,
       gender: document.getElementById('ep-gender').value || null,
-      city: document.getElementById('ep-city').value.trim() || null,
+      city: getCityFieldValue('ep') || null,
       status: statusEl ? statusEl.value : p.status,
       notes: document.getElementById('ep-notes').value.trim() || null,
     };
@@ -7356,8 +7412,7 @@ async function openHistoryFormModal(opts) {
   // ποτέ δεν ρώτησε τον πελάτη. Καλύτερα κενό, ώστε να ρωτηθεί πραγματικά.
   const srcOther = (srcKnown || NON_MARKETING_SOURCE_TAGS.includes((p.source||'').toLowerCase())) ? '' : (p.source || '');
   const integrations = (S.clinic && S.clinic.integrations) || {};
-  const {data: cityRows} = await sb.from('patients').select('city').eq('clinic_id', clinicId()).not('city', 'is', null);
-  const knownCities = [...new Set((cityRows || []).map(r => (r.city || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'el'));
+  const canonicalCities = await getCanonicalCities();
 
   const ov = document.createElement('div');
   ov.id = 'history-form-overlay';
@@ -7392,8 +7447,7 @@ async function openHistoryFormModal(opts) {
       <div class="form-row">
         <div class="form-group"><label class="form-label">Email</label><input class="form-control" id="hf-email" type="email" value="${esc(p.email || '')}"/></div>
         <div class="form-group"><label class="form-label">Περιοχή Κατοικίας</label>
-          <input class="form-control" id="hf-city" list="hf-city-list" placeholder="Επίλεξε από τη λίστα ή γράψε νέα περιοχή" value="${esc(p.city || '')}"/>
-          <datalist id="hf-city-list">${knownCities.map(c => `<option value="${esc(c)}"></option>`).join('')}</datalist>
+          ${cityFieldHtml('hf', p.city, canonicalCities)}
         </div>
       </div>
 
@@ -7453,6 +7507,7 @@ async function openHistoryFormModal(opts) {
       </div>
     </div>`;
   document.body.appendChild(ov);
+  wireCityField('hf');
 
   hfInitCanvas();
 
@@ -7499,7 +7554,7 @@ async function openHistoryFormModal(opts) {
     const dob = document.getElementById('hf-dob').value;
     const phone = document.getElementById('hf-phone').value.trim();
     const email = document.getElementById('hf-email').value.trim();
-    const city = document.getElementById('hf-city').value.trim();
+    const city = getCityFieldValue('hf');
     const sourceEl = document.querySelector('input[name="hf-source"]:checked');
     const source = sourceEl && sourceEl.value === '__other__' ? document.getElementById('hf-source-other').value.trim() : (sourceEl ? sourceEl.value : '');
     const gdpr = document.getElementById('hf-gdpr').checked;
