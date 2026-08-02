@@ -296,6 +296,9 @@ const CF_SKIN_TYPE_OPTIONS = ['Ακμή','Anti-aging','Ευαισθησία','Υ
 // είναι πραγματικές απαντήσεις στο «πού μας βρήκατε» και δεν πρέπει ποτέ να μετρηθούν ή
 // να εμφανιστούν σαν να ήταν. Οι πραγματικές επιλογές είναι μόνο οι HISTORY_FORM_SOURCES.
 const NON_MARKETING_SOURCE_TAGS = ['booking247', 'import', 'skincare_plan'];
+// Τύποι συσχετισμού ανάμεσα σε δύο κάρτες ασθενών (π.χ. μαμά/κόρη) — ένα μόνο
+// row ανά ζευγάρι στο patient_relationships, χωρίς κατεύθυνση.
+const RELATIONSHIP_TYPES = ['Γονέας - Παιδί', 'Σύζυγοι', 'Αδέρφια', 'Φίλοι', 'Συνοδός', 'Άλλο'];
 const CONSENT_AFTERCARE = 'Μετά τη θεραπεία αποφεύγω για μερικές ώρες την έντονη σωματική άσκηση, το χαμάμ και τη σάουνα, την άμεση έκθεση στον ήλιο, την έντονη τριβή και το πολύ ζεστό νερό στην περιοχή. Η χρήση αντηλιακού με πολύ υψηλό δείκτη προστασίας είναι απαραίτητη, και η έκθεση στον ήλιο γίνεται σύμφωνα με την καθοδήγηση του θεραπευτή. Σε περίπτωση οποιασδήποτε μη αναμενόμενης αντίδρασης, οφείλω να επικοινωνήσω άμεσα με τον θεραπευτή.';
 const CONSENT_GROUP_TEXTS = {
   'Καθαρισμός Προσώπου': `Η θεραπεία καθαρισμού προσώπου περιλαμβάνει καθαρισμό, ατμό, εξαγωγή σμήγματος/ακαθαρσιών από τους πόρους και εφαρμογή κατάλληλης μάσκας. Σκοπός είναι η βελτίωση της υφής και της καθαριότητας της επιδερμίδας.
@@ -398,37 +401,6 @@ function classifyConsentGroup(serviceName) {
 function patientNeedsServiceConsent(patient, groupKey) {
   return ((patient&&patient.appointments)||[]).some(a =>
     a.status !== 'cancelled' && classifyConsentGroup(a.service_name) === groupKey);
-}
-
-// ── SCORE ΠΕΛΑΤΗ ── Σύνθετο σκορ 0-100 από 3 άξονες (Αξία/LTV, Πρόσφατη Επίσκεψη, Αξιοπιστία/no-shows).
-// Σταθερά όρια βαθμονομημένα σε τιμές μιας μικρής κλινικής αισθητικής (LTV σε δεκάδες/εκατοντάδες
-// ευρώ, όχι χιλιάδες) — όχι percentile βάσει όλων των πελατών, ώστε να δουλεύει και με 1 μόνο ασθενή.
-function computePatientScore(p) {
-  const appts = (p&&p.appointments)||[];
-  const now = new Date();
-  const pastAppts = appts.filter(a=>a.start_time && new Date(a.start_time)<=now);
-  const noShows = pastAppts.filter(a=>a.status==='no_show').length;
-  const noShowRate = pastAppts.length ? noShows/pastAppts.length : 0;
-  const lastVisit = pastAppts.filter(a=>a.status!=='cancelled' && a.status!=='no_show')
-    .sort((a,b)=>new Date(b.start_time)-new Date(a.start_time))[0];
-  const daysSince = lastVisit ? Math.floor((now-new Date(lastVisit.start_time))/86400000) : null;
-
-  const ltv = (p&&p.ltv)||0;
-  const valueScore = ltv>=1000?100:ltv>=500?75:ltv>=200?50:ltv>0?25:0;
-  const recencyScore = daysSince===null?0:daysSince<=30?100:daysSince<=60?75:daysSince<=90?50:daysSince<=180?25:0;
-  const reliabilityScore = pastAppts.length===0?50:noShowRate===0?100:noShowRate<=0.1?80:noShowRate<=0.25?50:noShowRate<=0.5?25:0;
-
-  const overall = Math.round(valueScore*0.4 + recencyScore*0.35 + reliabilityScore*0.25);
-  return {overall, valueScore, recencyScore, reliabilityScore, daysSince, noShowRatePct: Math.round(noShowRate*100)};
-}
-function scoreRingSvg(value, size, color) {
-  const r = (size-8)/2, c = size/2, circ = 2*Math.PI*r;
-  const offset = circ * (1 - Math.max(0,Math.min(100,value))/100);
-  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="transform:rotate(-90deg);flex-shrink:0">
-    <circle cx="${c}" cy="${c}" r="${r}" fill="none" stroke="var(--border-2)" stroke-width="6"/>
-    <circle cx="${c}" cy="${c}" r="${r}" fill="none" stroke="${color}" stroke-width="6" stroke-linecap="round"
-      stroke-dasharray="${circ}" stroke-dashoffset="${offset}"/>
-  </svg>`;
 }
 
 // ── SERVICE MATCHING (Consultation προτάσεις ↔ πραγματικά ραντεβού) ──
@@ -818,6 +790,16 @@ async function loadPatientDetail(id, tab) {
     const {data:mhc} = await sb.from('medical_history_consents').select('*').eq('patient_id',id)
       .order('signed_at',{ascending:false}).limit(1);
     S.historyConsent = (mhc&&mhc[0])||null;
+    // Συσχετισμοί με άλλους ασθενείς (π.χ. μαμά/κόρη) — ένα row ανά ζευγάρι,
+    // χωρίς κατεύθυνση, γι' αυτό ψάχνουμε και στις δύο στήλες.
+    const {data:rels} = await sb.from('patient_relationships')
+      .select('*, patient_a:patient_relationships_patient_a_fkey(id,full_name), patient_b:patient_relationships_patient_b_fkey(id,full_name)')
+      .or(`patient_a_id.eq.${id},patient_b_id.eq.${id}`).eq('clinic_id', clinicId());
+    S.patientRelationships = (rels||[]).map(r => ({
+      id: r.id,
+      relationship_type: r.relationship_type,
+      other: (r.patient_a && r.patient_a.id === id) ? r.patient_b : r.patient_a,
+    })).filter(r => r.other);
     S.patientDetail = {...p, appointments: a||[]};
     S.laserForms = lf||[];
     S.patTab = tab || 'overview';
@@ -1761,71 +1743,98 @@ function renderPatientDetail() {
 
     <!-- OVERVIEW TAB -->
     ${patTab==='overview'?`
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px" class="dash-grid">
-      ${(()=>{
-        const sc = computePatientScore(p);
-        const scoreColor = sc.overall>=70?'#0F6E56':sc.overall>=40?'#854F0B':'#A32D2D';
-        const subScore = (label,val) => `<div style="text-align:center">
-          ${scoreRingSvg(val, 40, scoreColor)}
-          <div style="margin-top:-30px;font-size:11px;font-weight:700">${val}</div>
-          <div style="margin-top:8px;font-size:9.5px;color:var(--text-2)">${label}</div>
-        </div>`;
-        return `<div class="card" style="grid-column:1/-1">
-          <div class="card-header"><span class="card-title">Score Πελάτη</span></div>
-          <div style="padding:10px 16px;display:flex;align-items:center;gap:18px;flex-wrap:wrap">
-            <div style="position:relative;text-align:center;flex-shrink:0">
-              ${scoreRingSvg(sc.overall, 60, scoreColor)}
-              <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:17px;font-weight:700;color:${scoreColor}">${sc.overall}</div>
-            </div>
-            <div style="display:flex;gap:10px;flex-wrap:wrap">
-              ${subScore('Αξία (LTV)', sc.valueScore)}
-              ${subScore('Πρόσφατη Επίσκεψη', sc.recencyScore)}
-              ${subScore('Αξιοπιστία', sc.reliabilityScore)}
-            </div>
-            <div style="font-size:11px;color:var(--text-2);margin-left:auto">
-              ${sc.daysSince===null?'Καμία επίσκεψη ακόμα':sc.daysSince+' ημέρες από την τελευταία επίσκεψη'}
-              ${sc.noShowRatePct?' · '+sc.noShowRatePct+'% no-show':''}
-            </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start" class="dash-grid">
+      <div style="display:flex;flex-direction:column;gap:16px">
+        <div class="card">
+          <div class="card-header"><span class="card-title">Στοιχεία Ασθενή</span>
+            <button class="btn btn-ghost btn-sm" id="edit-patient-btn">✏ Επεξεργασία</button>
           </div>
-        </div>`;
-      })()}
-      <div class="card">
-        <div class="card-header"><span class="card-title">Στοιχεία Ασθενή</span>
-          <button class="btn btn-ghost btn-sm" id="edit-patient-btn">✏ Επεξεργασία</button>
+          <div style="padding:4px 16px">
+            ${[
+              ['Email', p.email],
+              ['Τηλέφωνο', p.phone],
+              ['Ημ. Γέννησης', fmt(p.dob)],
+              ['Φύλο', p.gender==='female'?'Γυναίκα':p.gender==='male'?'Άνδρας':'Άλλο'],
+              ['Πόλη', p.city],
+              ['Πηγή', p.source],
+              ['GDPR', p.gdpr_signed?'✅ Υπογεγραμμένο':'❌ Όχι'],
+              ['Ιατρικό Ιστορικό', [p.medical_history,p.allergies,p.medications,p.previous_treatments].some(v=>v&&v.trim())?'✅ Συμπληρωμένο':(p.medical_history_completed?'✅ Συμπληρωμένο — Ελεύθερο ιστορικό':'❌ Όχι')],
+              ...(canSeeFinancials?[['LTV', euro(p.ltv)]]:[] ),
+              ['Εγγραφή', fmt(p.created_at)],
+            ].map(([k,v])=>`
+            <div style="display:flex;padding:5px 0;border-bottom:1px solid var(--border-2);font-size:12.5px">
+              <span style="color:var(--text-2);width:120px;flex-shrink:0">${k}</span><span style="font-weight:500">${esc(v||'—')}</span>
+            </div>`).join('')}
+          </div>
         </div>
-        <div style="padding:4px 16px">
-          ${[
-            ['Email', p.email],
-            ['Τηλέφωνο', p.phone],
-            ['Ημ. Γέννησης', fmt(p.dob)],
-            ['Φύλο', p.gender==='female'?'Γυναίκα':p.gender==='male'?'Άνδρας':'Άλλο'],
-            ['Πόλη', p.city],
-            ['Πηγή', p.source],
-            ['GDPR', p.gdpr_signed?'✅ Υπογεγραμμένο':'❌ Όχι'],
-            ['Ιατρικό Ιστορικό', [p.medical_history,p.allergies,p.medications,p.previous_treatments].some(v=>v&&v.trim())?'✅ Συμπληρωμένο':(p.medical_history_completed?'✅ Συμπληρωμένο — Ελεύθερο ιστορικό':'❌ Όχι')],
-            ...(canSeeFinancials?[['LTV', euro(p.ltv)]]:[] ),
-            ['Εγγραφή', fmt(p.created_at)],
-          ].map(([k,v])=>`
-          <div style="display:flex;padding:5px 0;border-bottom:1px solid var(--border-2);font-size:12.5px">
-            <span style="color:var(--text-2);width:120px;flex-shrink:0">${k}</span><span style="font-weight:500">${esc(v||'—')}</span>
-          </div>`).join('')}
+        <div class="card">
+          <div class="card-header"><span class="card-title">Σύνοψη Δραστηριότητας</span></div>
+          <div style="padding:8px 16px;display:grid;grid-template-columns:1fr 1fr;gap:6px 12px">
+            ${[
+              ['Σύνολο Ραντεβού', (p.appointments&&p.appointments.length)||0],
+              ['Ολοκληρωμένα', (p.appointments||[]).filter(a=>a.status==='completed'||a.status==='paid').length],
+              ['Laser Forms', laserForms.length],
+              ['Consultations', consultations.length],
+              ...(canSeeFinancials?[['Σύνολο Εσόδων', euro((p.appointments||[]).filter(a=>a.price).reduce((s,a)=>s+(a.price||0),0))]]:[]),
+              ['Τελευταία Επίσκεψη', fmtDt((p.appointments||[])[(p.appointments||[]).length-1]&&(p.appointments||[])[(p.appointments||[]).length-1].start_time)],
+            ].map(([k,v])=>`
+            <div style="display:flex;justify-content:space-between;gap:8px;padding:6px 10px;background:var(--bg-2,#F7F8FC);border-radius:8px;font-size:12px">
+              <span style="color:var(--text-2)">${k}</span><span style="font-weight:600">${esc(String(v||'—'))}</span>
+            </div>`).join('')}
+            ${p.notes?`<div style="grid-column:1/-1;margin-top:2px"><div style="font-size:10.5px;font-weight:600;color:var(--text-2);text-transform:uppercase;margin-bottom:4px">Σημειώσεις</div><div style="font-size:12.5px;line-height:1.5;color:var(--text-2)">${esc(p.notes)}</div></div>`:''}
+          </div>
         </div>
       </div>
       <div class="card">
-        <div class="card-header"><span class="card-title">Σύνοψη Δραστηριότητας</span></div>
-        <div style="padding:8px 16px;display:grid;grid-template-columns:1fr 1fr;gap:6px 12px">
-          ${[
-            ['Σύνολο Ραντεβού', (p.appointments&&p.appointments.length)||0],
-            ['Ολοκληρωμένα', (p.appointments||[]).filter(a=>a.status==='completed'||a.status==='paid').length],
-            ['Laser Forms', laserForms.length],
-            ['Consultations', consultations.length],
-            ...(canSeeFinancials?[['Σύνολο Εσόδων', euro((p.appointments||[]).filter(a=>a.price).reduce((s,a)=>s+(a.price||0),0))]]:[]),
-            ['Τελευταία Επίσκεψη', fmtDt((p.appointments||[])[(p.appointments||[]).length-1]&&(p.appointments||[])[(p.appointments||[]).length-1].start_time)],
-          ].map(([k,v])=>`
-          <div style="display:flex;justify-content:space-between;gap:8px;padding:6px 10px;background:var(--bg-2,#F7F8FC);border-radius:8px;font-size:12px">
-            <span style="color:var(--text-2)">${k}</span><span style="font-weight:600">${esc(String(v||'—'))}</span>
-          </div>`).join('')}
-          ${p.notes?`<div style="grid-column:1/-1;margin-top:2px"><div style="font-size:10.5px;font-weight:600;color:var(--text-2);text-transform:uppercase;margin-bottom:4px">Σημειώσεις</div><div style="font-size:12.5px;line-height:1.5;color:var(--text-2)">${esc(p.notes)}</div></div>`:''}
+        <div class="card-header"><span class="card-title">🏥 Ιατρικό Ιστορικό</span>
+          <button class="btn btn-ghost btn-sm" data-pat-tab="medical">Δες πλήρες →</button>
+        </div>
+        <div style="padding:4px 16px 14px">
+          ${(()=>{
+            const trunc = s => s && s.length>110 ? esc(s.slice(0,110))+'…' : esc(s||'');
+            const rows = [
+              ['GDPR', p.gdpr_signed?'✅ Υπογεγραμμένο':'❌ Όχι'],
+              ['Αλλεργίες', p.allergies?trunc(p.allergies):null],
+              ['Φαρμ. Αγωγή / Παθήσεις', p.medications?trunc(p.medications):null],
+              ['Ιατρικό Ιστορικό', p.medical_history?trunc(p.medical_history):null],
+              ['Προηγ. Θεραπείες', p.previous_treatments?trunc(p.previous_treatments):null],
+              ['Περιοχές Αποφυγής', p.avoid_body_areas?trunc(p.avoid_body_areas):null],
+            ].filter(([,v])=>v!==null);
+            return rows.map(([k,v])=>`
+            <div style="padding:6px 0;border-bottom:1px solid var(--border-2);font-size:12.5px">
+              <div style="color:var(--text-2);font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px">${k}</div>
+              <div style="font-weight:500;line-height:1.5">${v}</div>
+            </div>`).join('') || `<div style="padding:16px 0;text-align:center;color:var(--text-2);font-size:12.5px">Δεν υπάρχουν ιατρικά στοιχεία ακόμα.</div>`;
+          })()}
+        </div>
+      </div>
+      <div class="card" style="grid-column:1/-1">
+        <div class="card-header"><span class="card-title">👨‍👩‍👧 Συσχετισμοί Πελάτη</span></div>
+        <div style="padding:12px 16px">
+          ${(S.patientRelationships&&S.patientRelationships.length) ? `
+          <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">
+            ${S.patientRelationships.map(r=>`
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;background:var(--bg-2,#F7F8FC);border-radius:8px;font-size:12.5px">
+              <div>
+                <span style="font-weight:600;cursor:pointer;color:var(--blue)" data-rel-goto="${r.other.id}">${esc(r.other.full_name)}</span>
+                <span style="color:var(--text-2)"> · ${esc(r.relationship_type)}</span>
+              </div>
+              <button class="btn btn-ghost btn-sm" data-rel-delete="${r.id}" style="color:var(--red,#A32D2D)">✕</button>
+            </div>`).join('')}
+          </div>` : `<div style="padding:6px 0 12px;color:var(--text-2);font-size:12.5px">Δεν υπάρχουν συσχετισμοί ακόμα (π.χ. μαμά/κόρη, σύζυγοι).</div>`}
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;padding-top:10px;border-top:1px solid var(--border-2)">
+            <div style="flex:1;min-width:220px;position:relative">
+              <label class="form-label" style="font-size:10px">Ασθενής</label>
+              <input class="form-control" id="rel-patient-search" placeholder="Αναζήτηση ασθενή (όνομα/τηλέφωνο)..." autocomplete="off"/>
+              <div id="rel-patient-results" style="display:none;position:absolute;left:0;right:0;background:var(--white);border:1px solid var(--border-2);border-radius:8px;box-shadow:var(--shadow-lg);z-index:20;max-height:200px;overflow-y:auto;margin-top:4px"></div>
+              <input type="hidden" id="rel-patient-id" value=""/>
+            </div>
+            <div>
+              <label class="form-label" style="font-size:10px">Σχέση</label>
+              <select class="form-control" id="rel-type">${RELATIONSHIP_TYPES.map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join('')}</select>
+            </div>
+            <button class="btn btn-primary btn-sm" id="add-relationship-btn">+ Προσθήκη</button>
+          </div>
         </div>
       </div>
     </div>`:''}
@@ -4083,6 +4092,61 @@ function bindEvents() {
   // Επεξεργασία στοιχείων ασθενή (καρτέλα) — όνομα, στοιχεία επικοινωνίας, κατάσταση/VIP
   const _epb = document.getElementById('edit-patient-btn');
   if (_epb) _epb.addEventListener('click', openEditPatientModal);
+
+  // Συσχετισμοί Πελάτη — αναζήτηση/επιλογή άλλου ασθενή (ίδιο pattern με lf-patient-search)
+  const _relps = document.getElementById('rel-patient-search');
+  if (_relps) {
+    let relTimer = null;
+    const relShowResults = async () => {
+      const q = _relps.value.trim().replace(/[,()]/g,' ');
+      const res = document.getElementById('rel-patient-results');
+      if (!q.length) { res.style.display='none'; return; }
+      const {data} = await sb.from('patients').select('id,full_name,phone').eq('clinic_id',clinicId())
+        .neq('id', S.patientDetail.id)
+        .or(`full_name.ilike.%${q}%,phone.ilike.%${q}%`).order('full_name').limit(8);
+      res.innerHTML = (data||[]).map(pt=>`<div class="rel-pt-opt" style="padding:9px 12px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--border-2)" data-pid="${pt.id}" data-pname="${esc(pt.full_name)}" data-pphone="${esc(pt.phone||'')}">${esc(pt.full_name)} · ${esc(pt.phone||'')}</div>`).join('')
+        || `<div style="padding:9px 12px;font-size:12px;color:var(--text-3)">Κανένα αποτέλεσμα</div>`;
+      res.style.display = 'block';
+      res.querySelectorAll('.rel-pt-opt').forEach(el => {
+        el.onclick = () => {
+          document.getElementById('rel-patient-id').value = el.dataset.pid;
+          _relps.value = el.dataset.pname + (el.dataset.pphone ? ' · '+el.dataset.pphone : '');
+          res.style.display = 'none';
+        };
+      });
+    };
+    _relps.onfocus = relShowResults;
+    _relps.oninput = () => {
+      document.getElementById('rel-patient-id').value = '';
+      clearTimeout(relTimer); relTimer = setTimeout(relShowResults, 200);
+    };
+    document.addEventListener('click', (e) => {
+      const res = document.getElementById('rel-patient-results');
+      if (res && !e.target.closest('#rel-patient-search') && !e.target.closest('#rel-patient-results')) res.style.display='none';
+    });
+  }
+  const _arb = document.getElementById('add-relationship-btn');
+  if (_arb) _arb.addEventListener('click', async () => {
+    const otherId = document.getElementById('rel-patient-id').value;
+    if (!otherId) return alert('Επίλεξε ασθενή από τη λίστα αναζήτησης');
+    const relType = document.getElementById('rel-type').value;
+    _arb.textContent='Αποθήκευση...'; _arb.disabled=true;
+    const {error} = await sb.from('patient_relationships').insert({
+      clinic_id: clinicId(), patient_a_id: S.patientDetail.id, patient_b_id: otherId, relationship_type: relType,
+    });
+    if (error) { alert('Σφάλμα: '+error.message); _arb.textContent='+ Προσθήκη'; _arb.disabled=false; return; }
+    await loadPatientDetail(S.patientDetail.id);
+  });
+  document.querySelectorAll('[data-rel-delete]').forEach(el => {
+    el.addEventListener('click', async () => {
+      if (!confirm('Αφαίρεση αυτού του συσχετισμού;')) return;
+      await sb.from('patient_relationships').delete().eq('id', el.dataset.relDelete);
+      await loadPatientDetail(S.patientDetail.id);
+    });
+  });
+  document.querySelectorAll('[data-rel-goto]').forEach(el => {
+    el.addEventListener('click', () => loadPatientDetail(el.dataset.relGoto));
+  });
 
   // Φωτογραφίες — κλικ σε κάρτα = επιλογή (μέχρι 2), upload input
   document.querySelectorAll('[data-photo-card]').forEach(card => {
