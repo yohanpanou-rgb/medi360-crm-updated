@@ -413,6 +413,60 @@ function normalizeGreek(s) {
     .replace(/[^\wα-ωΑ-Ω0-9\s]/g,' ')
     .replace(/\s+/g,' ').trim();
 }
+
+// ── ΠΕΡΙΟΧΗ (Πόλη/Περιοχή) — dropdown αντί για ελεύθερο κείμενο, ώστε να μη
+// δημιουργούνται άλλες παραλλαγές της ίδιας περιοχής (π.χ. 9 διαφορετικές
+// γραφές του "Βριλήσσια"). Η λίστα φτιάχνεται ΖΩΝΤΑΝΑ από τα υπάρχοντα
+// patients.city της κλινικής: ομαδοποιούνται οι παραλλαγές (χωρίς τόνους/
+// κεφαλαία) και κρατάμε την πιο συχνή ΑΚΡΙΒΗ γραφή ανά ομάδα ως κανονική.
+async function getCanonicalCities() {
+  const cid = clinicId();
+  const {data} = await sb.from('patients').select('city').eq('clinic_id', cid).not('city', 'is', null);
+  const groups = {};
+  (data || []).forEach(r => {
+    const raw = (r.city || '').trim();
+    if (!raw) return;
+    const key = normalizeGreek(raw);
+    if (!key) return;
+    groups[key] = groups[key] || {};
+    groups[key][raw] = (groups[key][raw] || 0) + 1;
+  });
+  return Object.values(groups)
+    .map(variants => Object.entries(variants).sort((a, b) => b[1] - a[1])[0][0])
+    .sort((a, b) => a.localeCompare(b, 'el'));
+}
+// prefix: μοναδικό πρόθεμα id (π.χ. 'ep', 'hf') ώστε να μπαίνουν πολλά πεδία περιοχής στην ίδια σελίδα.
+function cityFieldHtml(prefix, currentValue, canonicalCities) {
+  const norm = normalizeGreek(currentValue || '');
+  const matched = norm ? canonicalCities.find(c => normalizeGreek(c) === norm) : null;
+  const isNew = !!currentValue && !matched;
+  return `
+    <select class="form-control" id="${prefix}-city-select">
+      <option value="" ${!currentValue ? 'selected' : ''}>— Επίλεξε περιοχή —</option>
+      ${canonicalCities.map(c => `<option value="${esc(c)}" ${matched === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}
+      <option value="__new__" ${isNew ? 'selected' : ''}>+ Νέα περιοχή…</option>
+    </select>
+    <input class="form-control" id="${prefix}-city-new" placeholder="Γράψε τη νέα περιοχή" style="margin-top:6px;${isNew ? '' : 'display:none'}" value="${esc(isNew ? currentValue : '')}"/>`;
+}
+function wireCityField(prefix) {
+  const sel = document.getElementById(prefix + '-city-select');
+  const inp = document.getElementById(prefix + '-city-new');
+  if (!sel || !inp) return;
+  sel.addEventListener('change', () => {
+    inp.style.display = sel.value === '__new__' ? '' : 'none';
+    if (sel.value === '__new__') inp.focus();
+  });
+}
+function getCityFieldValue(prefix) {
+  const sel = document.getElementById(prefix + '-city-select');
+  if (!sel) return '';
+  if (sel.value === '__new__') {
+    const inp = document.getElementById(prefix + '-city-new');
+    return (inp && inp.value || '').trim();
+  }
+  return sel.value;
+}
+
 function findServiceMatch(appointments, afterDateStr, treatmentText) {
   const afterDate = new Date(afterDateStr);
   const normTreatment = normalizeGreek(treatmentText);
@@ -1589,19 +1643,19 @@ function renderPatientConsentsTab() {
       onSign: `openLaserConsentModal()`, onView: `viewLaserConsent()`
     },
     {
-      key: 'cleansing', label: 'Καθαρισμοί & Pore Over', color: '#0344F2',
+      key: 'cleansing', label: 'Καθαρισμός Προσώπου / Σώματος', color: '#0344F2',
       signed: !!S.serviceConsentCleansing, signedAt: S.serviceConsentCleansing&&S.serviceConsentCleansing.signed_at,
       collectedBy: S.serviceConsentCleansing&&S.serviceConsentCleansing.collected_by,
       onSign: `openGroupConsentModal('cleansing')`, onView: `viewGroupConsent('cleansing')`
     },
     {
-      key: 'peelings', label: 'Peelings & PRX-Microneedling', color: '#7C3AED',
+      key: 'peelings', label: 'Peeling & Microneedling', color: '#7C3AED',
       signed: !!S.serviceConsentPeelings, signedAt: S.serviceConsentPeelings&&S.serviceConsentPeelings.signed_at,
       collectedBy: S.serviceConsentPeelings&&S.serviceConsentPeelings.collected_by,
       onSign: `openGroupConsentModal('peelings')`, onView: `viewGroupConsent('peelings')`
     },
     {
-      key: 'oxygen', label: 'Οξυγόνο/Ενυδάτωση & Face Treatments', color: '#0F6E56',
+      key: 'oxygen', label: 'Ενυδάτωση & Θεραπείες Λάμψης', color: '#0F6E56',
       signed: !!S.serviceConsentOxygen, signedAt: S.serviceConsentOxygen&&S.serviceConsentOxygen.signed_at,
       collectedBy: S.serviceConsentOxygen&&S.serviceConsentOxygen.collected_by,
       onSign: `openGroupConsentModal('oxygen')`, onView: `viewGroupConsent('oxygen')`
@@ -1662,13 +1716,13 @@ function renderPatientDetail() {
             ${p.gdpr_signed?'<span style="font-size:11px;color:#0F6E56">✓ GDPR</span>':'<span style="font-size:11px;color:var(--red)">⚠ Χωρίς GDPR</span>'}
             ${p.source?`<span style="font-size:11px;color:var(--text-2);background:var(--surface-2);padding:2px 9px;border-radius:9px">📍 ${esc(p.source)}</span>`:''}
             ${S.serviceConsentCleansing
-              ? `<span style="font-size:11px;color:#0F6E56;cursor:pointer" onclick="viewGroupConsent('cleansing')">✓ Καθαρισμοί/Pore Over</span>`
+              ? `<span style="font-size:11px;color:#0F6E56;cursor:pointer" onclick="viewGroupConsent('cleansing')">✓ Καθαρισμοί</span>`
               : patientNeedsServiceConsent(p,'cleansing') ? `<span style="font-size:11px;color:var(--red);cursor:pointer" onclick="openGroupConsentModal('cleansing')">⚠ Χωρίς Συν. Καθαρισμού</span>` : ''}
             ${S.serviceConsentPeelings
-              ? `<span style="font-size:11px;color:#0F6E56;cursor:pointer" onclick="viewGroupConsent('peelings')">✓ Peelings/PRX-Microneedling</span>`
+              ? `<span style="font-size:11px;color:#0F6E56;cursor:pointer" onclick="viewGroupConsent('peelings')">✓ Peeling/Microneedling</span>`
               : patientNeedsServiceConsent(p,'peelings') ? `<span style="font-size:11px;color:var(--red);cursor:pointer" onclick="openGroupConsentModal('peelings')">⚠ Χωρίς Συν. Peelings</span>` : ''}
             ${S.serviceConsentOxygen
-              ? `<span style="font-size:11px;color:#0F6E56;cursor:pointer" onclick="viewGroupConsent('oxygen')">✓ Οξυγόνο/Face Treatments</span>`
+              ? `<span style="font-size:11px;color:#0F6E56;cursor:pointer" onclick="viewGroupConsent('oxygen')">✓ Ενυδάτωση/Λάμψη</span>`
               : patientNeedsServiceConsent(p,'oxygen') ? `<span style="font-size:11px;color:var(--red);cursor:pointer" onclick="openGroupConsentModal('oxygen')">⚠ Χωρίς Συν. Οξυγόνου</span>` : ''}
             <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-2);cursor:pointer;user-select:none;margin-left:4px">
               <input type="checkbox" id="pat-student-toggle" ${p.is_student?'checked':''} style="width:14px;height:14px;accent-color:var(--blue);cursor:pointer"/> Φοιτητής
@@ -7255,8 +7309,9 @@ async function discardUnmatchedConsultation(ucId) {
 }
 
 // ── ΕΠΕΞΕΡΓΑΣΙΑ ΣΤΟΙΧΕΙΩΝ ΑΣΘΕΝΗ (καρτέλα) ──
-function openEditPatientModal() {
+async function openEditPatientModal() {
   const p = S.patientDetail; if (!p) return;
+  const canonicalCities = await getCanonicalCities();
   const old = document.getElementById('lc-overlay'); if (old) old.remove();
   const ov = document.createElement('div');
   ov.id = 'lc-overlay';
@@ -7281,7 +7336,7 @@ function openEditPatientModal() {
             <option value="other" ${p.gender==='other'?'selected':''}>Άλλο</option>
           </select>
         </div>
-        <div class="form-group" style="grid-column:1/-1"><label class="form-label">Πόλη / Περιοχή</label><input class="form-control" id="ep-city" value="${esc(p.city||'')}"/></div>
+        <div class="form-group" style="grid-column:1/-1"><label class="form-label">Πόλη / Περιοχή</label>${cityFieldHtml('ep', p.city, canonicalCities)}</div>
         <div class="form-group" style="grid-column:1/-1">
           <label class="form-label">Κατάσταση</label>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -7299,6 +7354,7 @@ function openEditPatientModal() {
       </div>
     </div>`;
   document.body.appendChild(ov);
+  wireCityField('ep');
 
   document.getElementById('ep-save').addEventListener('click', async () => {
     const name = document.getElementById('ep-name').value.trim();
@@ -7311,7 +7367,7 @@ function openEditPatientModal() {
       email: document.getElementById('ep-email').value.trim() || null,
       dob: document.getElementById('ep-dob').value || null,
       gender: document.getElementById('ep-gender').value || null,
-      city: document.getElementById('ep-city').value.trim() || null,
+      city: getCityFieldValue('ep') || null,
       status: statusEl ? statusEl.value : p.status,
       notes: document.getElementById('ep-notes').value.trim() || null,
     };
@@ -7356,8 +7412,7 @@ async function openHistoryFormModal(opts) {
   // ποτέ δεν ρώτησε τον πελάτη. Καλύτερα κενό, ώστε να ρωτηθεί πραγματικά.
   const srcOther = (srcKnown || NON_MARKETING_SOURCE_TAGS.includes((p.source||'').toLowerCase())) ? '' : (p.source || '');
   const integrations = (S.clinic && S.clinic.integrations) || {};
-  const {data: cityRows} = await sb.from('patients').select('city').eq('clinic_id', clinicId()).not('city', 'is', null);
-  const knownCities = [...new Set((cityRows || []).map(r => (r.city || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'el'));
+  const canonicalCities = await getCanonicalCities();
 
   const ov = document.createElement('div');
   ov.id = 'history-form-overlay';
@@ -7392,8 +7447,7 @@ async function openHistoryFormModal(opts) {
       <div class="form-row">
         <div class="form-group"><label class="form-label">Email</label><input class="form-control" id="hf-email" type="email" value="${esc(p.email || '')}"/></div>
         <div class="form-group"><label class="form-label">Περιοχή Κατοικίας</label>
-          <input class="form-control" id="hf-city" list="hf-city-list" placeholder="Επίλεξε από τη λίστα ή γράψε νέα περιοχή" value="${esc(p.city || '')}"/>
-          <datalist id="hf-city-list">${knownCities.map(c => `<option value="${esc(c)}"></option>`).join('')}</datalist>
+          ${cityFieldHtml('hf', p.city, canonicalCities)}
         </div>
       </div>
 
@@ -7453,6 +7507,7 @@ async function openHistoryFormModal(opts) {
       </div>
     </div>`;
   document.body.appendChild(ov);
+  wireCityField('hf');
 
   hfInitCanvas();
 
@@ -7499,7 +7554,7 @@ async function openHistoryFormModal(opts) {
     const dob = document.getElementById('hf-dob').value;
     const phone = document.getElementById('hf-phone').value.trim();
     const email = document.getElementById('hf-email').value.trim();
-    const city = document.getElementById('hf-city').value.trim();
+    const city = getCityFieldValue('hf');
     const sourceEl = document.querySelector('input[name="hf-source"]:checked');
     const source = sourceEl && sourceEl.value === '__other__' ? document.getElementById('hf-source-other').value.trim() : (sourceEl ? sourceEl.value : '');
     const gdpr = document.getElementById('hf-gdpr').checked;
@@ -7582,17 +7637,17 @@ async function openHistoryFormModal(opts) {
 const SERVICE_CONSENT_GROUPS = {
   cleansing: {
     dbKey: 'cleansing_poreover',
-    title: 'Καθαρισμοί & Pore Over',
+    title: 'Καθαρισμός Προσώπου / Σώματος',
     color: '#0344F2',
     text: (name) => `
       <div style="font-size:12px;line-height:1.7;color:var(--text)">
-        <p style="font-weight:700;margin-bottom:8px">Α. ΕΝΗΜΕΡΩΣΗ ΑΣΘΕΝΟΥΣ — ΚΑΘΑΡΙΣΜΟΙ, ΔΕΡΜΟΑΠΟΞΕΣΗ ΜΕ ΜΙΚΡΟΚΡΥΣΤΑΛΛΟΥΣ Η ΔΙΑΜΑΝΤΙ & PORE OVER</p>
-        <p>Η παρούσα συναίνεση καλύπτει όλα τα είδη καθαρισμού προσώπου/σώματος, τη δερμοαπόξεση με μικροκρυστάλλους ή διαμάντι (Eco Peel), και τη θεραπεία <b>Pore Over</b> (βιοδιεγερτικό peeling ReBirth σε συνδυασμό με μικροβελονισμό mesopen/dermapen) για τη μείωση διεσταλμένων πόρων και μικροατελειών.</p>
-        <p style="margin-top:6px"><b>Εφαρμογή:</b> Καθαρισμός προσώπου/περιοχής, μηχανικό peeling με μικροκρυστάλλους ή κεφαλή διαμαντιού, διάνοιξη φαγεσώρων/κύστεων/κεχρίων, μάσκα ανάλογα με τον τύπο δέρματος, μασάζ με cryosticks, φωτοθεραπεία Dermalux. Στο Pore Over: τοπική αναισθητική κρέμα, εφαρμογή peel με μασάζ έως 5 λεπτά, μικροβελονισμός mesopen/dermapen ~10 λεπτά, ορός υαλουρονικού και αναπλαστική μάσκα. Διάρκεια καθαρισμού/δερμοαπόξεσης ~40–90 λεπτά· Pore Over ~60 λεπτά με μεσοδιάστημα 15–20 ημερών, ενδεικτικά πρωτόκολλο 4 συνεδριών.</p>
-        <p style="margin-top:6px"><b>Πιθανές ανεπιθύμητες ενέργειες:</b> Ήπιο ερύθημα (1–2 ημέρες, σπανίως περισσότερο), ήπιο-μέτριο ξεφλούδισμα 3–5 ημερών, ελαφρά σημεία μικρο-αιμορραγίας στον μικροβελονισμό (Pore Over). Εξαιρετικά σπάνια: οίδημα γύρω από τα μάτια, πετέχειες, παροδικό ακμοειδές εξάνθημα, ενεργοποίηση ερπητικής λοίμωξης.</p>
-        <p style="margin-top:6px"><b>Οδηγίες μετά τη θεραπεία:</b> Το ίδιο βράδυ δεν χρειάζεται πλύσιμο προσώπου· καθαρή μαξιλαροθήκη. Μην αφαιρείτε μόνοι σας το ξεφλούδισμα. Ήπια ενυδατική/αναπλαστική κρέμα όσο διαρκεί η επούλωση. Μακιγιάζ απαγορεύεται την ίδια ημέρα. Αντηλιακή προστασία spf>30+ καθημερινά μέχρι ολοκλήρωσης συνεδριών. Αποφυγή ρετινόλης/υδροκινόνης/AHA μέχρι πλήρη επούλωση. Στο Pore Over επιπλέον: αποφυγή έντονης άθλησης, καυτού λουτρού και σάουνας για 48 ώρες.</p>
+        <p style="font-weight:700;margin-bottom:8px">Α. ΕΝΗΜΕΡΩΣΗ ΑΣΘΕΝΟΥΣ — ΚΑΘΑΡΙΣΜΟΣ & ΑΠΟΛΕΠΙΣΗ ΠΡΟΣΩΠΟΥ/ΣΩΜΑΤΟΣ</p>
+        <p>Η παρούσα συναίνεση καλύπτει τις θεραπείες καθαρισμού και απολέπισης προσώπου ή σώματος που προσφέρει η κλινική, με στόχο τον καθαρισμό των πόρων και τη βελτίωση της υφής και της εμφάνισης της επιδερμίδας.</p>
+        <p style="margin-top:6px"><b>Πιθανές παροδικές αντιδράσεις:</b> Ήπια ερυθρότητα ή ευαισθησία που συνήθως υποχωρεί μέσα σε λίγες ώρες έως ημέρες, ελαφρύ ξεφλούδισμα τις επόμενες ημέρες.</p>
+        <p style="margin-top:6px"><b>Οφείλω να ενημερώσω την κλινική</b> για ενεργή δερματική πάθηση ή λοίμωξη στην περιοχή, γνωστές αλλεργίες, εγκυμοσύνη ή θηλασμό, και πρόσφατη αισθητική θεραπεία προσώπου στην ίδια περιοχή.</p>
+        <p style="margin-top:6px"><b>Οδηγίες φροντίδας μετά τη θεραπεία:</b> ${CONSENT_AFTERCARE}</p>
         <p style="font-weight:700;margin:12px 0 8px">Β. ΔΗΛΩΣΗ ΣΥΝΑΙΝΕΣΗΣ</p>
-        <p>Ο/Η υπογράφων/ουσα <b>${esc(name)}</b> δηλώνω ότι ενημερώθηκα πλήρως και κατανοητά για τη μέθοδο, τα οφέλη, τους κινδύνους και τις εναλλακτικές, είχα τη δυνατότητα να υποβάλω ερωτήσεις και έλαβα απαντήσεις. Δηλώνω ότι: δεν παρουσιάζω ενεργή ερπητική ή άλλη δερματική λοίμωξη στην περιοχή· δεν πάσχω από φωτοευαισθησία, πολύμορφο ερύθημα εκ φωτός ή αυτοάνοσο νόσημα (π.χ. Λύκος)· δεν πάσχω από επιληψία· δεν έχω τάση σχηματισμού χηλοειδών ουλών· δεν βρίσκομαι σε εγκυμοσύνη ή θηλασμό· δεν λαμβάνω ισοτρετινοΐνη (Roaccutane) τους τελευταίους 6 μήνες· δεν λαμβάνω αντιπηκτική αγωγή χωρίς προηγούμενη ενημέρωση του ιατρού. <b>Συναινώ ελεύθερα στη διενέργεια καθαρισμού, δερμοαπόξεσης και/ή Pore Over. Η παρούσα συναίνεση καλύπτει το σύνολο των μελλοντικών συνεδριών αυτής της κατηγορίας θεραπειών, και παραμένει σε ισχύ έως έγγραφης ανάκλησής της.</b> Κατανοώ πως τα αποτελέσματα μπορεί να ποικίλουν ανάλογα με τον ασθενή. Η συναίνεσή μου δεν είναι αποτέλεσμα πλάνης, απάτης ή απειλής.</p>
+        <p>Ο/Η υπογράφων/ουσα <b>${esc(name)}</b> δηλώνω ότι ενημερώθηκα για τη διαδικασία, τα πιθανά αποτελέσματα και τυχόν παροδικές αντιδράσεις, ότι ανέφερα κάθε σχετικό ιατρικό/δερματολογικό ιστορικό, και ότι συναινώ ελεύθερα στην εκτέλεση της θεραπείας. <b>Η παρούσα συναίνεση καλύπτει το σύνολο των μελλοντικών συνεδριών αυτής της κατηγορίας θεραπειών, και παραμένει σε ισχύ έως έγγραφης ανάκλησής της.</b> Κατανοώ πως τα αποτελέσματα μπορεί να ποικίλουν ανάλογα με τον ασθενή. Η συναίνεσή μου δεν είναι αποτέλεσμα πλάνης, απάτης ή απειλής.</p>
         <p style="font-weight:700;margin:12px 0 8px">Γ. ΦΩΤΟΓΡΑΦΙΕΣ</p>
         <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
           <input type="checkbox" id="svc-photo" style="width:16px;height:16px;margin-top:2px;accent-color:#0344F2"/>
@@ -7601,17 +7656,17 @@ const SERVICE_CONSENT_GROUPS = {
   },
   peelings: {
     dbKey: 'peelings_microneedling',
-    title: 'Peelings & PRX-Microneedling',
+    title: 'Peeling & Microneedling',
     color: '#7C3AED',
     text: (name) => `
       <div style="font-size:12px;line-height:1.7;color:var(--text)">
-        <p style="font-weight:700;margin-bottom:8px">Α. ΕΝΗΜΕΡΩΣΗ ΑΣΘΕΝΟΥΣ — PEELINGS & PRX-T33 ΜΕ MICRONEEDLING</p>
-        <p>Η παρούσα συναίνεση καλύπτει τους χημικούς απολεπισμούς (φυτικό, PRX, PRX-Dermapen, Dermapen ±PDRN, μανδελικό/σαλικυλικό, TCA) και τη θεραπεία <b>PRX-T33 με Microneedling</b> (βιοδιέγερση + φυσική ικανότητα επούλωσης του δέρματος, μείωση διεσταλμένων πόρων, λεπτών γραμμών, δυσχρωμιών, φωτογήρανσης).</p>
-        <p style="margin-top:6px"><b>Εφαρμογή:</b> Καθαρισμός, εφαρμογή του επιλεγμένου διαλύματος ή PRX-T33 (παραμονή λίγων λεπτών, ήπιο τσίμπημα/καύσος καλά ανεκτό), εξουδετέρωση όπου απαιτείται, σε συνδυαστικά πρωτόκολλα μικροβελονισμός (12 μικροβελόνες, βάθος 0,25–2mm), εφαρμογή ορού υαλουρονικού/ενυδατικής μάσκας. Διάρκεια peelings 30–60 λεπτά· PRX+Microneedling ενδεικτικά 4 συνεδρίες ανά 15 ημέρες, με τα αποτελέσματα να συνεχίζουν να βελτιώνονται έως 6 μήνες μετά.</p>
-        <p style="margin-top:6px"><b>Πιθανές ανεπιθύμητες ενέργειες:</b> Τσίμπημα/αίσθημα καύσου κατά την εφαρμογή, ερύθημα (ήπιο έως έντονο σε PRX+Microneedling), απολέπιση 2–7 ημερών (εντονότερη σε ισχυρά peelings όπως TCA), ελαφρά σημεία μικρο-αιμορραγίας στον μικροβελονισμό. Σπάνια: διαταραχές μελάχρωσης (υπερ-/υπομελάγχρωση), λοίμωξη, μόνιμο ερύθημα, αλλεργική αντίδραση, ενεργοποίηση ερπητικής λοίμωξης.</p>
-        <p style="margin-top:6px"><b>Οδηγίες μετά τη θεραπεία:</b> Αυστηρή χρήση αντηλιακής προστασίας spf>30+. Αποφυγή προϊόντων με οξέα/ρετινόλη. Περιοχή καθαρή και στεγνή, καθαρά χέρια/μαλλιά όταν ακουμπούν το πρόσωπο. Μην αφαιρείτε/ξεφλουδίζετε μόνοι σας το δέρμα. Ήπια ενυδατική/αναπλαστική κρέμα καθ' όλη τη διάρκεια ανάπλασης. Αποφυγή μακιγιάζ την ίδια ημέρα (δυνατότητα εφαρμογής στο ιατρείο με προϊόντα Jane Iredale spf50+). Αποφυγή αθλητικής δραστηριότητας, καυτού λουτρού και σάουνας για 48 ώρες.</p>
+        <p style="font-weight:700;margin-bottom:8px">Α. ΕΝΗΜΕΡΩΣΗ ΑΣΘΕΝΟΥΣ — PEELING & MICRONEEDLING ΠΡΟΣΩΠΟΥ</p>
+        <p>Η παρούσα συναίνεση καλύπτει τις θεραπείες απολέπισης (peeling) και μικροβελονισμού (microneedling) προσώπου, με στόχο τη βελτίωση της υφής, του τόνου και της εμφάνισης της επιδερμίδας.</p>
+        <p style="margin-top:6px"><b>Πιθανές παροδικές αντιδράσεις:</b> Τσούξιμο ή αίσθημα καύσου κατά την εφαρμογή, ερυθρότητα, ξεφλούδισμα ή ελαφρά σημεία στο δέρμα τις επόμενες ημέρες. Σπανιότερα: αλλαγή στο χρώμα του δέρματος ή αλλεργική αντίδραση.</p>
+        <p style="margin-top:6px"><b>Οφείλω να ενημερώσω την κλινική</b> για εγκυμοσύνη ή θηλασμό, χρήση φαρμάκων/καλλυντικών κατά της ακμής τους τελευταίους 6 μήνες, ενεργή δερματική πάθηση ή λοίμωξη στην περιοχή, γνωστές αλλεργίες, ή πρόσφατη έντονη έκθεση στον ήλιο/τεχνητή ηλιοθεραπεία.</p>
+        <p style="margin-top:6px"><b>Οδηγίες φροντίδας μετά τη θεραπεία:</b> ${CONSENT_AFTERCARE}</p>
         <p style="font-weight:700;margin:12px 0 8px">Β. ΔΗΛΩΣΗ ΣΥΝΑΙΝΕΣΗΣ</p>
-        <p>Ο/Η υπογράφων/ουσα <b>${esc(name)}</b> δηλώνω ότι ενημερώθηκα πλήρως και κατανοητά για τις παραπάνω μεθόδους, τα οφέλη, τους κινδύνους και τις εναλλακτικές, είχα τη δυνατότητα να υποβάλω ερωτήσεις και έλαβα απαντήσεις. Δηλώνω ότι: δεν βρίσκομαι σε εγκυμοσύνη ή θηλασμό· δεν λαμβάνω ισοτρετινοΐνη (Roaccutane) συστηματικά ή τοπικά τους τελευταίους 6 μήνες· δεν παρουσιάζω ενεργή δερματική/ερπητική λοίμωξη στην περιοχή (π.χ. μολυσματικό κηρίο)· δεν έχω τάση σχηματισμού χηλοειδών ουλών· δεν πάσχω από αυτοάνοσο νόσημα (π.χ. Λύκος, Λεύκη)· δεν κάνω χρήση solarium· δεν έχω γνωστή αλλεργία στα οξέα/συστατικά που χρησιμοποιούνται. <b>Συναινώ ελεύθερα στη διενέργεια peeling οποιουδήποτε τύπου και/ή PRX-T33 με Microneedling. Η παρούσα συναίνεση καλύπτει το σύνολο των μελλοντικών συνεδριών αυτής της κατηγορίας θεραπειών, και παραμένει σε ισχύ έως έγγραφης ανάκλησής της.</b> Κατανοώ πως τα αποτελέσματα μπορεί να ποικίλουν ανάλογα με τον ασθενή. Η συναίνεσή μου δεν είναι αποτέλεσμα πλάνης, απάτης ή απειλής.</p>
+        <p>Ο/Η υπογράφων/ουσα <b>${esc(name)}</b> δηλώνω ότι ενημερώθηκα για τη διαδικασία, τα πιθανά αποτελέσματα και τυχόν παροδικές αντιδράσεις, ότι ανέφερα κάθε σχετικό ιατρικό/δερματολογικό ιστορικό, και ότι συναινώ ελεύθερα στην εκτέλεση της θεραπείας. <b>Η παρούσα συναίνεση καλύπτει το σύνολο των μελλοντικών συνεδριών αυτής της κατηγορίας θεραπειών, και παραμένει σε ισχύ έως έγγραφης ανάκλησής της.</b> Κατανοώ πως τα αποτελέσματα μπορεί να ποικίλουν ανάλογα με τον ασθενή. Η συναίνεσή μου δεν είναι αποτέλεσμα πλάνης, απάτης ή απειλής.</p>
         <p style="font-weight:700;margin:12px 0 8px">Γ. ΦΩΤΟΓΡΑΦΙΕΣ</p>
         <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
           <input type="checkbox" id="svc-photo" style="width:16px;height:16px;margin-top:2px;accent-color:#7C3AED"/>
@@ -7620,17 +7675,17 @@ const SERVICE_CONSENT_GROUPS = {
   },
   oxygen: {
     dbKey: 'oxygen_facetreatments',
-    title: 'Οξυγόνο/Ενυδάτωση & Face Treatments',
+    title: 'Ενυδάτωση & Θεραπείες Λάμψης',
     color: '#0F6E56',
     text: (name) => `
       <div style="font-size:12px;line-height:1.7;color:var(--text)">
-        <p style="font-weight:700;margin-bottom:8px">Α. ΕΝΗΜΕΡΩΣΗ ΑΣΘΕΝΟΥΣ — ΕΝΥΔΑΤΩΣΗ/ΟΞΥΓΟΝΟΘΕΡΑΠΕΙΑ & ΘΕΡΑΠΕΙΕΣ ΛΑΜΨΗΣ/ΛΕΥΚΑΝΣΗΣ/ΑΝΤΙΓΗΡΑΝΣΗΣ</p>
-        <p>Η παρούσα συναίνεση καλύπτει τη θεραπεία ενυδάτωσης προσώπου σε συνδυασμό με οξυγονοθεραπεία και αρνητικά ιόντα, καθώς και τις στοχευμένες θεραπείες λάμψης, λεύκανσης ή αντιγήρανσης με εξατομικευμένο ορό/μάσκα και ολοκλήρωση σε φωτοβιοδιέγερση (Dermalux).</p>
-        <p style="margin-top:6px"><b>Εφαρμογή:</b> Σχολαστικός καθαρισμός και ενζυμική απολέπιση προσώπου/λαιμού/ντεκολτέ, ενυδάτωση με επαγγελματικές μάσκες και μασάζ με cryosticks, εμποτισμός με συμπυκνωμένο οξυγόνο/ανιόντα μαζί με ορό υαλουρονικού και βιταμινών, θόλος οξυγόνου με μάσκα υαλουρονικού. Ολοκλήρωση με περιποίηση ματιών, ορό βιταμίνης C, ενυδάτωση προσώπου/χειλιών και αντηλιακή προστασία. Διάρκεια περίπου 1 ώρα.</p>
-        <p style="margin-top:6px"><b>Πιθανές ανεπιθύμητες ενέργειες:</b> Η ενυδάτωση/οξυγονοθεραπεία δεν προκαλεί συνήθως κανέναν ερεθισμό· σπάνια ήπιο παροδικό ακμοειδές εξάνθημα λόγω υπερενυδάτωσης. Στις θεραπείες λάμψης/λεύκανσης/αντιγήρανσης: ήπιο ερύθημα, ελαφριά ευαισθησία στην περιοχή διάνοιξης πόρων, πιθανό ελαφρύ ξεφλούδισμα.</p>
-        <p style="margin-top:6px"><b>Οδηγίες μετά τη θεραπεία:</b> Χρήση ήπιας ενυδατικής κρέμας. Σε αγωγή για ακμή, αποφυγή τοπικής θεραπείας για τα επόμενα δύο 24ωρα. Αποφυγή μακιγιάζ την ίδια ημέρα (δυνατότητα εφαρμογής στο ιατρείο με προϊόντα Jane Iredale spf50+). Χρήση αντηλιακής προστασίας spf>30+ τις επόμενες ημέρες.</p>
+        <p style="font-weight:700;margin-bottom:8px">Α. ΕΝΗΜΕΡΩΣΗ ΑΣΘΕΝΟΥΣ — ΕΝΥΔΑΤΩΣΗ & ΘΕΡΑΠΕΙΕΣ ΛΑΜΨΗΣ ΠΡΟΣΩΠΟΥ</p>
+        <p>Η παρούσα συναίνεση καλύπτει τις θεραπείες ενυδάτωσης και λάμψης προσώπου που προσφέρει η κλινική, με στόχο τη βελτίωση της ενυδάτωσης, της λάμψης και της γενικότερης όψης της επιδερμίδας.</p>
+        <p style="margin-top:6px"><b>Πιθανές παροδικές αντιδράσεις:</b> Πολύ σπάνια ήπιος ερεθισμός ή παροδικό εξάνθημα. Στις πιο έντονες θεραπείες λάμψης, πιθανή ήπια ερυθρότητα ή ευαισθησία.</p>
+        <p style="margin-top:6px"><b>Οφείλω να ενημερώσω την κλινική</b> για ενεργή δερματική πάθηση ή λοίμωξη στην περιοχή, γνωστές αλλεργίες σε καλλυντικά/συστατικά, ή εγκυμοσύνη/θηλασμό.</p>
+        <p style="margin-top:6px"><b>Οδηγίες φροντίδας μετά τη θεραπεία:</b> ${CONSENT_AFTERCARE}</p>
         <p style="font-weight:700;margin:12px 0 8px">Β. ΔΗΛΩΣΗ ΣΥΝΑΙΝΕΣΗΣ</p>
-        <p>Ο/Η υπογράφων/ουσα <b>${esc(name)}</b> δηλώνω ότι ενημερώθηκα πλήρως και κατανοητά για τις παραπάνω μεθόδους, τα οφέλη, τους κινδύνους και τις εναλλακτικές, είχα τη δυνατότητα να υποβάλω ερωτήσεις και έλαβα απαντήσεις. Δηλώνω ότι: δεν βρίσκομαι σε εγκυμοσύνη ή θηλασμό χωρίς προηγούμενη ενημέρωση του ιατρού· δεν παρουσιάζω ενεργή φλεγμονώδη ακμή ή λοίμωξη στην περιοχή (π.χ. μυρμηκίες, μολυσματικό κηρίο)· δεν λαμβάνω ισοτρετινοΐνη (Roaccutane) τους τελευταίους 6 μήνες· δεν έχω γνωστή αλλεργία σε κάποιο από τα χρησιμοποιούμενα προϊόντα. <b>Συναινώ ελεύθερα στη διενέργεια θεραπείας ενυδάτωσης/οξυγονοθεραπείας και/ή θεραπειών λάμψης, λεύκανσης ή αντιγήρανσης. Η παρούσα συναίνεση καλύπτει το σύνολο των μελλοντικών συνεδριών αυτής της κατηγορίας θεραπειών, και παραμένει σε ισχύ έως έγγραφης ανάκλησής της.</b> Κατανοώ πως τα αποτελέσματα μπορεί να ποικίλουν ανάλογα με τον ασθενή. Η συναίνεσή μου δεν είναι αποτέλεσμα πλάνης, απάτης ή απειλής.</p>
+        <p>Ο/Η υπογράφων/ουσα <b>${esc(name)}</b> δηλώνω ότι ενημερώθηκα για τη διαδικασία, τα πιθανά αποτελέσματα και τυχόν παροδικές αντιδράσεις, ότι ανέφερα κάθε σχετικό ιατρικό/δερματολογικό ιστορικό, και ότι συναινώ ελεύθερα στην εκτέλεση της θεραπείας. <b>Η παρούσα συναίνεση καλύπτει το σύνολο των μελλοντικών συνεδριών αυτής της κατηγορίας θεραπειών, και παραμένει σε ισχύ έως έγγραφης ανάκλησής της.</b> Κατανοώ πως τα αποτελέσματα μπορεί να ποικίλουν ανάλογα με τον ασθενή. Η συναίνεσή μου δεν είναι αποτέλεσμα πλάνης, απάτης ή απειλής.</p>
         <p style="font-weight:700;margin:12px 0 8px">Γ. ΦΩΤΟΓΡΑΦΙΕΣ</p>
         <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
           <input type="checkbox" id="svc-photo" style="width:16px;height:16px;margin-top:2px;accent-color:#0F6E56"/>
