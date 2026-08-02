@@ -1806,14 +1806,14 @@ function renderPatientDetail() {
             ...(canSeeFinancials?[['LTV', euro(p.ltv)]]:[] ),
             ['Εγγραφή', fmt(p.created_at)],
           ].map(([k,v])=>`
-          <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border-2);font-size:12.5px">
-            <span style="color:var(--text-2)">${k}</span><span style="font-weight:500">${esc(v||'—')}</span>
+          <div style="display:flex;padding:5px 0;border-bottom:1px solid var(--border-2);font-size:12.5px">
+            <span style="color:var(--text-2);width:120px;flex-shrink:0">${k}</span><span style="font-weight:500">${esc(v||'—')}</span>
           </div>`).join('')}
         </div>
       </div>
       <div class="card">
         <div class="card-header"><span class="card-title">Σύνοψη Δραστηριότητας</span></div>
-        <div style="padding:4px 16px">
+        <div style="padding:8px 16px;display:grid;grid-template-columns:1fr 1fr;gap:6px 12px">
           ${[
             ['Σύνολο Ραντεβού', (p.appointments&&p.appointments.length)||0],
             ['Ολοκληρωμένα', (p.appointments||[]).filter(a=>a.status==='completed'||a.status==='paid').length],
@@ -1822,10 +1822,10 @@ function renderPatientDetail() {
             ...(canSeeFinancials?[['Σύνολο Εσόδων', euro((p.appointments||[]).filter(a=>a.price).reduce((s,a)=>s+(a.price||0),0))]]:[]),
             ['Τελευταία Επίσκεψη', fmtDt((p.appointments||[])[(p.appointments||[]).length-1]&&(p.appointments||[])[(p.appointments||[]).length-1].start_time)],
           ].map(([k,v])=>`
-          <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border-2);font-size:12.5px">
-            <span style="color:var(--text-2)">${k}</span><span style="font-weight:500">${esc(String(v||'—'))}</span>
+          <div style="display:flex;justify-content:space-between;gap:8px;padding:6px 10px;background:var(--bg-2,#F7F8FC);border-radius:8px;font-size:12px">
+            <span style="color:var(--text-2)">${k}</span><span style="font-weight:600">${esc(String(v||'—'))}</span>
           </div>`).join('')}
-          ${p.notes?`<div style="margin-top:8px;padding-bottom:6px"><div style="font-size:10.5px;font-weight:600;color:var(--text-2);text-transform:uppercase;margin-bottom:4px">Σημειώσεις</div><div style="font-size:12.5px;line-height:1.5;color:var(--text-2)">${esc(p.notes)}</div></div>`:''}
+          ${p.notes?`<div style="grid-column:1/-1;margin-top:2px"><div style="font-size:10.5px;font-weight:600;color:var(--text-2);text-transform:uppercase;margin-bottom:4px">Σημειώσεις</div><div style="font-size:12.5px;line-height:1.5;color:var(--text-2)">${esc(p.notes)}</div></div>`:''}
         </div>
       </div>
     </div>`:''}
