@@ -291,6 +291,11 @@ document.getElementById('app-build-info').textContent = `v${APP_VERSION} · ${BU
 // ── ΑΠΛΟΠΟΙΗΜΕΝΕΣ ΟΜΑΔΕΣ ΣΥΝΑΙΝΕΣΗΣ (όλα εκτός Laser, που κρατά τη δική του λεπτομερή φόρμα) ──
 const CONSENT_GROUPS = ['Καθαρισμός Προσώπου','Θεραπεία Προσώπου','Μεσοθεραπεία','Peeling','Ηλεκτρόλυση'];
 const CF_SKIN_TYPE_OPTIONS = ['Ακμή','Anti-aging','Ευαισθησία','Υπερλιπαρότητα','Ξηρότητα/Αφυδάτωση','Πανάδες/Ρυτίδες'];
+// Τεχνικά tags που γράφουν αυτόματα διάφορα sync/ingest pipelines στο patients.source
+// (booking247-ingest, gmail-auto-sync, CSV import, skincare-plan email matching) — ΔΕΝ
+// είναι πραγματικές απαντήσεις στο «πού μας βρήκατε» και δεν πρέπει ποτέ να μετρηθούν ή
+// να εμφανιστούν σαν να ήταν. Οι πραγματικές επιλογές είναι μόνο οι HISTORY_FORM_SOURCES.
+const NON_MARKETING_SOURCE_TAGS = ['booking247', 'import', 'skincare_plan'];
 const CONSENT_AFTERCARE = 'Μετά τη θεραπεία αποφεύγω για μερικές ώρες την έντονη σωματική άσκηση, το χαμάμ και τη σάουνα, την άμεση έκθεση στον ήλιο, την έντονη τριβή και το πολύ ζεστό νερό στην περιοχή. Η χρήση αντηλιακού με πολύ υψηλό δείκτη προστασίας είναι απαραίτητη, και η έκθεση στον ήλιο γίνεται σύμφωνα με την καθοδήγηση του θεραπευτή. Σε περίπτωση οποιασδήποτε μη αναμενόμενης αντίδρασης, οφείλω να επικοινωνήσω άμεσα με τον θεραπευτή.';
 const CONSENT_GROUP_TEXTS = {
   'Καθαρισμός Προσώπου': `Η θεραπεία καθαρισμού προσώπου περιλαμβάνει καθαρισμό, ατμό, εξαγωγή σμήγματος/ακαθαρσιών από τους πόρους και εφαρμογή κατάλληλης μάσκας. Σκοπός είναι η βελτίωση της υφής και της καθαριότητας της επιδερμίδας.
@@ -1113,7 +1118,7 @@ function renderDashboard() {
   const canonicalizeSource = (raw) => {
     if (!raw) return null;
     const s = raw.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
-    if (!s || s==='booking247') return null;
+    if (!s || NON_MARKETING_SOURCE_TAGS.includes(s)) return null;
     if (/googl|goggl/.test(s)) return 'Google';
     if (/social|facebook|instagram|\bfb\b|\big\b/.test(s)) return 'Social';
     if (/ταμπελ/.test(s)) return 'Ταμπέλα';
@@ -1761,18 +1766,18 @@ function renderPatientDetail() {
         const sc = computePatientScore(p);
         const scoreColor = sc.overall>=70?'#0F6E56':sc.overall>=40?'#854F0B':'#A32D2D';
         const subScore = (label,val) => `<div style="text-align:center">
-          ${scoreRingSvg(val, 52, scoreColor)}
-          <div style="margin-top:-40px;font-size:13px;font-weight:700">${val}</div>
-          <div style="margin-top:14px;font-size:10px;color:var(--text-2)">${label}</div>
+          ${scoreRingSvg(val, 40, scoreColor)}
+          <div style="margin-top:-30px;font-size:11px;font-weight:700">${val}</div>
+          <div style="margin-top:8px;font-size:9.5px;color:var(--text-2)">${label}</div>
         </div>`;
         return `<div class="card" style="grid-column:1/-1">
           <div class="card-header"><span class="card-title">Score Πελάτη</span></div>
-          <div style="padding:16px;display:flex;align-items:center;gap:28px;flex-wrap:wrap">
-            <div style="position:relative;text-align:center">
-              ${scoreRingSvg(sc.overall, 88, scoreColor)}
-              <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:700;color:${scoreColor}">${sc.overall}</div>
+          <div style="padding:10px 16px;display:flex;align-items:center;gap:18px;flex-wrap:wrap">
+            <div style="position:relative;text-align:center;flex-shrink:0">
+              ${scoreRingSvg(sc.overall, 60, scoreColor)}
+              <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:17px;font-weight:700;color:${scoreColor}">${sc.overall}</div>
             </div>
-            <div style="display:flex;gap:20px;flex-wrap:wrap">
+            <div style="display:flex;gap:10px;flex-wrap:wrap">
               ${subScore('Αξία (LTV)', sc.valueScore)}
               ${subScore('Πρόσφατη Επίσκεψη', sc.recencyScore)}
               ${subScore('Αξιοπιστία', sc.reliabilityScore)}
@@ -1788,7 +1793,7 @@ function renderPatientDetail() {
         <div class="card-header"><span class="card-title">Στοιχεία Ασθενή</span>
           <button class="btn btn-ghost btn-sm" id="edit-patient-btn">✏ Επεξεργασία</button>
         </div>
-        <div style="padding:16px">
+        <div style="padding:4px 16px">
           ${[
             ['Email', p.email],
             ['Τηλέφωνο', p.phone],
@@ -1801,14 +1806,14 @@ function renderPatientDetail() {
             ...(canSeeFinancials?[['LTV', euro(p.ltv)]]:[] ),
             ['Εγγραφή', fmt(p.created_at)],
           ].map(([k,v])=>`
-          <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border-2);font-size:13px">
+          <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border-2);font-size:12.5px">
             <span style="color:var(--text-2)">${k}</span><span style="font-weight:500">${esc(v||'—')}</span>
           </div>`).join('')}
         </div>
       </div>
       <div class="card">
         <div class="card-header"><span class="card-title">Σύνοψη Δραστηριότητας</span></div>
-        <div style="padding:16px">
+        <div style="padding:4px 16px">
           ${[
             ['Σύνολο Ραντεβού', (p.appointments&&p.appointments.length)||0],
             ['Ολοκληρωμένα', (p.appointments||[]).filter(a=>a.status==='completed'||a.status==='paid').length],
@@ -1817,10 +1822,10 @@ function renderPatientDetail() {
             ...(canSeeFinancials?[['Σύνολο Εσόδων', euro((p.appointments||[]).filter(a=>a.price).reduce((s,a)=>s+(a.price||0),0))]]:[]),
             ['Τελευταία Επίσκεψη', fmtDt((p.appointments||[])[(p.appointments||[]).length-1]&&(p.appointments||[])[(p.appointments||[]).length-1].start_time)],
           ].map(([k,v])=>`
-          <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border-2);font-size:13px">
+          <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border-2);font-size:12.5px">
             <span style="color:var(--text-2)">${k}</span><span style="font-weight:500">${esc(String(v||'—'))}</span>
           </div>`).join('')}
-          ${p.notes?`<div style="margin-top:12px"><div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;margin-bottom:6px">Σημειώσεις</div><div style="font-size:13px;line-height:1.6;color:var(--text-2)">${esc(p.notes)}</div></div>`:''}
+          ${p.notes?`<div style="margin-top:8px;padding-bottom:6px"><div style="font-size:10.5px;font-weight:600;color:var(--text-2);text-transform:uppercase;margin-bottom:4px">Σημειώσεις</div><div style="font-size:12.5px;line-height:1.5;color:var(--text-2)">${esc(p.notes)}</div></div>`:''}
         </div>
       </div>
     </div>`:''}
@@ -7267,7 +7272,10 @@ async function openHistoryFormModal(opts) {
   const old = document.getElementById('history-form-overlay'); if (old) old.remove();
   const med = historyFormParseList(p.medical_history, HISTORY_FORM_CONDITIONS);
   const srcKnown = HISTORY_FORM_SOURCES.find(s => (p.source || '').toLowerCase() === s.toLowerCase());
-  const srcOther = srcKnown ? '' : (p.source || '');
+  // Ποτέ μην προσυμπληρώνεις το "Other" με τεχνικά tags (π.χ. "booking247") — δείχνουν
+  // σαν να ήταν ήδη απαντημένο το «πού μας βρήκατε», ενώ στην πραγματικότητα κανείς
+  // ποτέ δεν ρώτησε τον πελάτη. Καλύτερα κενό, ώστε να ρωτηθεί πραγματικά.
+  const srcOther = (srcKnown || NON_MARKETING_SOURCE_TAGS.includes((p.source||'').toLowerCase())) ? '' : (p.source || '');
   const integrations = (S.clinic && S.clinic.integrations) || {};
   const {data: cityRows} = await sb.from('patients').select('city').eq('clinic_id', clinicId()).not('city', 'is', null);
   const knownCities = [...new Set((cityRows || []).map(r => (r.city || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'el'));
