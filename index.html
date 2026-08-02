@@ -149,7 +149,7 @@ a{color:inherit;text-decoration:none}
 .logout-btn{background:none;color:rgba(255,255,255,0.3);font-size:16px;padding:4px;margin-left:auto}
 .logout-btn:hover{color:rgba(255,255,255,0.7)}
 
-.main{margin-left:220px;flex:1;display:flex;flex-direction:column;min-height:100vh;transition:margin-left .2s}
+.main{margin-left:220px;flex:1;min-width:0;display:flex;flex-direction:column;min-height:100vh;transition:margin-left .2s}
 .main.expanded{margin-left:60px}
 .topbar{height:56px;background:var(--white);border-bottom:1px solid var(--border-2);display:flex;align-items:center;padding:0 24px;gap:12px;position:sticky;top:0;z-index:50}
 .topbar-title{font-size:15px;font-weight:500;flex:1}
@@ -1680,7 +1680,7 @@ function renderPatientDetail() {
     </div>
 
     <!-- Tabs -->
-    <div style="display:flex;gap:0;border-bottom:1px solid var(--border-2);margin-bottom:20px">
+    <div style="display:flex;gap:0;border-bottom:1px solid var(--border-2);margin-bottom:20px;overflow-x:auto">
       ${[
         {id:'overview',l:'Στοιχεία'},
         {id:'timeline',l:'Timeline'},
@@ -1769,7 +1769,7 @@ function renderPatientDetail() {
         </div>
         <div class="card">
           <div class="card-header"><span class="card-title">Σύνοψη Δραστηριότητας</span></div>
-          <div style="padding:8px 16px;display:grid;grid-template-columns:1fr 1fr;gap:6px 12px">
+          <div class="dash-grid" style="padding:8px 16px;display:grid;grid-template-columns:1fr 1fr;gap:6px 12px">
             ${[
               ['Σύνολο Ραντεβού', (p.appointments&&p.appointments.length)||0],
               ['Ολοκληρωμένα', (p.appointments||[]).filter(a=>a.status==='completed'||a.status==='paid').length],
@@ -2858,7 +2858,7 @@ function renderSms() {
   const smsTab = S.smsTab||'automations';
   return `<div class="page">
     <div class="page-header"><h1 class="page-title">SMS & Αυτοματισμοί</h1></div>
-    <div style="display:flex;gap:0;border-bottom:1px solid var(--border-2);margin-bottom:20px">
+    <div style="display:flex;gap:0;border-bottom:1px solid var(--border-2);margin-bottom:20px;overflow-x:auto">
       ${['automations','log'].map(t=>`<button class="btn" style="border-radius:0;border-bottom:2px solid ${smsTab===t?'var(--blue)':'transparent'};color:${smsTab===t?'var(--blue)':'var(--text-2)'};background:transparent;padding:8px 16px;font-size:12px" data-sms-tab="${t}">${t==='automations'?'Αυτοματισμοί':'SMS Log'}</button>`).join('')}
     </div>
     ${smsTab==='automations'?`
@@ -3107,7 +3107,7 @@ function renderConsents() {
       </div>
     </div>
     <!-- Tabs -->
-    <div style="display:flex;gap:0;border-bottom:1px solid var(--border-2);margin-bottom:20px">
+    <div style="display:flex;gap:0;border-bottom:1px solid var(--border-2);margin-bottom:20px;overflow-x:auto">
       ${[{id:'gdpr',l:`GDPR (${gdpr.length})`},{id:'service',l:`Υπηρεσιών (${svc.length})`},{id:'templates',l:'Templates'},{id:'mapping',l:'Αντιστοίχιση Υπηρεσιών'},{id:'consult-lists',l:'Λίστες Consultation'}].map(t=>`<button class="btn" style="border-radius:0;border-bottom:2px solid ${conTab===t.id?'var(--blue)':'transparent'};color:${conTab===t.id?'var(--blue)':'var(--text-2)'};background:transparent;padding:8px 16px;font-size:12px" data-con-tab="${t.id}">${t.l}</button>`).join('')}
     </div>
     ${conTab==='gdpr'?`<div class="card"><div class="table-wrap"><table>
@@ -3421,7 +3421,7 @@ function renderSettings() {
     <div class="page-header"><h1 class="page-title">Ρυθμίσεις</h1></div>
 
     <!-- Tabs -->
-    <div style="display:flex;gap:0;border-bottom:1px solid var(--border-2);margin-bottom:20px">
+    <div style="display:flex;gap:0;border-bottom:1px solid var(--border-2);margin-bottom:20px;overflow-x:auto">
       ${[{id:'clinic',l:'Κλινική'},{id:'integrations',l:'Συνδέσεις'},{id:'import',l:'Εισαγωγή'},{id:'users',l:'Χρήστες'},{id:'account',l:'Λογαριασμός'}].map(t=>`
       <button class="btn" style="border-radius:0;border-bottom:2px solid ${settingsTab===t.id?'var(--blue)':'transparent'};color:${settingsTab===t.id?'var(--blue)':'var(--text-2)'};background:transparent;padding:8px 16px;font-size:13px" data-settings-tab="${t.id}">${t.l}</button>`).join('')}
     </div>
