@@ -807,6 +807,12 @@ async function loadPatientDetail(id, tab) {
     const {data:svcCon3} = await sb.from('service_consents').select('*').eq('patient_id',id)
       .eq('consent_group','oxygen_facetreatments').order('signed_at',{ascending:false}).limit(1);
     S.serviceConsentOxygen = (svcCon3&&svcCon3[0])||null;
+    // Πιο πρόσφατο υπογεγραμμένο στιγμιότυπο GDPR & Ιατρικού Ιστορικού (προαιρετικό —
+    // υπάρχει μόνο αν έχει χρησιμοποιηθεί η νέα υπογραφή· παλιοί ασθενείς χωρίς αυτό
+    // συνεχίζουν να δουλεύουν κανονικά μέσω των flags patients.gdpr_signed κ.λπ.)
+    const {data:mhc} = await sb.from('medical_history_consents').select('*').eq('patient_id',id)
+      .order('signed_at',{ascending:false}).limit(1);
+    S.historyConsent = (mhc&&mhc[0])||null;
     S.patientDetail = {...p, appointments: a||[]};
     S.laserForms = lf||[];
     S.patTab = tab || 'overview';
@@ -1577,9 +1583,14 @@ function renderPatientConsentsTab() {
     {
       key: 'gdpr', label: 'GDPR & Ιατρικό Ιστορικό', color: '#0E2757',
       signed: !!(p&&p.gdpr_signed), always: true,
-      signedAt: null, collectedBy: null,
+      signedAt: S.historyConsent ? S.historyConsent.signed_at : (p&&p.gdpr_signed_at),
+      collectedBy: S.historyConsent&&S.historyConsent.collected_by,
+      stale: (() => {
+        const at = S.historyConsent ? S.historyConsent.signed_at : (p&&p.gdpr_signed_at);
+        return !!(at && (Date.now()-new Date(at).getTime()) > 365*24*3600*1000);
+      })(),
       onSign: null, onView: 'viewGdprConsent()',
-      hint: 'Συλλέγεται μέσω της εξωτερικής φόρμας (Ρυθμίσεις → Συναινέσεις & Φόρμες).'
+      hint: 'Συλλέγεται μέσω της εξωτερικής φόρμας ή της Φόρμας Ιστορικού (Ιατρικό Ιστορικό → Επεξεργασία Φόρμας).'
     },
     {
       key: 'laser', label: 'Laser Αποτρίχωση', color: '#C4618A',
@@ -1619,6 +1630,7 @@ function renderPatientConsentsTab() {
             ${r.signed
               ? `<div style="font-size:11px;color:#0F6E56;margin-top:2px">✓ Υπογεγραμμένο${r.signedAt?' · '+new Date(r.signedAt).toLocaleDateString('el-GR'):''}${r.collectedBy?' · '+esc(r.collectedBy):''}</div>`
               : `<div style="font-size:11px;color:var(--red);margin-top:2px">⚠ Εκκρεμεί${r.hint?' — '+esc(r.hint):''}</div>`}
+            ${r.stale ? `<div style="font-size:10px;font-weight:600;color:#854F0B;margin-top:3px">🔄 Προτείνεται ανανέωση (>1 έτος)</div>` : ''}
           </div>
           <div style="display:flex;gap:6px;flex-shrink:0">
             ${r.signed && r.onView ? `<button class="btn btn-ghost btn-sm" onclick="${r.onView}">👁 Προβολή</button>` : ''}
@@ -6498,33 +6510,53 @@ function laserConsentText(patientName) {
   </div>`;
 }
 
-// Προβολή GDPR & Ιατρικού Ιστορικού — δεν υπάρχει αποθηκευμένο πλήρες κείμενο συναίνεσης
-// (συλλέγεται μέσω εξωτερικής φόρμας), αλλά το medical_history/allergies/medications/
-// previous_treatments είναι ήδη αποθηκευμένα στην καρτέλα του ασθενή, οπότε δείχνουμε αυτά.
+// Προβολή GDPR & Ιατρικού Ιστορικού. Αν υπάρχει S.historyConsent (η νέα, προαιρετική
+// υπογραφή στη Φόρμα Ιστορικού), δείχνουμε ΑΚΡΙΒΩΣ το στιγμιότυπο που υπογράφηκε τότε
+// (μαζί με την υπογραφή) — όχι τα ζωντανά πεδία της καρτέλας, που μπορεί να έχουν αλλάξει
+// έκτοτε. Παλιοί ασθενείς χωρίς τέτοιο στιγμιότυπο βλέπουν τα ζωντανά πεδία όπως πριν.
 function viewGdprConsent() {
   const p = S.patientDetail; if (!p) return;
+  const hc = S.historyConsent;
   const old = document.getElementById('gc-overlay'); if (old) old.remove();
   const ov = document.createElement('div');
   ov.id = 'gc-overlay';
   ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9000;display:flex;align-items:center;justify-content:center;padding:12px';
+
+  const src = hc ? hc.snapshot||{} : p;
   const fields = [
-    ['Ιατρικό Ιστορικό', p.medical_history],
-    ['Αλλεργίες', p.allergies],
-    ['Φαρμακευτική Αγωγή', p.medications],
-    ['Προηγούμενες Θεραπείες', p.previous_treatments],
+    ['Ιατρικό Ιστορικό', hc ? [].concat(src.conditions||[], src.condition_other?['Other: '+src.condition_other]:[]).join(', ') : p.medical_history],
+    ['Αλλεργίες', src.allergies],
+    ['Φαρμακευτική Αγωγή', src.medications],
+    ['Προηγούμενες Θεραπείες', src.previous_treatments],
+    ['Περιοχές προς Αποφυγή', src.avoid_body_areas],
   ].filter(([,v]) => v && String(v).trim());
+
+  const oneYearMs = 365 * 24 * 3600 * 1000;
+  const lastSignedAt = hc ? hc.signed_at : p.gdpr_signed_at;
+  const isStale = lastSignedAt && (Date.now() - new Date(lastSignedAt).getTime()) > oneYearMs;
+
   ov.innerHTML = `
     <div style="background:var(--white);border-radius:16px;max-width:560px;width:100%;max-height:88vh;overflow-y:auto;padding:20px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
         <div style="font-size:15px;font-weight:700;color:#0E2757">GDPR & Ιατρικό Ιστορικό — ${esc(p.full_name)}</div>
         <button onclick="document.getElementById('gc-overlay').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-2)">×</button>
       </div>
-      <div style="font-size:12px;font-weight:600;margin-bottom:14px;color:${p.gdpr_signed?'#0F6E56':'var(--red)'}">${p.gdpr_signed?'✓ GDPR Υπογεγραμμένο':'⚠ Χωρίς υπογεγραμμένο GDPR'}</div>
+      <div style="font-size:12px;font-weight:600;margin-bottom:6px;color:${p.gdpr_signed?'#0F6E56':'var(--red)'}">${p.gdpr_signed?'✓ GDPR Υπογεγραμμένο':'⚠ Χωρίς υπογεγραμμένο GDPR'}</div>
+      ${isStale?`<div style="font-size:11px;font-weight:600;color:#854F0B;background:#FAEEDA;display:inline-block;padding:3px 10px;border-radius:10px;margin-bottom:14px">🔄 Προτείνεται ανανέωση — πάνω από 1 έτος από την τελευταία υπογραφή</div>`:''}
       ${fields.length ? fields.map(([k,v])=>`
         <div style="margin-bottom:14px">
           <div style="font-size:10px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">${esc(k)}</div>
           <div style="font-size:13px;line-height:1.6;white-space:pre-wrap">${esc(v)}</div>
         </div>`).join('') : `<div style="font-size:12px;color:var(--text-2)">Δεν έχει καταχωρηθεί κανένα στοιχείο ιατρικού ιστορικού.</div>`}
+      ${hc ? `
+        <div style="margin-top:6px;font-size:11px;color:var(--text-2)">
+          Υπεγράφη: <b>${new Date(hc.signed_at).toLocaleString('el-GR')}</b> · Συλλογή: ${esc(hc.collected_by||'—')}
+        </div>
+        ${hc.signature_data ? `
+          <div style="font-size:11px;font-weight:700;color:#0E2757;margin-top:10px">Υπογραφή ασθενούς:</div>
+          <img src="${hc.signature_data}" style="margin-top:6px;border:1px solid var(--border);border-radius:10px;max-width:100%;background:#fff"/>
+        `:''}
+      `:''}
     </div>`;
   document.body.appendChild(ov);
 }
@@ -6587,6 +6619,34 @@ function lcClearCanvas() {
   const cv = document.getElementById('lc-canvas');
   cv.getContext('2d').clearRect(0,0,cv.width,cv.height);
   _lcHasInk = false;
+}
+
+// ── Υπογραφή στη Φόρμα Ιστορικού (GDPR & Ιατρικό Ιστορικό) — προαιρετική,
+// ίδιο μοτίβο σχεδίασης με το lc-canvas του Laser, αλλά ξεχωριστό state ώστε
+// να μην μπερδεύονται τα δύο modal αν ανοιχτούν διαδοχικά.
+let _hfDrawing = false, _hfHasInk = false;
+function hfInitCanvas() {
+  const cv = document.getElementById('hf-canvas');
+  if (!cv) return;
+  const ctx = cv.getContext('2d');
+  ctx.strokeStyle = '#0E2757'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+  const pos = (e) => {
+    const r = cv.getBoundingClientRect();
+    const t = e.touches ? e.touches[0] : e;
+    return {x:(t.clientX-r.left)*(cv.width/r.width), y:(t.clientY-r.top)*(cv.height/r.height)};
+  };
+  const start = (e) => { e.preventDefault(); _hfDrawing=true; const p=pos(e); ctx.beginPath(); ctx.moveTo(p.x,p.y); };
+  const move = (e) => { if(!_hfDrawing) return; e.preventDefault(); const p=pos(e); ctx.lineTo(p.x,p.y); ctx.stroke(); _hfHasInk=true; };
+  const end = () => { _hfDrawing=false; };
+  cv.addEventListener('mousedown',start); cv.addEventListener('mousemove',move); window.addEventListener('mouseup',end);
+  cv.addEventListener('touchstart',start,{passive:false}); cv.addEventListener('touchmove',move,{passive:false}); cv.addEventListener('touchend',end);
+  _hfHasInk = false;
+}
+function hfClearCanvas() {
+  const cv = document.getElementById('hf-canvas');
+  if (!cv) return;
+  cv.getContext('2d').clearRect(0,0,cv.width,cv.height);
+  _hfHasInk = false;
 }
 
 async function saveLaserConsent() {
@@ -7290,6 +7350,15 @@ async function openHistoryFormModal(opts) {
         </div>
       </div>
 
+      <div style="margin-top:18px;padding-top:14px;border-top:1px dashed var(--border-2)">
+        <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">✍️ Υπογραφή ασθενούς (προαιρετικό — αν ο ασθενής είναι παρών)</div>
+        <div style="font-size:11px;color:var(--text-2);margin-bottom:8px">Αν υπογραφεί, αποθηκεύεται πλήρες αντίγραφο της φόρμας όπως συμπληρώθηκε, με ισχύ 1 έτους. Χωρίς υπογραφή, η φόρμα αποθηκεύεται κανονικά όπως πριν.</div>
+        <canvas id="hf-canvas" width="620" height="140" style="width:100%;height:140px;border:2px dashed var(--border);border-radius:10px;background:#fff;touch-action:none"></canvas>
+        <div style="display:flex;justify-content:flex-end;margin-top:6px">
+          <button type="button" class="btn btn-sm" onclick="hfClearCanvas()" style="font-size:11px">↺ Καθαρισμός</button>
+        </div>
+      </div>
+
       <div id="hf-error" style="margin-top:14px;font-size:12px;color:var(--red)"></div>
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px">
         <button class="btn btn-ghost" onclick="document.getElementById('history-form-overlay').remove()">Ακύρωση</button>
@@ -7297,6 +7366,8 @@ async function openHistoryFormModal(opts) {
       </div>
     </div>`;
   document.body.appendChild(ov);
+
+  hfInitCanvas();
 
   // Standalone mode: αναζήτηση/επιλογή υπάρχοντος ασθενή, ή άφησέ το ασυμπλήρωτο
   // για νέο ασθενή — τότε η Υποβολή θα τον δημιουργήσει αυτόματα με ό,τι γράφτηκε.
@@ -7385,19 +7456,37 @@ async function openHistoryFormModal(opts) {
       medical_history_completed_at: p.medical_history_completed ? undefined : new Date().toISOString(),
     };
 
+    let finalPatientId = selectedPatientId;
     if (selectedPatientId) {
       const {error} = await sb.from('patients').update(patch).eq('id', selectedPatientId);
       if (error) { errEl.textContent = 'Σφάλμα: ' + error.message; btn.textContent = 'Υποβολή'; btn.disabled = false; return; }
-      document.getElementById('history-form-overlay').remove();
-      if (S.patientDetail && S.patientDetail.id === selectedPatientId) await loadPatientDetail(selectedPatientId);
-      render();
     } else {
       const {data:newPt, error} = await sb.from('patients').insert(Object.assign({clinic_id: clinicId(), status: 'active'}, patch)).select('id').single();
       if (error) { errEl.textContent = 'Σφάλμα: ' + error.message; btn.textContent = 'Υποβολή'; btn.disabled = false; return; }
-      document.getElementById('history-form-overlay').remove();
-      if (newPt) await loadPatientDetail(newPt.id);
-      else render();
+      finalPatientId = newPt && newPt.id;
     }
+
+    // Προαιρετική υπογραφή: αν υπάρχει μελάνι στο canvas, αποθηκεύουμε ΕΠΙΠΛΕΟΝ ένα πλήρες
+    // στιγμιότυπο της φόρμας — δεν μπλοκάρει τίποτα αν αποτύχει, τα βασικά στοιχεία της
+    // καρτέλας έχουν ήδη αποθηκευτεί κανονικά από πάνω.
+    if (_hfHasInk && finalPatientId) {
+      const snapshot = {
+        full_name: patch.full_name, dob: patch.dob, phone: patch.phone, email: patch.email, city: patch.city,
+        source: patch.source, conditions, condition_other: conditionOther || null,
+        allergies: patch.allergies, medications: patch.medications, previous_treatments: patch.previous_treatments,
+        avoid_body_areas: patch.avoid_body_areas, marketing_opt_in: patch.marketing_opt_in ?? null,
+      };
+      const {data: consentRow} = await sb.from('medical_history_consents').insert({
+        clinic_id: clinicId(), patient_id: finalPatientId, signed_at: new Date().toISOString(),
+        signature_data: document.getElementById('hf-canvas').toDataURL('image/png'),
+        collected_by: (S.profile&&S.profile.full_name)||'', consent_version: 'v1', snapshot,
+      }).select('*').single();
+      if (consentRow) S.historyConsent = consentRow;
+    }
+
+    document.getElementById('history-form-overlay').remove();
+    if (finalPatientId) await loadPatientDetail(finalPatientId);
+    else render();
   });
 }
 
