@@ -502,7 +502,7 @@ const euro = v => '€'+(v||0).toLocaleString('el-GR');
 
 const ROLES = {super_admin:'Super Admin',clinic_admin:'Διαχειριστής',therapist:'Θεραπευτής',receptionist:'Γραμματεία'};
 const STATUS_PAT = {active:{bg:'#E1F5EE',c:'#0F6E56',l:'Ενεργός'},vip:{bg:'#EEEDFE',c:'#3C3489',l:'VIP'},lead:{bg:'#E6F1FB',c:'#185FA5',l:'Lead'},inactive:{bg:'#FCEBEB',c:'#A32D2D',l:'Ανενεργός'}};
-const STATUS_APPT = {pending:{bg:'#FAEEDA',c:'#854F0B',l:'Εκκρεμεί'},confirmed:{bg:'#E1F5EE',c:'#0F6E56',l:'Επιβεβαιωμένο'},in_progress:{bg:'#E6F1FB',c:'#185FA5',l:'Σε εξέλιξη'},completed:{bg:'#E1F5EE',c:'#0F6E56',l:'Ολοκληρώθηκε'},cancelled:{bg:'#FCEBEB',c:'#A32D2D',l:'Ακυρώθηκε'},no_show:{bg:'#FCEBEB',c:'#A32D2D',l:'No Show'},paid:{bg:'#E1F5EE',c:'#0F6E56',l:'Πληρωμένο'}};
+const STATUS_APPT = {confirmed:{bg:'#E1F5EE',c:'#0F6E56',l:'Επιβεβαιωμένο'},in_progress:{bg:'#E6F1FB',c:'#185FA5',l:'Σε εξέλιξη'},completed:{bg:'#E1F5EE',c:'#0F6E56',l:'Ολοκληρώθηκε'},cancelled:{bg:'#FCEBEB',c:'#A32D2D',l:'Ακυρώθηκε'},no_show:{bg:'#FCEBEB',c:'#A32D2D',l:'No Show'}};
 const PIPELINE_STAGES = ['new_lead','contacted','interested','offer_sent','won','lost'];
 const STAGE_LABELS = {new_lead:'Νέο Lead',contacted:'Επαφή',interested:'Ενδιαφέρον',offer_sent:'Προσφορά',won:'✓ Κλείσιμο',lost:'✗ Απώλεια'};
 
@@ -515,7 +515,7 @@ function patBadge(status){const s=STATUS_PAT[status]||STATUS_PAT.lead;return bad
 function hasMedicalHistoryData(p) {
   return !!(p.medical_history_completed || [p.medical_history, p.allergies, p.medications, p.previous_treatments].some(v => v && String(v).trim()));
 }
-function apptBadge(status){const s=STATUS_APPT[status]||STATUS_APPT.pending;return badge(s.l,s.bg,s.c)}
+function apptBadge(status){const s=STATUS_APPT[status]||STATUS_APPT.confirmed;return badge(s.l,s.bg,s.c)}
 
 // ── AUTH ──
 async function init() {
@@ -907,7 +907,7 @@ function globalApptColor(a) {
   if (st==='vip') return {bg:'#EEEDFE',border:'#534AB7',text:'#3C3489'};
   if (st==='lead') return {bg:'#E6F1FB',border:'#2B3BF0',text:'#185FA5'};
   if (a.status==='cancelled') return {bg:'#FCEBEB',border:'#D85A30',text:'#A32D2D'};
-  if (a.status==='completed'||a.status==='paid') return {bg:'#E1F5EE',border:'#1D9E75',text:'#0F6E56'};
+  if (a.status==='completed') return {bg:'#E1F5EE',border:'#1D9E75',text:'#0F6E56'};
   if (a.status==='confirmed') return {bg:'#E6F1FB',border:'#2B3BF0',text:'#185FA5'};
   return {bg:'#FAEEDA',border:'#EF9F27',text:'#854F0B'};
 }
@@ -1108,17 +1108,17 @@ function renderDashboard() {
   const todayApts = apts.filter(a=>new Date(a.start_time).toDateString()===today);
   const upcomingApts = apts.filter(a=>new Date(a.start_time)>now&&a.status!=='cancelled').sort((a,b)=>new Date(a.start_time)-new Date(b.start_time));
   const thisMonth = apts.filter(a=>{const d=new Date(a.start_time);return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();});
-  const revenue30 = apts.filter(a=>{const d=new Date(a.start_time);return d<=now&&(now-d)<30*86400000&&(a.status==='paid'||a.status==='completed');}).reduce((s,a)=>s+(a.price||0),0);
+  const revenue30 = apts.filter(a=>{const d=new Date(a.start_time);return d<=now&&(now-d)<30*86400000&&(a.status==='completed');}).reduce((s,a)=>s+(a.price||0),0);
   const wonLeads = (S.pipeline||[]).filter(l=>l.stage==='won').length;
   const totalLeads = (S.pipeline||[]).length;
   const conversionRate = totalLeads ? Math.round((wonLeads/totalLeads)*100) : 0;
-  const paidCompleted = apts.filter(a=>a.status==='paid'||a.status==='completed');
-  const avgTicket = paidCompleted.length ? Math.round(paidCompleted.reduce((s,a)=>s+(a.price||0),0)/paidCompleted.length) : 0;
+  const completedApts = apts.filter(a=>a.status==='completed');
+  const avgTicket = completedApts.length ? Math.round(completedApts.reduce((s,a)=>s+(a.price||0),0)/completedApts.length) : 0;
   const noShowRate = apts.length ? Math.round((apts.filter(a=>a.status==='no_show').length/apts.length)*100) : 0;
   const repeatPatients = pts.filter(p=>apts.filter(a=>a.patient_id===p.id).length>1).length;
   const repeatRate = pts.length ? Math.round((repeatPatients/pts.length)*100) : 0;
-  const completedToday = todayApts.filter(a=>a.status==='completed'||a.status==='paid').length;
-  const pendingToday = todayApts.filter(a=>a.status==='pending'||a.status==='confirmed').length;
+  const completedToday = todayApts.filter(a=>a.status==='completed').length;
+  const pendingToday = todayApts.filter(a=>a.status==='confirmed').length;
   const noGdpr = pts.filter(p=>!p.gdpr_signed).length;
   const newPts30 = pts.filter(p=>{const d=new Date(p.created_at);return d<=now&&(now-d)<30*86400000;}).length;
 
@@ -1142,7 +1142,7 @@ function renderDashboard() {
     const d = new Date(); d.setDate(d.getDate()-i); d.setHours(0,0,0,0);
     const dEnd = new Date(d); dEnd.setDate(dEnd.getDate()+1);
     const dayApts = (S.dashStatusTrend||[]).filter(a=>{ const t=new Date(a.start_time); return t>=d && t<dEnd; });
-    const completed = dayApts.filter(a=>a.status==='completed'||a.status==='paid').length;
+    const completed = dayApts.filter(a=>a.status==='completed').length;
     const cancelled = dayApts.filter(a=>a.status==='cancelled').length;
     const noShow = dayApts.filter(a=>a.status==='no_show').length;
     const other = dayApts.length - completed - cancelled - noShow;
@@ -1343,7 +1343,7 @@ function renderDashboard() {
         <div style="max-height:320px;overflow-y:auto">
           ${todayApts.length?todayApts.sort((a,b)=>new Date(a.start_time)-new Date(b.start_time)).map(a=>{
             const isPast = new Date(a.start_time)<now;
-            const c = (STATUS_APPT[a.status]||STATUS_APPT.pending);
+            const c = (STATUS_APPT[a.status]||STATUS_APPT.confirmed);
             return `<div style="display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--border-2);${isPast?'opacity:0.6':''}">
               <div style="width:4px;align-self:stretch;border-radius:2px;background:${c.c};flex-shrink:0"></div>
               <div style="font-family:var(--mono);font-size:12px;font-weight:500;color:var(--blue);flex-shrink:0;min-width:42px">${new Date(a.start_time).toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'})}</div>
@@ -1766,7 +1766,7 @@ function renderPatientDetail() {
         if (hasMedicalHistoryData(p)) events.push({date:p.medical_history_completed_at||p.created_at,type:'medical',icon:'🏥',color:'#185FA5',bg:'#E6F1FB',title:'Ιατρικό Ιστορικό',desc:p.medical_history?(p.medical_history.slice(0,80)+(p.medical_history.length>80?'...':'')):'Ελεύθερο ιστορικό — τίποτα προς δήλωση'});
         // Appointments
         (p.appointments||[]).forEach(a=>{
-          const st=STATUS_APPT[a.status]||STATUS_APPT.pending;
+          const st=STATUS_APPT[a.status]||STATUS_APPT.confirmed;
           events.push({date:a.start_time,type:'appt',icon:'◷',color:st.c,bg:st.bg,
             title:a.service_name||'Ραντεβού',
             desc:`${fmtDt(a.start_time)}${canSeeFinancials&&a.price?' · '+euro(a.price):''}`,
@@ -1829,7 +1829,7 @@ function renderPatientDetail() {
           <div class="dash-grid" style="padding:8px 16px;display:grid;grid-template-columns:1fr 1fr;gap:6px 12px">
             ${[
               ['Σύνολο Ραντεβού', (p.appointments&&p.appointments.length)||0],
-              ['Ολοκληρωμένα', (p.appointments||[]).filter(a=>a.status==='completed'||a.status==='paid').length],
+              ['Ολοκληρωμένα', (p.appointments||[]).filter(a=>a.status==='completed').length],
               ['Laser Forms', laserForms.length],
               ['Consultations', consultations.length],
               ...(canSeeFinancials?[['Σύνολο Εσόδων', euro((p.appointments||[]).filter(a=>a.price).reduce((s,a)=>s+(a.price||0),0))]]:[]),
@@ -1907,7 +1907,7 @@ function renderPatientDetail() {
         ${(p.appointments||[]).length?
           [...(p.appointments||[])].reverse().map(a=>`
           <div style="padding:14px 18px;border-bottom:1px solid var(--border-2);display:flex;align-items:center;gap:14px">
-            <div style="width:4px;align-self:stretch;border-radius:2px;background:${(STATUS_APPT[a.status]||STATUS_APPT.pending).c};flex-shrink:0"></div>
+            <div style="width:4px;align-self:stretch;border-radius:2px;background:${(STATUS_APPT[a.status]||STATUS_APPT.confirmed).c};flex-shrink:0"></div>
             <div style="flex:1">
               <div style="font-size:13px;font-weight:500">${esc(a.service_name||'—')}</div>
               <div style="font-size:11px;color:var(--text-2)">${fmtDt(a.start_time)}</div>
@@ -2206,7 +2206,7 @@ function renderAppointments() {
     </div>
     <div style="display:flex;flex-direction:column;gap:8px">
       ${filtered.length?filtered.map(a=>{
-        const st=STATUS_APPT[a.status]||STATUS_APPT.pending;
+        const st=STATUS_APPT[a.status]||STATUS_APPT.confirmed;
         const missingGrp = apptMissingConsent(a);
         return `<div class="appt-card">
           <div style="width:4px;align-self:stretch;border-radius:2px;background:${st.c};flex-shrink:0"></div>
@@ -2532,7 +2532,7 @@ function renderCalendar() {
                 data-medical="${esc((a.patients&&a.patients.medical_history||'').slice(0,120))}"
                 data-allergies="${esc(a.patients&&a.patients.allergies||'')}"
                 data-notes="${esc(a.notes||'')}"
-                data-status="${a.status||'pending'}"
+                data-status="${a.status||'confirmed'}"
                 data-consent-missing="${missingGrp?CONSENT_GROUP_LABEL[missingGrp]:''}">
                 <div style="font-size:10px;font-weight:500;color:${c.text};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
                   ${hasNoConsent?'⚠ ':''}${isVip?'★ ':''}${esc(a.patients&&a.patients.full_name||'—')}
@@ -3273,11 +3273,11 @@ function computeReportStats() {
   const apts = S.reportAppointments||[];
   const newPatients = S.reportNewPatients||[];
   const allPatients = S.reportAllPatients||[];
-  const paidCompleted = apts.filter(a=>a.status==='paid'||a.status==='completed');
-  const revenue = paidCompleted.reduce((s,a)=>s+(a.price||0),0);
+  const completedApts = apts.filter(a=>a.status==='completed');
+  const revenue = completedApts.reduce((s,a)=>s+(a.price||0),0);
   const noShows = apts.filter(a=>a.status==='no_show').length;
   const noShowRate = apts.length ? Math.round((noShows/apts.length)*100) : null;
-  const completedCount = apts.filter(a=>a.status==='completed'||a.status==='paid').length;
+  const completedCount = apts.filter(a=>a.status==='completed').length;
   const cancelledCount = apts.filter(a=>a.status==='cancelled').length;
   const pendingCount = apts.length - completedCount - cancelledCount - noShows;
   const activePatients = allPatients.filter(p=>p.status!=='inactive');
@@ -3287,7 +3287,7 @@ function computeReportStats() {
   // Το "Ραντεβού" μετράει όλα τα κλεισμένα ραντεβού της υπηρεσίας, αλλά τα "Έσοδα" μετράνε
   // ΜΟΝΟ τα πληρωμένα/ολοκληρωμένα — αλλιώς το άθροισμα ανά υπηρεσία ξεπερνούσε το συνολικό
   // KPI "Έσοδα" (που μετράει μόνο paid/completed), δείχνοντας ασυνεπή νούμερα στην αναφορά.
-  apts.forEach(a=>{ if(a.service_name) { svc[a.service_name]=svc[a.service_name]||{count:0,revenue:0}; svc[a.service_name].count++; if(a.status==='paid'||a.status==='completed') svc[a.service_name].revenue+=(a.price||0); } });
+  apts.forEach(a=>{ if(a.service_name) { svc[a.service_name]=svc[a.service_name]||{count:0,revenue:0}; svc[a.service_name].count++; if(a.status==='completed') svc[a.service_name].revenue+=(a.price||0); } });
   const topServices = Object.entries(svc).sort((a,b)=>b[1].revenue-a[1].revenue).slice(0,8);
 
   // Νέοι πελάτες vs ισόχρονη προηγούμενη περίοδος
@@ -4545,7 +4545,7 @@ function bindEvents() {
           ['Ημερομηνία', start.toLocaleDateString('el-GR',{weekday:'long',day:'numeric',month:'long',year:'numeric'})],
           ['Ώρα', start.toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'})+' – '+end.toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'})],
           ['Διάρκεια', (a.duration_minutes||60)+' λεπτά'],
-          ['Κατάσταση', (STATUS_APPT[a.status]||STATUS_APPT.pending).l],
+          ['Κατάσταση', (STATUS_APPT[a.status]||STATUS_APPT.confirmed).l],
           ['GDPR', a.patients&&a.patients.gdpr_signed ? '✅ Υπογεγραμμένο' : '❌ Χωρίς GDPR'],
           ...(canFin && a.price ? [['Τιμή', euro(a.price)]] : []),
           ...(a.notes ? [['Σημειώσεις', a.notes]] : []),
@@ -5562,7 +5562,7 @@ function bindModalEvents() {
       duration_minutes:parseInt(document.getElementById('a-duration').value)||60,
       price:parseFloat(document.getElementById('a-price').value)||null,
       notes:document.getElementById('a-notes').value,
-      status:'pending'
+      status:'confirmed'
     });
     if (error) { alert(error.message); btn.textContent='Αποθήκευση'; btn.disabled=false; return; }
     closeModal(); await loadPageData();
@@ -5701,8 +5701,8 @@ function showCalTooltip(el, e) {
   var allergies = el.getAttribute('data-allergies')||'';
   var notes = el.getAttribute('data-notes')||'';
   var consentMissing = el.getAttribute('data-consent-missing')||'';
-  var status = el.getAttribute('data-status')||'pending';
-  var statusInfo = STATUS_APPT[status]||STATUS_APPT.pending;
+  var status = el.getAttribute('data-status')||'confirmed';
+  var statusInfo = STATUS_APPT[status]||STATUS_APPT.confirmed;
   // Clean up notes (remove "Προσωπικό: " prefix for display)
   var notesClean = notes.replace(/^Προσωπικό:\s*/,'');
 
@@ -6495,7 +6495,7 @@ function parseDateTime(dateStr, timeStr) {
 }
 
 function mapApptStatus(s) {
-  const map = {'ολοκληρώθηκε':'completed','επιβεβαιωμένο':'confirmed','εγκεκριμένο':'confirmed','ακυρώθηκε':'cancelled','εκκρεμεί':'pending','pending':'pending','confirmed':'confirmed','completed':'completed','cancelled':'cancelled'};
+  const map = {'ολοκληρώθηκε':'completed','επιβεβαιωμένο':'confirmed','εγκεκριμένο':'confirmed','ακυρώθηκε':'cancelled','εκκρεμεί':'confirmed','pending':'confirmed','confirmed':'confirmed','completed':'completed','cancelled':'cancelled'};
   return map[(s||'').toLowerCase()]||'confirmed';
 }
 
