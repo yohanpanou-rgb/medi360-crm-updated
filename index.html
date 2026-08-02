@@ -2404,6 +2404,11 @@ function renderCalendar() {
   const cols = calMode==='therapist'
     ? [...FIXED_THERAPISTS.map(n=>({id:'t:'+n,full_name:n})), ...extraTherapists.map(n=>({id:'t:'+n,full_name:n})), {id:'unassigned',full_name:'Μη ανατεθειμένα'}]
     : ROOMS;
+  // Φίλτρο μίας στήλης (θεραπευτής/δωμάτιο) — κυρίως για κινητό, ώστε να μη
+  // χρειάζεται οριζόντιο scroll για να δει κανείς μία μόνο στήλη. "Όλοι" δείχνει
+  // όλες τις στήλες όπως πριν (ίδια συμπεριφορά με desktop).
+  const staffFilter = (S.calStaffFilter && cols.some(c=>c.id===S.calStaffFilter)) ? S.calStaffFilter : 'all';
+  const visibleCols = staffFilter==='all' ? cols : cols.filter(c=>c.id===staffFilter);
 
   const renderDayView = () => {
     return `
@@ -2417,7 +2422,7 @@ function renderCalendar() {
         ${hours.map(h=>`<div style="height:${HOUR_H}px;border-bottom:1px solid var(--border-2);padding:4px 6px;font-size:10px;color:var(--text-3);font-family:var(--mono);text-align:right">${h}:00</div>`).join('')}
       </div>
       <!-- Staff columns -->
-      ${cols.map(col=>{
+      ${visibleCols.map(col=>{
         const colAppts = calMode==='therapist'
           ? dayAppts.filter(a=>{
               const t = apptTherapist(a);
@@ -2570,6 +2575,11 @@ function renderCalendar() {
         <button class="btn btn-sm" style="border-radius:0;background:${calMode==='therapist'?'var(--blue)':'transparent'};color:${calMode==='therapist'?'#fff':'var(--text-2)'}" data-cal-mode="therapist">Θεραπευτές</button>
         <button class="btn btn-sm" style="border-radius:0;background:${calMode==='room'?'var(--blue)':'transparent'};color:${calMode==='room'?'#fff':'var(--text-2)'};border-left:1px solid var(--border)" data-cal-mode="room">Δωμάτια</button>
       </div>
+
+      ${calView==='day'?`<select class="form-control" id="cal-staff-filter" style="width:auto;padding:6px 10px;font-size:12px">
+        <option value="all" ${staffFilter==='all'?'selected':''}>Όλοι${cols.length>1?` (${cols.length})`:''}</option>
+        ${cols.map(c=>`<option value="${esc(c.id)}" ${staffFilter===c.id?'selected':''}>${esc(c.full_name)}</option>`).join('')}
+      </select>`:''}
 
       <button class="btn btn-primary btn-sm" data-modal="new-appt">+ Ραντεβού</button>
     </div>
@@ -4442,8 +4452,10 @@ function bindEvents() {
     el.onclick = () => { S.calView=el.dataset.calView; render(); };
   });
   document.querySelectorAll('[data-cal-mode]').forEach(el => {
-    el.onclick = () => { S.calMode=el.dataset.calMode; render(); };
+    el.onclick = () => { S.calMode=el.dataset.calMode; S.calStaffFilter='all'; render(); };
   });
+  const _csf = document.getElementById('cal-staff-filter');
+  if (_csf) _csf.addEventListener('change', () => { S.calStaffFilter=_csf.value; render(); });
   document.querySelectorAll('[data-cal-day]').forEach(el => {
     el.onclick = () => { S.calDate=el.dataset.calDay; S.calView='day'; render(); };
   });
@@ -7426,7 +7438,7 @@ async function openHistoryFormModal(opts) {
       </div>
 
       <div style="margin-top:18px;padding-top:14px;border-top:1px dashed var(--border-2)">
-        <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">✍️ Υπογραφή ασθενούς (προαιρετικό — αν ο ασθενής είναι παρών)</div>
+        <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">✍️ Υπογραφή ασθενούς</div>
         <div style="font-size:11px;color:var(--text-2);margin-bottom:8px">Αν υπογραφεί, αποθηκεύεται πλήρες αντίγραφο της φόρμας όπως συμπληρώθηκε, με ισχύ 1 έτους. Χωρίς υπογραφή, η φόρμα αποθηκεύεται κανονικά όπως πριν.</div>
         <canvas id="hf-canvas" width="620" height="140" style="width:100%;height:140px;border:2px dashed var(--border);border-radius:10px;background:#fff;touch-action:none"></canvas>
         <div style="display:flex;justify-content:flex-end;margin-top:6px">
