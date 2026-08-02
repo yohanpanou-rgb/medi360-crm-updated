@@ -130,7 +130,7 @@ do $$
 declare
   t text;
 begin
-  foreach t in array array['profiles','clinics','patients','appointments','laser_forms','pipeline_deals','sms_log','service_consent_templates','gdpr_consents','laser_consents','service_consents','unmatched_consultations','patient_photos','medical_history_consents']
+  foreach t in array array['profiles','clinics','patients','appointments','laser_forms','pipeline_deals','sms_log','service_consent_templates','gdpr_consents','laser_consents','service_consents','unmatched_consultations','patient_photos','medical_history_consents','patient_relationships']
   loop
     if to_regclass('public.' || t) is null then
       raise notice 'SKIPPED (table does not exist): %', t;
@@ -239,7 +239,7 @@ do $$
 declare
   t text;
 begin
-  foreach t in array array['patients','appointments','laser_forms','pipeline_deals','sms_log','service_consent_templates','gdpr_consents','laser_consents','service_consents','unmatched_consultations','patient_photos','medical_history_consents']
+  foreach t in array array['patients','appointments','laser_forms','pipeline_deals','sms_log','service_consent_templates','gdpr_consents','laser_consents','service_consents','unmatched_consultations','patient_photos','medical_history_consents','patient_relationships']
   loop
     if to_regclass('public.' || t) is null then
       raise notice 'SKIPPED (table does not exist): %', t;
@@ -280,9 +280,11 @@ begin
         );
     $f$, t, t);
 
-    if t = 'patient_photos' then
-      -- Broader delete: any clinic member can delete a photo, matching the
-      -- app's unrestricted deletePatientPhoto() UI action.
+    if t = 'patient_photos' or t = 'patient_relationships' then
+      -- Broader delete: any clinic member can remove a photo or a patient
+      -- relationship link, matching the app's unrestricted delete actions
+      -- for both (deletePatientPhoto() and the Συσχετισμοί card's remove
+      -- button — low-stakes data, no reason to require clinic_admin).
       execute format('drop policy if exists "%s_delete" on public.%I', t, t);
       execute format($f$
         create policy "%s_delete" on public.%I
