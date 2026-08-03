@@ -276,6 +276,7 @@ tr{cursor:pointer}
   .mobile-pt-indicators{display:flex;gap:6px;flex-wrap:wrap;margin-top:3px}
   .form-row{grid-template-columns:1fr}
   .dash-grid{grid-template-columns:1fr!important}
+  .dash-grid>*{min-width:0}
   th,td{padding:9px 10px}
   .appt-card{flex-wrap:wrap}
 }
@@ -2727,12 +2728,12 @@ function renderLaserDetail() {
 
   return `<div class="page">
     <!-- Header -->
-    <div style="background:linear-gradient(135deg,#C4618A,#e891b5);padding:16px 24px;border-radius:12px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:center">
+    <div style="background:linear-gradient(135deg,#C4618A,#e891b5);padding:16px 24px;border-radius:12px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
       <div>
         <div style="font-size:11px;font-weight:700;color:rgba(255,255,255,0.7);letter-spacing:1px;text-transform:uppercase">${esc(S.clinic&&S.clinic.name||'medi360')}</div>
         <div style="font-size:16px;font-weight:700;color:#fff;margin-top:2px">ΚΑΡΤΕΛΑ ΠΕΛΑΤΗ - LASER ΑΠΟΤΡΙΧΩΣΗΣ</div>
       </div>
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn btn-ghost btn-sm" data-page="laser" style="background:rgba(255,255,255,0.15);color:#fff;border-color:rgba(255,255,255,0.3)">← Πίσω</button>
         <button class="btn btn-ghost btn-sm" onclick="window.print()" style="background:rgba(255,255,255,0.15);color:#fff;border-color:rgba(255,255,255,0.3)">🖨 Εκτύπωση</button>
         <button class="btn btn-sm" id="save-laser-form" style="background:#fff;color:#C4618A;font-weight:600">💾 Αποθήκευση</button>
@@ -2741,7 +2742,7 @@ function renderLaserDetail() {
 
     <!-- Patient info -->
     <div class="card" style="padding:20px;margin-bottom:16px;border-top:3px solid #C4618A">
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:16px;align-items:start">
+      <div class="dash-grid" style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:16px;align-items:start">
         <div>
           <div style="font-size:10px;font-weight:600;color:#C4618A;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Ονοματεπώνυμο</div>
           <div style="font-size:14px;font-weight:600">${esc(f.patients&&f.patients.full_name||'—')}</div>
@@ -2773,7 +2774,7 @@ function renderLaserDetail() {
           </div>
         </div>
       </div>
-      <div style="display:flex;gap:16px;margin-top:14px;padding-top:14px;border-top:1px solid var(--border-2);align-items:center">
+      <div style="display:flex;gap:16px;margin-top:14px;padding-top:14px;border-top:1px solid var(--border-2);align-items:center;flex-wrap:wrap">
         <div>
           <div style="font-size:10px;font-weight:600;color:#C4618A;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Ημ. Έναρξης</div>
           <input type="date" id="start-date" value="${ms.start_date||''}" style="font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);width:130px"/>
@@ -2792,7 +2793,7 @@ function renderLaserDetail() {
       </div>
     </div>
 
-    <div style="display:grid;grid-template-columns:200px 1fr;gap:16px;margin-bottom:16px">
+    <div class="dash-grid" style="display:grid;grid-template-columns:200px 1fr;gap:16px;margin-bottom:16px">
       <!-- Body map -->
       <div class="card" style="padding:16px">
         <div style="font-size:11px;font-weight:700;color:#C4618A;text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px;text-align:center">ΧΑΡΤΗΣ ΣΩΜΑΤΟΣ <span style="color:var(--text-2);font-weight:400">(${_laserBodyParts.length} περιοχές)</span></div>
