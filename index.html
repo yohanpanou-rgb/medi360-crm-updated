@@ -627,6 +627,8 @@ async function loadPageData() {
     S.patients=[]; S.appointments=[]; S.pipeline=[]; S.laserForms=[];
     S.allConsultations=[]; S.consents=[]; S.smsLog=[]; S.patConsultations=[];
     S.consultDates={}; S.staff=[]; S.globalResults=[];
+    S.ssvServices=[]; S.ssvStaff=[]; S.ssvStaffServices=[]; S.ssvSchedules=[];
+    S.ssvOverrides=[]; S.ssvTimeOff=[]; S.ssvStatsAppointments=[]; S.staffTimeOffAll=[];
     return;
   }
   if (S.page==='patients' || S.page==='dashboard') {
@@ -696,6 +698,10 @@ async function loadPageData() {
   if (S.page==='calendar') {
     const {data:staff} = await sb.from('profiles').select('*').eq('clinic_id',cid).in('role',['therapist','clinic_admin','super_admin']);
     S.staff = staff||[];
+    // Άδειες/διακοπές προσωπικού — μόνο για οπτική προειδοποίηση στη στήλη του θεραπευτή,
+    // ΔΕΝ μπλοκάρει τη δημιουργία ραντεβού.
+    const {data:toffRows} = await sb.from('staff_time_off').select('staff_id,start_date,end_date').eq('clinic_id',cid);
+    S.staffTimeOffAll = toffRows||[];
   }
   if (S.page==='dashboard' || S.page==='appointments') {
     // Ίδιο set συναινέσεων, χρειάζεται και το Dashboard (KPI) και το Ραντεβού (badges ανά ραντεβού)
@@ -821,6 +827,31 @@ async function loadPageData() {
   if (S.page==='settings') {
     const {data:uc} = await sb.from('unmatched_consultations').select('*').eq('clinic_id',cid).order('received_at',{ascending:false});
     S.unmatchedConsultations = uc||[];
+  }
+  if (S.page==='staff-services') {
+    const [svcRes, staffRes, ssRes, schedRes, ovrRes, toffRes] = await Promise.all([
+      sb.from('services').select('*').eq('clinic_id',cid).order('category').order('name'),
+      sb.from('profiles').select('*').eq('clinic_id',cid).in('role',['therapist','receptionist','clinic_admin']).order('full_name'),
+      sb.from('staff_services').select('*').eq('clinic_id',cid),
+      sb.from('staff_schedules').select('*').eq('clinic_id',cid),
+      sb.from('staff_schedule_overrides').select('*').eq('clinic_id',cid).order('date',{ascending:false}),
+      sb.from('staff_time_off').select('*').eq('clinic_id',cid).order('start_date',{ascending:false}),
+    ]);
+    S.ssvServices = svcRes.data||[];
+    S.ssvStaff = staffRes.data||[];
+    S.ssvStaffServices = ssRes.data||[];
+    S.ssvSchedules = schedRes.data||[];
+    S.ssvOverrides = ovrRes.data||[];
+    S.ssvTimeOff = toffRes.data||[];
+    if (!S.ssvSelectedStaffId && S.ssvStaff.length) S.ssvSelectedStaffId = S.ssvStaff[0].id;
+    if (!S.ssvStatsRange) {
+      const now = new Date();
+      const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      S.ssvStatsRange = { from: firstOfMonth.toISOString().slice(0,10), to: now.toISOString().slice(0,10) };
+    }
+    const sFrom = S.ssvStatsRange.from+'T00:00:00', sTo = S.ssvStatsRange.to+'T23:59:59';
+    const {data:statsApts} = await sb.from('appointments').select('therapist_id,service_name,price,duration_minutes,status,start_time').eq('clinic_id',cid).gte('start_time',sFrom).lte('start_time',sTo);
+    S.ssvStatsAppointments = statsApts||[];
   }
   // Επιτρέπει ξανά το auto-scroll στην τρέχουσα ώρα ΜΕΤΑ τη φόρτωση δεδομένων —
   // αν γινόταν νωρίτερα (πριν τα awaits), «κατανάλωνε» το flag σε ένα πρόωρο render με
@@ -953,6 +984,7 @@ function render() {
       S.page==='consents' ? renderConsents() :
       S.page==='consultations' ? renderConsultations() :
       S.page==='reports' ? renderReports() :
+      S.page==='staff-services' ? renderStaffServices() :
       S.page==='settings' ? renderSettings() :
       `<div class="page"><div class="empty-state"><div class="empty-icon">🚧</div><div>Σύντομα διαθέσιμο</div></div></div>`
     );
@@ -1022,11 +1054,12 @@ function renderShell(content) {
     {page:'consultations',icon:'📋',label:'Consultation',roles:['super_admin','clinic_admin','therapist']},
     {page:'consents',icon:'✓',label:'Συναινέσεις',roles:['super_admin','clinic_admin','therapist']},
     {page:'reports',icon:'▤',label:'Αναφορές',roles:['super_admin','clinic_admin']},
+    {page:'staff-services',icon:'🗂',label:'Προσωπικό & Υπηρεσίες',roles:['super_admin','clinic_admin']},
     {page:'clinics',icon:'⊞',label:'Κλινικές',roles:['super_admin']},
     {page:'settings',icon:'⚙',label:'Ρυθμίσεις',roles:['super_admin','clinic_admin']},
   ].filter(n => n.roles.includes(role) && (isSuperAdmin() && !cid ? ['dashboard','clinics'].includes(n.page) : true));
 
-  const PAGE_TITLES = {dashboard:'Dashboard',patients:'Ασθενείς','patient-detail':'Ασθενής',appointments:'Ραντεβού',calendar:'Πρόγραμμα',pipeline:'Pipeline',clinics:'Κλινικές',sms:'SMS & Αυτοματισμοί',laser:'Laser Forms',consultations:'Consultation',consents:'Συναινέσεις',reports:'Αναφορές',settings:'Ρυθμίσεις'};
+  const PAGE_TITLES = {dashboard:'Dashboard',patients:'Ασθενείς','patient-detail':'Ασθενής',appointments:'Ραντεβού',calendar:'Πρόγραμμα',pipeline:'Pipeline',clinics:'Κλινικές',sms:'SMS & Αυτοματισμοί',laser:'Laser Forms',consultations:'Consultation',consents:'Συναινέσεις',reports:'Αναφορές','staff-services':'Προσωπικό & Υπηρεσίες',settings:'Ρυθμίσεις'};
 
   return `
   <div class="overlay ${S.sidebarOpen?'open':''}" id="overlay"></div>
@@ -2416,6 +2449,15 @@ function renderCalendar() {
   const dayTherapistsRaw = [...new Set(dayAppts.map(apptTherapist).filter(Boolean).map(canonTherapist))];
   const extraTherapists = dayTherapistsRaw.filter(t=>!FIXED_THERAPISTS.includes(t)).sort((a,b)=>a.localeCompare(b,'el'));
 
+  // Ονόματα προσωπικού σε άδεια/διακοπές αυτή την ημέρα — μόνο οπτική προειδοποίηση
+  // στη στήλη τους, ΔΕΝ μπλοκάρει τη δημιουργία ραντεβού.
+  const namesOnLeaveToday = new Set(
+    (S.staffTimeOffAll||[])
+      .filter(t => t.start_date<=calDateStr && calDateStr<=t.end_date)
+      .map(t => { const st = staff.find(s=>s.id===t.staff_id); return st ? canonTherapist(st.full_name) : null; })
+      .filter(Boolean)
+  );
+
   // ΔΩΜΑΤΙΑ — αυτόματη ανάθεση με κανόνες υπηρεσίας (render-time, δεν γράφει στη βάση)
   const ROOMS = [
     {id:'laser',   full_name:'Laser'},
@@ -2510,6 +2552,7 @@ function renderCalendar() {
             <div style="text-align:center">
               <div style="font-size:12px;font-weight:500;color:var(--navy)">${esc(col.full_name)}</div>
               <div style="font-size:10px;color:var(--text-3)">${colAppts.length} ραντεβού</div>
+              ${calMode==='therapist'&&col.id!=='unassigned'&&namesOnLeaveToday.has(col.full_name)?'<div style="font-size:9px;font-weight:700;color:#D97706;margin-top:2px">🏖 ΑΔΕΙΑ</div>':''}
             </div>
           </div>
           <!-- Hour grid -->
@@ -3497,6 +3540,466 @@ function renderReports() {
       <div id="report-email-result" style="margin-top:10px;font-size:12px"></div>
     </div>
   </div>`;
+}
+
+// ── ΠΡΟΣΩΠΙΚΟ & ΥΠΗΡΕΣΙΕΣ ──
+function goToUsersSettings() { S.page='settings'; S.settingsTab='users'; loadPageData(); render(); }
+
+function renderStaffServices() {
+  const cid = clinicId();
+  if (!cid && isSuperAdmin()) return `<div class="page"><div class="empty-state"><div class="empty-icon">🗂</div><div style="font-size:14px;font-weight:500;margin-bottom:8px">Επίλεξε κλινική</div><div>Χρησιμοποίησε τον επιλογέα στα αριστερά</div></div></div>`;
+  const tab = S.ssvTab||'services';
+  return `<div class="page">
+    <div class="page-header">
+      <div><h1 class="page-title">Προσωπικό & Υπηρεσίες</h1><p class="page-sub">Κατάλογος υπηρεσιών, ανάθεση ανά άτομο, ωράριο, άδειες και στατιστικά</p></div>
+    </div>
+    <div style="display:flex;border-bottom:1px solid var(--border);margin-bottom:16px;overflow-x:auto">
+      ${[
+        {id:'services',l:'Υπηρεσίες'},
+        {id:'staff',l:'Προσωπικό'},
+        {id:'schedule',l:'Ωράριο & Άδειες'},
+        {id:'stats',l:'Στατιστικά'},
+      ].map(t=>`<button class="btn" style="border-radius:0;border-bottom:2px solid ${tab===t.id?'var(--blue)':'transparent'};color:${tab===t.id?'var(--blue)':'var(--text-2)'};background:transparent;padding:8px 16px;font-size:13px;white-space:nowrap" data-ssv-tab="${t.id}">${t.l}</button>`).join('')}
+    </div>
+    ${tab==='services'?renderSsvServicesTab():tab==='staff'?renderSsvStaffTab():tab==='schedule'?renderSsvScheduleTab():renderSsvStatsTab()}
+  </div>`;
+}
+
+function renderSsvServicesTab() {
+  const rows = S.ssvServices||[];
+  return `<div class="card">
+    <div class="card-header"><span class="card-title">Κατάλογος Υπηρεσιών (${rows.length})</span>
+      <button class="btn btn-primary btn-sm" onclick="openServiceFormModal()">+ Νέα Υπηρεσία</button>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Όνομα</th><th>Κατηγορία</th><th>Διάρκεια</th><th>Τιμή</th><th>Κατάσταση</th><th></th></tr></thead>
+      <tbody>
+        ${rows.length?rows.map(s=>`<tr>
+          <td>${esc(s.name)}</td>
+          <td style="color:var(--text-2)">${esc(s.category||'—')}</td>
+          <td>${s.duration_minutes} λεπτά</td>
+          <td>${s.price!=null?euro(s.price):'—'}</td>
+          <td>${s.active?'<span style="color:#0F6E56">Ενεργή</span>':'<span style="color:var(--text-3)">Ανενεργή</span>'}</td>
+          <td style="text-align:right;white-space:nowrap">
+            <button class="btn btn-ghost btn-sm" onclick="openServiceFormModal('${s.id}')">✎</button>
+            <button class="btn btn-ghost btn-sm" onclick="deleteService('${s.id}')" style="color:var(--red)">🗑</button>
+          </td>
+        </tr>`).join(''):`<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text-2)">Δεν υπάρχουν υπηρεσίες ακόμα.</td></tr>`}
+      </tbody>
+    </table></div>
+  </div>`;
+}
+
+function renderSsvStaffTab() {
+  const staff = S.ssvStaff||[];
+  const linksByStaff = {};
+  (S.ssvStaffServices||[]).forEach(r => { (linksByStaff[r.staff_id]=linksByStaff[r.staff_id]||[]).push(r.service_id); });
+  const svcById = {}; (S.ssvServices||[]).forEach(s => svcById[s.id]=s);
+  return `<div class="card">
+    <div class="card-header"><span class="card-title">Προσωπικό (${staff.length})</span>
+      <button class="btn btn-ghost btn-sm" onclick="goToUsersSettings()">Διαχείριση Χρηστών →</button>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Όνομα</th><th>Ρόλος</th><th>Υπηρεσίες που εκτελεί</th><th></th></tr></thead>
+      <tbody>
+        ${staff.length?staff.map(p=>{
+          const svcNames = (linksByStaff[p.id]||[]).map(id=>svcById[id]&&svcById[id].name).filter(Boolean);
+          return `<tr>
+            <td>${esc(p.full_name)}</td>
+            <td style="color:var(--text-2)">${ROLES[p.role]||p.role}</td>
+            <td style="max-width:360px">${svcNames.length?svcNames.map(n=>`<span style="display:inline-block;background:var(--surface-2);border-radius:8px;padding:2px 8px;font-size:11px;margin:2px 4px 2px 0">${esc(n)}</span>`).join(''):'<span style="color:var(--text-3)">Καμία</span>'}</td>
+            <td style="text-align:right;white-space:nowrap"><button class="btn btn-ghost btn-sm" onclick="openStaffServicesModal('${p.id}')">Ανάθεση υπηρεσιών</button></td>
+          </tr>`;
+        }).join(''):`<tr><td colspan="4" style="text-align:center;padding:20px;color:var(--text-2)">Δεν υπάρχει προσωπικό σε αυτή την κλινική ακόμα. Πρόσθεσε από τη <a href="#" onclick="goToUsersSettings();return false" style="color:var(--blue)">Διαχείριση Χρηστών</a>.</td></tr>`}
+      </tbody>
+    </table></div>
+  </div>`;
+}
+
+const SSV_DAYS = ['Κυριακή','Δευτέρα','Τρίτη','Τετάρτη','Πέμπτη','Παρασκευή','Σάββατο'];
+
+function renderSsvScheduleTab() {
+  const staff = S.ssvStaff||[];
+  if (!staff.length) return `<div class="card" style="padding:20px;text-align:center;color:var(--text-2)">Δεν υπάρχει προσωπικό σε αυτή την κλινική ακόμα. Πρόσθεσε από τη <a href="#" onclick="goToUsersSettings();return false" style="color:var(--blue)">Διαχείριση Χρηστών</a>.</div>`;
+  const sel = staff.find(p=>p.id===S.ssvSelectedStaffId) || staff[0];
+  const schedByDay = {};
+  (S.ssvSchedules||[]).filter(r=>r.staff_id===sel.id).forEach(r=>schedByDay[r.day_of_week]=r);
+  const overrides = (S.ssvOverrides||[]).filter(r=>r.staff_id===sel.id).slice(0,15);
+  const timeOff = (S.ssvTimeOff||[]).filter(r=>r.staff_id===sel.id);
+  const thisYear = new Date().getFullYear();
+  const usedDays = timeOff.filter(r=>r.type==='vacation' && new Date(r.start_date).getFullYear()===thisYear).reduce((s,r)=>s+Number(r.days_count||0),0);
+  const quota = sel.annual_leave_days!=null ? Number(sel.annual_leave_days) : 20;
+  const remaining = Math.max(0, quota - usedDays);
+  const TYPE_LABEL = {vacation:'Διακοπές', sick:'Αναρρωτική', other:'Άλλο'};
+
+  return `<div style="display:grid;grid-template-columns:220px 1fr;gap:16px" class="dash-grid">
+    <div class="card" style="padding:8px;height:fit-content">
+      ${staff.map(p=>`<button class="btn" style="width:100%;justify-content:flex-start;background:${p.id===sel.id?'var(--surface-2)':'transparent'};border-radius:8px;margin-bottom:2px;font-size:13px" onclick="S.ssvSelectedStaffId='${p.id}';render()">${esc(p.full_name)}</button>`).join('')}
+    </div>
+    <div style="min-width:0">
+      <div class="card" style="padding:16px;margin-bottom:16px">
+        <div class="card-title" style="margin-bottom:10px">Εβδομαδιαίο Ωράριο — ${esc(sel.full_name)}</div>
+        ${SSV_DAYS.map((d,i)=>{
+          const r = schedByDay[i];
+          const working = r ? r.is_working : (i!==0);
+          return `<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border-2);flex-wrap:wrap">
+            <label style="display:flex;align-items:center;gap:6px;width:120px;font-size:12px;cursor:pointer">
+              <input type="checkbox" class="ssv-sched-working" data-day="${i}" ${working?'checked':''}/> ${d}
+            </label>
+            <input class="form-control ssv-sched-start" data-day="${i}" type="time" value="${r&&r.start_time?r.start_time.slice(0,5):'09:00'}" style="max-width:110px"/>
+            <span style="color:var(--text-2)">–</span>
+            <input class="form-control ssv-sched-end" data-day="${i}" type="time" value="${r&&r.end_time?r.end_time.slice(0,5):'17:00'}" style="max-width:110px"/>
+          </div>`;
+        }).join('')}
+        <button class="btn btn-primary btn-sm" style="margin-top:12px" onclick="saveStaffSchedule('${sel.id}')">Αποθήκευση Ωραρίου</button>
+      </div>
+
+      <div class="card" style="padding:16px;margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <div class="card-title">Μεμονωμένες Αλλαγές Ωραρίου</div>
+          <button class="btn btn-ghost btn-sm" onclick="openScheduleOverrideModal('${sel.id}')">+ Προσθήκη</button>
+        </div>
+        ${overrides.length?overrides.map(o=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border-2);font-size:12px;gap:8px">
+          <span>${new Date(o.date).toLocaleDateString('el-GR')} — ${o.is_working?esc((o.start_time?o.start_time.slice(0,5):'')+'–'+(o.end_time?o.end_time.slice(0,5):'')):'Ρεπό'}${o.notes?' · '+esc(o.notes):''}</span>
+          <button class="btn btn-ghost btn-sm" onclick="deleteScheduleOverride('${o.id}')" style="color:var(--red)">🗑</button>
+        </div>`).join(''):'<div style="color:var(--text-2);font-size:12px">Καμία καταχώρηση.</div>'}
+      </div>
+
+      <div class="card" style="padding:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <div class="card-title">Άδειες / Διακοπές</div>
+          <button class="btn btn-ghost btn-sm" onclick="openTimeOffModal('${sel.id}')">+ Νέα Άδεια</button>
+        </div>
+        <div style="display:flex;gap:16px;margin-bottom:12px;flex-wrap:wrap">
+          <div style="background:var(--surface);border-radius:8px;padding:10px 14px">
+            <div style="font-size:11px;color:var(--text-2)">Ετήσια ποσόστωση ${thisYear}</div>
+            <div style="font-size:18px;font-weight:700">${quota} <span style="font-size:11px;font-weight:400;cursor:pointer;color:var(--blue)" onclick="editLeaveQuota('${sel.id}')">✎</span></div>
+          </div>
+          <div style="background:var(--surface);border-radius:8px;padding:10px 14px">
+            <div style="font-size:11px;color:var(--text-2)">Χρησιμοποιήθηκαν</div>
+            <div style="font-size:18px;font-weight:700">${usedDays}</div>
+          </div>
+          <div style="background:#E1F5EE;border-radius:8px;padding:10px 14px">
+            <div style="font-size:11px;color:#0F6E56">Υπόλοιπο</div>
+            <div style="font-size:18px;font-weight:700;color:#0F6E56">${remaining}</div>
+          </div>
+        </div>
+        ${timeOff.length?timeOff.map(t=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border-2);font-size:12px;gap:8px">
+          <span>${new Date(t.start_date).toLocaleDateString('el-GR')} – ${new Date(t.end_date).toLocaleDateString('el-GR')} · ${TYPE_LABEL[t.type]||t.type} · ${t.days_count} ημ.${t.notes?' · '+esc(t.notes):''}</span>
+          <button class="btn btn-ghost btn-sm" onclick="deleteTimeOff('${t.id}')" style="color:var(--red)">🗑</button>
+        </div>`).join(''):'<div style="color:var(--text-2);font-size:12px">Καμία καταχώρηση.</div>'}
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderSsvStatsTab() {
+  const canFin = canSee(['super_admin','clinic_admin']);
+  const range = S.ssvStatsRange||{from:'',to:''};
+  const apts = S.ssvStatsAppointments||[];
+  const byStaff = {};
+  apts.forEach(a => {
+    const key = a.therapist_id||'unassigned';
+    byStaff[key] = byStaff[key] || {count:0, completed:0, revenue:0};
+    byStaff[key].count++;
+    if (a.status==='completed') { byStaff[key].completed++; byStaff[key].revenue += (a.price||0); }
+  });
+  const bySvc = {};
+  apts.forEach(a => {
+    if (!a.service_name) return;
+    bySvc[a.service_name] = bySvc[a.service_name] || {count:0, revenue:0};
+    bySvc[a.service_name].count++;
+    if (a.status==='completed') bySvc[a.service_name].revenue += (a.price||0);
+  });
+  const totalRevenue = Object.values(byStaff).reduce((s,v)=>s+v.revenue,0);
+  const thisYear = new Date().getFullYear();
+  const sortedSvcNames = Object.keys(bySvc).sort((a,b)=>bySvc[b].count-bySvc[a].count);
+
+  return `
+    <div class="card" style="padding:16px;margin-bottom:16px">
+      <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
+        <div class="form-group" style="margin:0"><label class="form-label">Από</label><input class="form-control" type="date" id="ssv-stats-from" value="${range.from}"/></div>
+        <div class="form-group" style="margin:0"><label class="form-label">Έως</label><input class="form-control" type="date" id="ssv-stats-to" value="${range.to}"/></div>
+        <button class="btn btn-primary" id="ssv-stats-refresh">🔄 Ενημέρωση</button>
+      </div>
+    </div>
+
+    ${canFin?`<div class="stats-grid" style="margin-bottom:16px">
+      <div class="stat-card">
+        <div class="stat-icon" style="background:#FAEEDA;color:#854F0B">€</div>
+        <div class="stat-label">Συνολικός Τζίρος</div>
+        <div class="stat-value" style="color:#854F0B">${euro(totalRevenue)}</div>
+        <div class="stat-change">ολοκληρωμένα ραντεβού στο διάστημα</div>
+      </div>
+    </div>`:''}
+
+    <div class="card" style="padding:16px;margin-bottom:16px">
+      <div class="card-title" style="margin-bottom:10px">Ανά Μέλος Προσωπικού</div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Όνομα</th><th>Ραντεβού</th><th>Ολοκληρωμένα</th>${canFin?'<th>Τζίρος</th>':''}<th>Άδειες ${thisYear} (χρησιμ. / υπόλοιπο)</th></tr></thead>
+        <tbody>
+          ${(S.ssvStaff||[]).length?(S.ssvStaff||[]).map(p=>{
+            const st = byStaff[p.id]||{count:0,completed:0,revenue:0};
+            const usedDays = (S.ssvTimeOff||[]).filter(r=>r.staff_id===p.id && r.type==='vacation' && new Date(r.start_date).getFullYear()===thisYear).reduce((s,r)=>s+Number(r.days_count||0),0);
+            const quota = p.annual_leave_days!=null?Number(p.annual_leave_days):20;
+            return `<tr>
+              <td>${esc(p.full_name)}</td>
+              <td>${st.count}</td>
+              <td>${st.completed}</td>
+              ${canFin?`<td>${euro(st.revenue)}</td>`:''}
+              <td>${usedDays} / ${Math.max(0,quota-usedDays)}</td>
+            </tr>`;
+          }).join(''):`<tr><td colspan="${canFin?5:4}" style="text-align:center;padding:16px;color:var(--text-2)">Δεν υπάρχει προσωπικό.</td></tr>`}
+        </tbody>
+      </table></div>
+    </div>
+
+    <div class="card" style="padding:16px">
+      <div class="card-title" style="margin-bottom:10px">Ανά Υπηρεσία</div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Υπηρεσία</th><th>Φορές</th>${canFin?'<th>Τζίρος</th>':''}</tr></thead>
+        <tbody>
+          ${sortedSvcNames.length?sortedSvcNames.map(name=>`<tr>
+            <td>${esc(name)}</td><td>${bySvc[name].count}</td>${canFin?`<td>${euro(bySvc[name].revenue)}</td>`:''}
+          </tr>`).join(''):`<tr><td colspan="${canFin?3:2}" style="text-align:center;padding:16px;color:var(--text-2)">Δεν υπάρχουν ραντεβού στο διάστημα.</td></tr>`}
+        </tbody>
+      </table></div>
+    </div>
+  `;
+}
+
+// ── ΠΡΟΣΩΠΙΚΟ & ΥΠΗΡΕΣΙΕΣ — actions ──
+function openServiceFormModal(id) {
+  const s = id ? (S.ssvServices||[]).find(x=>x.id===id) : null;
+  const old = document.getElementById('ssv-overlay'); if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'ssv-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9000;display:flex;align-items:center;justify-content:center;padding:12px';
+  ov.innerHTML = `
+    <div style="background:var(--white);border-radius:16px;max-width:440px;width:100%;padding:20px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div style="font-size:15px;font-weight:700">${s?'Επεξεργασία Υπηρεσίας':'Νέα Υπηρεσία'}</div>
+        <button onclick="document.getElementById('ssv-overlay').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-2)">×</button>
+      </div>
+      <div class="form-group"><label class="form-label">Όνομα *</label><input class="form-control" id="ssv-svc-name" value="${s?esc(s.name):''}"/></div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Κατηγορία</label><input class="form-control" id="ssv-svc-category" value="${s?esc(s.category||''):''}"/></div>
+        <div class="form-group"><label class="form-label">Διάρκεια (λεπτά)</label><input class="form-control" type="number" id="ssv-svc-duration" value="${s?s.duration_minutes:60}"/></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Τιμή (€)</label><input class="form-control" type="number" id="ssv-svc-price" value="${s&&s.price!=null?s.price:''}"/></div>
+        <div class="form-group" style="display:flex;align-items:flex-end;padding-bottom:10px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="ssv-svc-active" ${!s||s.active?'checked':''}/> Ενεργή</label>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
+        <button class="btn btn-ghost" onclick="document.getElementById('ssv-overlay').remove()">Ακύρωση</button>
+        <button class="btn btn-primary" onclick="saveService(${s?`'${s.id}'`:'null'})">Αποθήκευση</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+}
+
+async function saveService(id) {
+  const name = document.getElementById('ssv-svc-name').value.trim();
+  if (!name) { alert('Το όνομα είναι υποχρεωτικό.'); return; }
+  const payload = {
+    clinic_id: clinicId(),
+    name,
+    category: document.getElementById('ssv-svc-category').value.trim()||null,
+    duration_minutes: parseInt(document.getElementById('ssv-svc-duration').value)||60,
+    price: parseFloat(document.getElementById('ssv-svc-price').value)||null,
+    active: document.getElementById('ssv-svc-active').checked,
+  };
+  const {error} = id ? await sb.from('services').update(payload).eq('id',id) : await sb.from('services').insert(payload);
+  if (error) { alert('Σφάλμα: '+error.message); return; }
+  const ov = document.getElementById('ssv-overlay'); if (ov) ov.remove();
+  await loadPageData(); render();
+}
+
+async function deleteService(id) {
+  if (!confirm('Διαγραφή αυτής της υπηρεσίας; Θα αφαιρεθεί και από το προσωπικό που την εκτελεί.')) return;
+  const {error} = await sb.from('services').delete().eq('id',id);
+  if (error) { alert('Σφάλμα: '+error.message); return; }
+  await loadPageData(); render();
+}
+
+function openStaffServicesModal(staffId) {
+  const p = (S.ssvStaff||[]).find(x=>x.id===staffId); if (!p) return;
+  const linked = new Set((S.ssvStaffServices||[]).filter(r=>r.staff_id===staffId).map(r=>r.service_id));
+  const svcs = (S.ssvServices||[]).filter(s=>s.active);
+  const old = document.getElementById('ssv-overlay'); if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'ssv-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9000;display:flex;align-items:center;justify-content:center;padding:12px';
+  ov.innerHTML = `
+    <div style="background:var(--white);border-radius:16px;max-width:480px;width:100%;max-height:86vh;overflow-y:auto;padding:20px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div style="font-size:15px;font-weight:700">Υπηρεσίες — ${esc(p.full_name)}</div>
+        <button onclick="document.getElementById('ssv-overlay').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-2)">×</button>
+      </div>
+      ${svcs.length?svcs.map(s=>`
+        <label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;cursor:pointer;border-bottom:1px solid var(--border-2)">
+          <input type="checkbox" class="ssv-svc-check" value="${s.id}" ${linked.has(s.id)?'checked':''}/>
+          ${esc(s.name)} <span style="color:var(--text-3);font-size:11px">(${esc(s.category||'—')})</span>
+        </label>`).join(''):'<div style="color:var(--text-2);font-size:13px">Δεν υπάρχουν ενεργές υπηρεσίες. Πρόσθεσε πρώτα από την καρτέλα Υπηρεσίες.</div>'}
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
+        <button class="btn btn-ghost" onclick="document.getElementById('ssv-overlay').remove()">Ακύρωση</button>
+        <button class="btn btn-primary" onclick="saveStaffServices('${staffId}')">Αποθήκευση</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+}
+
+async function saveStaffServices(staffId) {
+  const checked = [...document.querySelectorAll('.ssv-svc-check:checked')].map(el=>el.value);
+  const current = new Set((S.ssvStaffServices||[]).filter(r=>r.staff_id===staffId).map(r=>r.service_id));
+  const toAdd = checked.filter(id=>!current.has(id));
+  const toRemove = [...current].filter(id=>!checked.includes(id));
+  if (toRemove.length) await sb.from('staff_services').delete().eq('staff_id',staffId).in('service_id',toRemove);
+  if (toAdd.length) await sb.from('staff_services').insert(toAdd.map(service_id=>({clinic_id:clinicId(), staff_id:staffId, service_id})));
+  const ov = document.getElementById('ssv-overlay'); if (ov) ov.remove();
+  await loadPageData(); render();
+}
+
+async function saveStaffSchedule(staffId) {
+  const rows = [];
+  for (let d=0; d<7; d++) {
+    const workingEl = document.querySelector(`.ssv-sched-working[data-day="${d}"]`);
+    const startEl = document.querySelector(`.ssv-sched-start[data-day="${d}"]`);
+    const endEl = document.querySelector(`.ssv-sched-end[data-day="${d}"]`);
+    rows.push({clinic_id:clinicId(), staff_id:staffId, day_of_week:d, is_working:workingEl.checked, start_time:startEl.value||null, end_time:endEl.value||null});
+  }
+  const {error} = await sb.from('staff_schedules').upsert(rows, {onConflict:'staff_id,day_of_week'});
+  if (error) { alert('Σφάλμα: '+error.message); return; }
+  await loadPageData(); render();
+}
+
+function openScheduleOverrideModal(staffId) {
+  const old = document.getElementById('ssv-overlay'); if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'ssv-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9000;display:flex;align-items:center;justify-content:center;padding:12px';
+  ov.innerHTML = `
+    <div style="background:var(--white);border-radius:16px;max-width:400px;width:100%;padding:20px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div style="font-size:15px;font-weight:700">Αλλαγή Ωραρίου Ημέρας</div>
+        <button onclick="document.getElementById('ssv-overlay').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-2)">×</button>
+      </div>
+      <div class="form-group"><label class="form-label">Ημερομηνία *</label><input class="form-control" type="date" id="ssv-ovr-date"/></div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;margin-bottom:10px"><input type="checkbox" id="ssv-ovr-working" checked onchange="document.getElementById('ssv-ovr-times').style.display=this.checked?'flex':'none'"/> Εργάζεται αυτή την ημέρα</label>
+      <div class="form-row" id="ssv-ovr-times" style="display:flex">
+        <div class="form-group"><label class="form-label">Από</label><input class="form-control" type="time" id="ssv-ovr-start" value="09:00"/></div>
+        <div class="form-group"><label class="form-label">Έως</label><input class="form-control" type="time" id="ssv-ovr-end" value="17:00"/></div>
+      </div>
+      <div class="form-group"><label class="form-label">Σημείωση</label><input class="form-control" id="ssv-ovr-notes" placeholder="προαιρετικό"/></div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
+        <button class="btn btn-ghost" onclick="document.getElementById('ssv-overlay').remove()">Ακύρωση</button>
+        <button class="btn btn-primary" onclick="saveScheduleOverride('${staffId}')">Αποθήκευση</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+}
+
+async function saveScheduleOverride(staffId) {
+  const date = document.getElementById('ssv-ovr-date').value;
+  if (!date) { alert('Επίλεξε ημερομηνία.'); return; }
+  const working = document.getElementById('ssv-ovr-working').checked;
+  const payload = {
+    clinic_id: clinicId(), staff_id: staffId, date,
+    is_working: working,
+    start_time: working ? (document.getElementById('ssv-ovr-start').value||null) : null,
+    end_time: working ? (document.getElementById('ssv-ovr-end').value||null) : null,
+    notes: document.getElementById('ssv-ovr-notes').value.trim()||null,
+  };
+  const {error} = await sb.from('staff_schedule_overrides').upsert(payload, {onConflict:'staff_id,date'});
+  if (error) { alert('Σφάλμα: '+error.message); return; }
+  const ov = document.getElementById('ssv-overlay'); if (ov) ov.remove();
+  await loadPageData(); render();
+}
+
+async function deleteScheduleOverride(id) {
+  if (!confirm('Διαγραφή αυτής της καταχώρησης;')) return;
+  await sb.from('staff_schedule_overrides').delete().eq('id',id);
+  await loadPageData(); render();
+}
+
+function openTimeOffModal(staffId) {
+  const old = document.getElementById('ssv-overlay'); if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'ssv-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9000;display:flex;align-items:center;justify-content:center;padding:12px';
+  ov.innerHTML = `
+    <div style="background:var(--white);border-radius:16px;max-width:400px;width:100%;padding:20px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div style="font-size:15px;font-weight:700">Νέα Άδεια / Διακοπές</div>
+        <button onclick="document.getElementById('ssv-overlay').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-2)">×</button>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Από *</label><input class="form-control" type="date" id="ssv-toff-start" onchange="ssvRecalcDays()"/></div>
+        <div class="form-group"><label class="form-label">Έως *</label><input class="form-control" type="date" id="ssv-toff-end" onchange="ssvRecalcDays()"/></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Τύπος</label>
+          <select class="form-control" id="ssv-toff-type">
+            <option value="vacation">Διακοπές</option>
+            <option value="sick">Αναρρωτική</option>
+            <option value="other">Άλλο</option>
+          </select>
+        </div>
+        <div class="form-group"><label class="form-label">Ημέρες</label><input class="form-control" type="number" id="ssv-toff-days" value="1" min="0" step="0.5"/></div>
+      </div>
+      <div class="form-group"><label class="form-label">Σημείωση</label><input class="form-control" id="ssv-toff-notes" placeholder="προαιρετικό"/></div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
+        <button class="btn btn-ghost" onclick="document.getElementById('ssv-overlay').remove()">Ακύρωση</button>
+        <button class="btn btn-primary" onclick="saveTimeOff('${staffId}')">Αποθήκευση</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+}
+
+function ssvRecalcDays() {
+  const start = document.getElementById('ssv-toff-start').value;
+  const end = document.getElementById('ssv-toff-end').value;
+  if (!start || !end) return;
+  const days = Math.round((new Date(end)-new Date(start))/86400000)+1;
+  if (days>0) document.getElementById('ssv-toff-days').value = days;
+}
+
+async function saveTimeOff(staffId) {
+  const start = document.getElementById('ssv-toff-start').value;
+  const end = document.getElementById('ssv-toff-end').value;
+  if (!start || !end) { alert('Συμπλήρωσε τις ημερομηνίες.'); return; }
+  if (end < start) { alert('Η ημερομηνία λήξης δεν μπορεί να είναι πριν την έναρξη.'); return; }
+  const payload = {
+    clinic_id: clinicId(), staff_id: staffId,
+    start_date: start, end_date: end,
+    type: document.getElementById('ssv-toff-type').value,
+    days_count: parseFloat(document.getElementById('ssv-toff-days').value) || 1,
+    notes: document.getElementById('ssv-toff-notes').value.trim()||null,
+  };
+  const {error} = await sb.from('staff_time_off').insert(payload);
+  if (error) { alert('Σφάλμα: '+error.message); return; }
+  const ov = document.getElementById('ssv-overlay'); if (ov) ov.remove();
+  await loadPageData(); render();
+}
+
+async function deleteTimeOff(id) {
+  if (!confirm('Διαγραφή αυτής της άδειας;')) return;
+  await sb.from('staff_time_off').delete().eq('id',id);
+  await loadPageData(); render();
+}
+
+function editLeaveQuota(staffId) {
+  const p = (S.ssvStaff||[]).find(x=>x.id===staffId); if (!p) return;
+  const v = prompt('Ετήσια ποσόστωση ημερών άδειας:', p.annual_leave_days!=null?p.annual_leave_days:20);
+  if (v===null) return;
+  const n = parseFloat(v);
+  if (isNaN(n) || n<0) { alert('Μη έγκυρος αριθμός.'); return; }
+  sb.from('profiles').update({annual_leave_days:n}).eq('id',staffId).then(({error}) => {
+    if (error) { alert('Σφάλμα: '+error.message); return; }
+    loadPageData().then(render);
+  });
 }
 
 // ── SETTINGS ──
@@ -5442,6 +5945,22 @@ function bindEvents() {
     if (!from||!to) return alert('Επίλεξε και τις δύο ημερομηνίες');
     if (from>to) return alert('Η ημερομηνία "Από" πρέπει να είναι πριν το "Έως"');
     S.reportRange = {from, to};
+    loadPageData();
+  });
+
+  // Προσωπικό & Υπηρεσίες — tabs
+  document.querySelectorAll('[data-ssv-tab]').forEach(el => {
+    el.onclick = () => { S.ssvTab=el.dataset.ssvTab; render(); };
+  });
+
+  // Προσωπικό & Υπηρεσίες — στατιστικά date range
+  const _ssvsr = document.getElementById('ssv-stats-refresh');
+  if (_ssvsr) _ssvsr.addEventListener('click', () => {
+    const from = document.getElementById('ssv-stats-from').value;
+    const to = document.getElementById('ssv-stats-to').value;
+    if (!from||!to) return alert('Επίλεξε και τις δύο ημερομηνίες');
+    if (from>to) return alert('Η ημερομηνία "Από" πρέπει να είναι πριν το "Έως"');
+    S.ssvStatsRange = {from, to};
     loadPageData();
   });
 

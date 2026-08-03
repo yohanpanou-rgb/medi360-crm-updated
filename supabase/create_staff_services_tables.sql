@@ -22,8 +22,8 @@ create index if not exists services_clinic_id_idx on public.services(clinic_id);
 create table if not exists public.staff_services (
   id uuid primary key default gen_random_uuid(),
   clinic_id uuid not null references public.clinics(id),
-  staff_id uuid not null references public.profiles(id),
-  service_id uuid not null references public.services(id),
+  staff_id uuid not null references public.profiles(id) on delete cascade,
+  service_id uuid not null references public.services(id) on delete cascade,
   created_at timestamptz not null default now(),
   unique(staff_id, service_id)
 );
@@ -36,7 +36,7 @@ create index if not exists staff_services_service_id_idx on public.staff_service
 create table if not exists public.staff_schedules (
   id uuid primary key default gen_random_uuid(),
   clinic_id uuid not null references public.clinics(id),
-  staff_id uuid not null references public.profiles(id),
+  staff_id uuid not null references public.profiles(id) on delete cascade,
   day_of_week smallint not null check (day_of_week between 0 and 6),
   is_working boolean not null default true,
   start_time time,
@@ -52,7 +52,7 @@ create index if not exists staff_schedules_staff_id_idx on public.staff_schedule
 create table if not exists public.staff_schedule_overrides (
   id uuid primary key default gen_random_uuid(),
   clinic_id uuid not null references public.clinics(id),
-  staff_id uuid not null references public.profiles(id),
+  staff_id uuid not null references public.profiles(id) on delete cascade,
   date date not null,
   is_working boolean not null default true,
   start_time time,
@@ -68,7 +68,7 @@ create index if not exists staff_schedule_overrides_staff_id_idx on public.staff
 create table if not exists public.staff_time_off (
   id uuid primary key default gen_random_uuid(),
   clinic_id uuid not null references public.clinics(id),
-  staff_id uuid not null references public.profiles(id),
+  staff_id uuid not null references public.profiles(id) on delete cascade,
   start_date date not null,
   end_date date not null,
   type text not null default 'vacation', -- vacation | sick | other
