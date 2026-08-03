@@ -399,6 +399,15 @@ function classifyConsentGroup(serviceName) {
   return null;
 }
 
+// Πρόσωπο vs σώμα/αποτρίχωση — χρησιμοποιείται στη Φόρμα Consultation ώστε τα
+// Βήματα 1-3 (βασική ροή) να δείχνουν ΜΟΝΟ θεραπείες προσώπου, ποτέ σώματος ή
+// αποτρίχωσης (laser/ηλεκτρόλυση) — αυτές έχουν τη δική τους ξεχωριστή,
+// προαιρετική ενότητα.
+function isBodyOrHairRemovalService(serviceName) {
+  const s = normalizeGreek(serviceName);
+  return /alexandrite|laser|αποτριχωσ|ηλεκτρολυσ|μασαζ|massage|drainage|λεμφικ|vacuum|θερμοκουβ|panotherm|mydren|σωμα/.test(s);
+}
+
 // Η ομάδα συναίνεσης είναι σχετική με τον ασθενή μόνο αν έχει κλεισμένο (μη ακυρωμένο)
 // ή ολοκληρωμένο ραντεβού σε αυτή την κατηγορία υπηρεσίας — αλλιώς δεν έχει νόημα
 // να δείχνουμε προειδοποίηση για συναίνεση υπηρεσίας που ποτέ δεν έκανε/έκλεισε.
@@ -488,7 +497,7 @@ function findServiceMatch(appointments, afterDateStr, treatmentText) {
 // consent_text — ίδια κοκκομετρία/regex με το progress badge της καρτέλας ασθενή
 // (tab Consultation), ώστε ο αριθμός "X/Y έγιναν" να είναι ίδιος παντού στο CRM.
 function parseConsultInClinicSteps(text) {
-  const m = (text||'').match(/IN-CLINIC\s*:?\s*\n?([\s\S]+?)(?:\n\s*(?:HOMECARE|EXPECTED|Σημειώσεις)|$)/i);
+  const m = (text||'').match(/IN-CLINIC\s*:?\s*\n?([\s\S]+?)(?:\n\s*(?:BODY|HOMECARE|EXPECTED|Σημειώσεις)|$)/i);
   if (!m) return [];
   return m[1].split('\n').map(l=>l.trim()).filter(Boolean).map(l => {
     const nm = l.match(/^\d\)\s*(.*)$/);
@@ -2030,7 +2039,7 @@ function renderPatientDetail() {
           // Parse skincare plan fields from consent_text — flexible regex (με ή χωρίς άνω-κάτω τελεία)
           const therapistMatch = text.match(/Θεραπεύτρια:\s*([^\n]+)/i);
           const skinMatch = text.match(/SKIN PROFILE\s*:?\s*\n?([\s\S]+?)(?:\n\s*(?:EXPECTED|IN-CLINIC|HOMECARE|Σημειώσεις)|$)/i);
-          const inClinicMatch = text.match(/IN-CLINIC\s*:?\s*\n?([\s\S]+?)(?:\n\s*(?:HOMECARE|EXPECTED|Σημειώσεις)|$)/i);
+          const inClinicMatch = text.match(/IN-CLINIC\s*:?\s*\n?([\s\S]+?)(?:\n\s*(?:BODY|HOMECARE|EXPECTED|Σημειώσεις)|$)/i);
           const homecareMatch = text.match(/HOMECARE\s*:?\s*\n?([\s\S]+?)(?:\n\s*(?:EXPECTED|Σημειώσεις)|$)/i);
           const expectedMatch = text.match(/EXPECTED[^\n]*\n?([\s\S]+?)(?:\n\s*(?:IN-CLINIC|HOMECARE)|$)/i);
           const notesMatch = text.match(/Σημειώσεις:?\s*\n?([\s\S]+?)$/i);
@@ -2156,8 +2165,12 @@ function renderPatientDetail() {
             <textarea id="ce-expected" rows="3" class="form-control" style="resize:vertical" placeholder="π.χ. • πιο καθαρή και ομοιόμορφη όψη&#10;• μείωση θαμπάδας&#10;• καλύτερη υφή δέρματος"></textarea>
           </div>
           <div>
-            <label style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:6px">🏥 In-Clinic Θεραπείες</label>
+            <label style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:6px">🏥 In-Clinic Θεραπείες (Προσώπου)</label>
             <textarea id="ce-inclinic" rows="4" class="form-control" style="resize:vertical" placeholder="π.χ. 1) Καθαρισμός & Προετοιμασία:&#10;• Βαθύς Καθαρισμός για Ακμή, Λιπαρότητα & Ανανέωση&#10;&#10;2) Θρέψη & Αναζωογόνηση:&#10;• Ενυδάτωση με υπέρηχους, Βιταμίνες & Nanopeel"></textarea>
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:6px">💆 Θεραπείες Σώματος (Προαιρετικό)</label>
+            <textarea id="ce-body" rows="2" class="form-control" style="resize:vertical" placeholder="π.χ. Μασάζ, Λεμφικό, Vacuum..."></textarea>
           </div>
           <div>
             <label style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:6px">🏠 Homecare Προϊόντα</label>
@@ -5943,19 +5956,21 @@ function openConsultEdit(id) {
   // Βρες το consultation από τη λίστα (όχι inline — αποφυγή HTML attribute breakage)
   const c = (S.patConsultations||[]).find(x=>x.id===id);
   const text = (c&&c.consent_text)||'';
-  const skinMatch = text.match(/SKIN PROFILE[\s\S]*?Τύπος δέρματος[^:]*:\s*([\s\S]+?)(?:\nEXPECTED|\nIN-CLINIC|\nHOMECARE|$)/i)
-                 || text.match(/SKIN PROFILE\s*:?\s*\n?([\s\S]+?)(?:\nEXPECTED|\nIN-CLINIC|\nHOMECARE|$)/i)
+  const skinMatch = text.match(/SKIN PROFILE[\s\S]*?Τύπος δέρματος[^:]*:\s*([\s\S]+?)(?:\nEXPECTED|\nIN-CLINIC|\nBODY|\nHOMECARE|$)/i)
+                 || text.match(/SKIN PROFILE\s*:?\s*\n?([\s\S]+?)(?:\nEXPECTED|\nIN-CLINIC|\nBODY|\nHOMECARE|$)/i)
                  || text.match(/Skin Profile:\s*([\s\S]+?)(?:\nIn-Clinic:|\nHomecare:|\nExpected|$)/i);
-  const expectedMatch = text.match(/EXPECTED RESULTS[\s\S]*?Τι να περιμένετε[^:]*:\s*([\s\S]+?)(?:\nIN-CLINIC|\nHOMECARE|$)/i)
+  const expectedMatch = text.match(/EXPECTED RESULTS[\s\S]*?Τι να περιμένετε[^:]*:\s*([\s\S]+?)(?:\nIN-CLINIC|\nBODY|\nHOMECARE|$)/i)
                       || text.match(/Expected Results:\s*([\s\S]+?)(?:\nIn-Clinic:|\nHomecare:|$)/i);
-  const inclinicMatch = text.match(/IN-CLINIC\s*:?\s*\n?([\s\S]+?)(?:\nHOMECARE|$)/i)
+  const inclinicMatch = text.match(/IN-CLINIC\s*:?\s*\n?([\s\S]+?)(?:\nBODY|\nHOMECARE|$)/i)
                       || text.match(/In-Clinic:\s*([\s\S]+?)(?:\nHomecare:|$)/i);
+  const bodyMatch = text.match(/\nBODY\s*:?\s*\n?([\s\S]+?)(?:\nHOMECARE|$)/i);
   const homecareMatch = text.match(/HOMECARE\s*:?\s*\n?([\s\S]+?)$/i)
                       || text.match(/Homecare:\s*([\s\S]+?)$/i);
 
   document.getElementById('ce-skin').value = skinMatch ? skinMatch[1].trim() : '';
   document.getElementById('ce-expected').value = expectedMatch ? expectedMatch[1].trim() : '';
   document.getElementById('ce-inclinic').value = inclinicMatch ? inclinicMatch[1].trim() : '';
+  document.getElementById('ce-body').value = bodyMatch ? bodyMatch[1].trim() : '';
   document.getElementById('ce-homecare').value = homecareMatch ? homecareMatch[1].trim() : '';
   document.getElementById('consult-edit-result').textContent = '';
   document.getElementById('consult-edit-modal').style.display = 'block';
@@ -5966,6 +5981,7 @@ async function saveConsultEdit() {
   const skin = document.getElementById('ce-skin').value.trim();
   const expected = document.getElementById('ce-expected').value.trim();
   const inclinic = document.getElementById('ce-inclinic').value.trim();
+  const body = document.getElementById('ce-body').value.trim();
   const homecare = document.getElementById('ce-homecare').value.trim();
   const resultEl = document.getElementById('consult-edit-result');
 
@@ -5979,6 +5995,7 @@ async function saveConsultEdit() {
     + (skin ? '\nSKIN PROFILE\nΤύπος δέρματος / κύρια ανάγκη:\n' + skin : '')
     + (expected ? '\nEXPECTED RESULTS\nΤι να περιμένετε:\n' + expected : '')
     + (inclinic ? '\nIN-CLINIC\n' + inclinic : '')
+    + (body ? '\nBODY\n' + body : '')
     + (homecare ? '\nHOMECARE\n' + homecare : '');
 
   resultEl.innerHTML = '<span style="color:var(--text-2)">Αποθήκευση...</span>';
@@ -6020,7 +6037,7 @@ async function resendConsultationToPatient(consultId) {
   const text = c.consent_text||'';
   const skinMatch = text.match(/SKIN PROFILE\s*:?\s*\n?([\s\S]+?)(?:\n\s*(?:EXPECTED|IN-CLINIC|HOMECARE|Σημειώσεις)|$)/i);
   const expectedMatch = text.match(/EXPECTED[^\n]*\n?([\s\S]+?)(?:\n\s*(?:IN-CLINIC|HOMECARE|Σημειώσεις)|$)/i);
-  const inClinicMatch = text.match(/IN-CLINIC\s*:?\s*\n?([\s\S]+?)(?:\n\s*(?:HOMECARE|EXPECTED|Σημειώσεις)|$)/i);
+  const inClinicMatch = text.match(/IN-CLINIC\s*:?\s*\n?([\s\S]+?)(?:\n\s*(?:BODY|HOMECARE|EXPECTED|Σημειώσεις)|$)/i);
   const homecareMatch = text.match(/HOMECARE\s*:?\s*\n?([\s\S]+?)(?:\n\s*(?:EXPECTED|Σημειώσεις)|$)/i);
   const notesMatch = text.match(/Σημειώσεις:?\s*\n?([\s\S]+?)$/i);
 
@@ -6979,10 +6996,14 @@ async function openConsultationFormModal(opts) {
   let selectedPatientId = (opts.patient && opts.patient.id) || (!standalone && p.id) || null;
   const old = document.getElementById('cf-overlay'); if (old) old.remove();
   const serviceOptions = await _cfLoadServiceOptions();
-  const servicePickerHtml = (targetId) => `
+  // Σκληρός διαχωρισμός προσώπου/σώματος — τα Βήματα 1-3 δείχνουν ΜΟΝΟ θεραπείες
+  // προσώπου, ό,τι κι αν έχει μπει στην curated λίστα ρυθμίσεων της κλινικής.
+  const faceServiceOptions = serviceOptions.filter(s => !isBodyOrHairRemovalService(s));
+  const bodyServiceOptions = serviceOptions.filter(isBodyOrHairRemovalService);
+  const servicePickerHtml = (targetId, options) => `
     <select class="form-control cf-service-picker" data-target="${targetId}" style="margin-bottom:6px">
-      <option value="">➕ Προσθήκη θεραπείας προσώπου από λίστα...</option>
-      ${serviceOptions.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('')}
+      <option value="">➕ Προσθήκη θεραπείας ${options?'σώματος':'προσώπου'} από λίστα...</option>
+      ${(options||faceServiceOptions).map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('')}
     </select>`;
   const homecareOptions = await _cfLoadHomecareOptions();
   // Ένα μόνο προϊόν ανά κατηγορία (καθαρισμός/περιποίηση/αντιηλιακό) — η επιλογή
@@ -7031,11 +7052,18 @@ async function openConsultationFormModal(opts) {
       <div class="form-group"><label class="form-label">Τύπος Δέρματος / Πρόβλημα</label>${skinTypePickerHtml('cf-skin-type')}<textarea class="form-control" id="cf-skin-type" rows="2" placeholder="π.χ. Anti-aging, Ξηρότητα/Αφυδάτωση (ή γράψε ελεύθερα, μία ανά γραμμή)"></textarea></div>
       <div class="form-group"><label class="form-label">Παρατηρήσεις Θεραπευτή</label><textarea class="form-control" id="cf-notes" rows="2"></textarea></div>
 
-      <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin:16px 0 10px">🏥 In-Clinic (επίλεξε από τη λίστα ή γράψε ελεύθερα, μία θεραπεία ανά γραμμή)</div>
+      <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin:16px 0 10px">🏥 In-Clinic — Θεραπείες Προσώπου (επίλεξε από τη λίστα ή γράψε ελεύθερα, μία θεραπεία ανά γραμμή)</div>
       <div class="form-group"><label class="form-label">1) Καθαρισμός &amp; Προετοιμασία</label>${servicePickerHtml('cf-step1')}<textarea class="form-control" id="cf-step1" rows="2"></textarea></div>
       <div class="form-group"><label class="form-label">2) Θρέψη &amp; Αναζωογόνηση</label>${servicePickerHtml('cf-step2')}<textarea class="form-control" id="cf-step2" rows="2"></textarea></div>
-      <div class="form-group"><label class="form-label">Massage &amp; Θεραπείες Σώματος (προαιρετικό, μπαίνει στο βήμα 2)</label>${servicePickerHtml('cf-body-extra')}<textarea class="form-control" id="cf-body-extra" rows="2"></textarea></div>
       <div class="form-group"><label class="form-label">3) Ενίσχυση &amp; Διατήρηση</label>${servicePickerHtml('cf-step3')}<textarea class="form-control" id="cf-step3" rows="2"></textarea></div>
+
+      <div style="margin:16px 0">
+        <button type="button" class="btn btn-ghost btn-sm" id="cf-toggle-body">+ Προαιρετικό – Θεραπείες Σώματος</button>
+      </div>
+      <div id="cf-body-section" style="display:none;padding:14px;border:1.5px dashed var(--border-2);border-radius:10px;margin-bottom:16px">
+        <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px">Προαιρετικό – Θεραπείες Σώματος <span style="font-weight:400;text-transform:none;letter-spacing:0">(δεν κάνει μέρος των Βημάτων 1-3, δεν τα επηρεάζει)</span></div>
+        <div class="form-group">${servicePickerHtml('cf-body-extra', bodyServiceOptions)}<textarea class="form-control" id="cf-body-extra" rows="2" placeholder="π.χ. Μασάζ, Λεμφικό, Vacuum..."></textarea></div>
+      </div>
 
       <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin:16px 0 10px">🏠 Homecare (επίλεξε από τη λίστα ή γράψε ελεύθερα, ένα προϊόν ανά κατηγορία)</div>
       <div class="form-group"><label class="form-label">Καθημερινός Καθαρισμός</label>${homecarePickerHtml('cf-prod-cleaning', homecareOptions.cleaning)}<textarea class="form-control" id="cf-prod-cleaning" rows="2"></textarea></div>
@@ -7054,6 +7082,14 @@ async function openConsultationFormModal(opts) {
       </div>
     </div>`;
   document.body.appendChild(ov);
+
+  const _cfToggleBodyBtn = document.getElementById('cf-toggle-body');
+  if (_cfToggleBodyBtn) _cfToggleBodyBtn.addEventListener('click', () => {
+    const sec = document.getElementById('cf-body-section');
+    const hidden = sec.style.display === 'none';
+    sec.style.display = hidden ? 'block' : 'none';
+    _cfToggleBodyBtn.textContent = hidden ? '− Απόκρυψη Θεραπειών Σώματος' : '+ Προαιρετικό – Θεραπείες Σώματος';
+  });
 
   ov.querySelectorAll('.cf-service-picker').forEach(sel => {
     sel.onchange = () => {
@@ -7120,12 +7156,18 @@ async function openConsultationFormModal(opts) {
     const skinLine = [skinType, notes].filter(Boolean).join(' — ');
     const expectedResults = getConsultationExpectedResults(skinType, notes, step1, step2, step3, bodyExtra);
 
-    const step2Items = _cfSplitLines(step2).concat(_cfSplitLines(bodyExtra));
+    // Τα Βήματα 1-3 αφορούν αποκλειστικά θεραπείες προσώπου — οι θεραπείες
+    // σώματος (bodyExtra) ΔΕΝ μπαίνουν πια μέσα στο Βήμα 2, μένουν σε δική
+    // τους ξεχωριστή, προαιρετική ενότητα σε όλα τα επίπεδα (μορφή, email,
+    // αποθηκευμένο κείμενο).
+    const step2Items = _cfSplitLines(step2);
+    const bodyItems = _cfSplitLines(bodyExtra);
     const inClinicStepsForEmail = [
       {label:'Καθαρισμός & Προετοιμασία', items:_cfSplitLines(step1)},
       {label:'Θρέψη & Αναζωογόνηση', items:step2Items},
       {label:'Ενίσχυση & Διατήρηση', items:_cfSplitLines(step3)},
     ].filter(s => s.items.length);
+    const bodyStepsForEmail = bodyItems.length ? [{label:'Θεραπείες Σώματος (Προαιρετικό)', items:bodyItems}] : [];
     const homecareStepsForEmail = [
       {label:'Καθημερινός καθαρισμός', items:_cfSplitLines(prodCleaning)},
       {label:'Ενεργή περιποίηση', items:_cfSplitLines(prodCare)},
@@ -7138,6 +7180,7 @@ async function openConsultationFormModal(opts) {
       step2Items.length ? '2) Θρέψη & Αναζωογόνηση: '+step2Items.join(', ') : '',
       step3 ? '3) Ενίσχυση & Διατήρηση: '+step3.replace(/\n/g,', ') : '',
     ].filter(Boolean).join('\n');
+    const bodyBlob = bodyItems.length ? 'Θεραπείες Σώματος (Προαιρετικό): '+bodyItems.join(', ') : '';
     const homecareBlob = [
       prodCleaning ? 'Καθημερινός καθαρισμός: '+prodCleaning.replace(/\n/g,', ') : '',
       prodCare ? 'Ενεργή περιποίηση: '+prodCare.replace(/\n/g,', ') : '',
@@ -7149,9 +7192,10 @@ async function openConsultationFormModal(opts) {
       + (skinLine ? '\nSKIN PROFILE\nΤύπος δέρματος / κύρια ανάγκη:\n'+skinLine : '')
       + (expectedResults.length ? '\nEXPECTED RESULTS\nΤι να περιμένετε:\n'+expectedResults.join(', ') : '')
       + (inClinicBlob ? '\nIN-CLINIC\n'+inClinicBlob : '')
+      + (bodyBlob ? '\nBODY\n'+bodyBlob : '')
       + (homecareBlob ? '\nHOMECARE\n'+homecareBlob : '');
 
-    return {consent_text, skinLine, expectedResults, inClinicStepsForEmail, homecareStepsForEmail, additionalNotes, therapistEmail};
+    return {consent_text, skinLine, expectedResults, inClinicStepsForEmail, bodyStepsForEmail, homecareStepsForEmail, additionalNotes, therapistEmail};
   }
 
   // Διορθώνει αυτόματα ορθογραφικά/τυπογραφικά λάθη στα δύο ελεύθερα πεδία
@@ -7235,7 +7279,7 @@ async function openConsultationFormModal(opts) {
         to: patient&&patient.email, therapist_email: payload.therapistEmail || undefined,
         clinic_name: clinicInfo.name, client_name: patient&&patient.full_name,
         skin_line: payload.skinLine, expected_results: payload.expectedResults,
-        in_clinic_steps: payload.inClinicStepsForEmail, homecare_steps: payload.homecareStepsForEmail,
+        in_clinic_steps: payload.inClinicStepsForEmail, body_steps: payload.bodyStepsForEmail, homecare_steps: payload.homecareStepsForEmail,
         additional_notes: payload.additionalNotes,
         booking_link: clinicInfo.booking_link, website_link: clinicInfo.website,
         instagram_link: clinicInfo.instagram, facebook_link: clinicInfo.facebook, maps_link: clinicInfo.maps_link,
