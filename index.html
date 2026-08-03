@@ -855,6 +855,18 @@ async function loadPageData() {
     // χωρητικότητας στο % Κάλυψης Ωραρίου (πολλαπλά ραντεβού μπορούν να τρέχουν ταυτόχρονα).
     const {data:staffRows} = await sb.from('profiles').select('id').eq('clinic_id',cid).in('role',['therapist','clinic_admin','super_admin']);
     S.reportStaffCount = (staffRows||[]).length || 1;
+
+    // Πραγματικά ωράρια προσωπικού + εξαιρέσεις + άδειες — για ΑΚΡΙΒΗ Κάλυψη
+    // Ωραρίου (διαθέσιμα λεπτά = πραγματικές προγραμματισμένες ώρες εργασίας,
+    // όχι εκτίμηση ώρες-λειτουργίας × πλήθος προσωπικού).
+    const [schedRes2, ovrRes2, toffRes2] = await Promise.all([
+      sb.from('staff_schedules').select('*').eq('clinic_id',cid),
+      sb.from('staff_schedule_overrides').select('*').eq('clinic_id',cid).gte('date',S.reportRange.from).lte('date',S.reportRange.to),
+      sb.from('staff_time_off').select('*').eq('clinic_id',cid),
+    ]);
+    S.reportStaffSchedules = schedRes2.data||[];
+    S.reportScheduleOverrides = ovrRes2.data||[];
+    S.reportTimeOff = toffRes2.data||[];
   }
   if (S.page==='settings') {
     const {data:uc} = await sb.from('unmatched_consultations').select('*').eq('clinic_id',cid).order('received_at',{ascending:false});
@@ -884,6 +896,11 @@ async function loadPageData() {
     const sFrom = S.ssvStatsRange.from+'T00:00:00', sTo = S.ssvStatsRange.to+'T23:59:59';
     const {data:statsApts} = await sb.from('appointments').select('therapist_id,service_name,price,duration_minutes,status,start_time,notes').eq('clinic_id',cid).gte('start_time',sFrom).lte('start_time',sTo);
     S.ssvStatsAppointments = statsApts||[];
+    // Μηνιαία τάση: πάντα οι τελευταίοι 6 ημερολογιακοί μήνες, ανεξάρτητα από
+    // το επιλεγμένο διάστημα των στατιστικών πάνω.
+    const trendFrom2 = new Date(); trendFrom2.setMonth(trendFrom2.getMonth()-5); trendFrom2.setDate(1); trendFrom2.setHours(0,0,0,0);
+    const {data:trendApts2} = await sb.from('appointments').select('therapist_id,service_name,price,status,start_time,notes').eq('clinic_id',cid).gte('start_time',trendFrom2.toISOString());
+    S.ssvTrendAppointments = trendApts2||[];
     // Οι λίστες υπηρεσιών/προσωπικού άλλαξαν πιθανώς — ανανέωσε το cache του
     // modal "Νέο Ραντεβού" την επόμενη φορά που θα ανοίξει.
     S._apptRefsLoaded = false;
@@ -936,6 +953,11 @@ async function loadPatientDetail(id, tab) {
     S.patientDetail = {...p, appointments: a||[]};
     S.laserForms = lf||[];
     S.patTab = tab || 'overview';
+
+    // Πακέτα συνεδριών του ασθενή — το υπόλοιπο υπολογίζεται από τα ραντεβού
+    // (μη ακυρωμένα με package_id), όχι από χειροκίνητο μετρητή.
+    const {data:pkgs} = await sb.from('patient_packages').select('*').eq('patient_id',id).order('purchased_at',{ascending:false});
+    S.patientPackages = pkgs||[];
 
     // Φωτογραφίες ασθενή — μεταδεδομένα + signed URLs (private bucket)
     S.patientPhotos = [];
@@ -1949,6 +1971,41 @@ function renderPatientDetail() {
           })()}
         </div>
       </div>
+      <div class="card" style="grid-column:1/-1">
+        <div class="card-header"><span class="card-title">📦 Πακέτα Συνεδριών</span>
+          <button class="btn btn-primary btn-sm" onclick="openPackageModal()">+ Νέο Πακέτο</button>
+        </div>
+        <div style="padding:12px 16px">
+          ${(S.patientPackages&&S.patientPackages.length) ? `
+          <div style="display:flex;flex-direction:column;gap:10px">
+            ${S.patientPackages.map(pkg=>{
+              const used = packageUsedSessions(pkg);
+              const total = pkg.total_sessions||6;
+              const pct = Math.min(100, Math.round(used/total*100));
+              const done = used>=total, lastOne = used===total-1;
+              const barColor = done?'#8A8FA3':lastOne?'#D97706':'#0F6E56';
+              return `
+            <div style="padding:10px 12px;background:var(--surface-2);border-radius:10px;border-left:3px solid ${barColor}">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+                <div style="min-width:0">
+                  <span style="font-weight:600;font-size:13px">${esc(pkg.name)}</span>
+                  ${pkg.price?`<span style="font-size:11px;color:var(--text-2)"> · ${euro(pkg.price)}</span>`:''}
+                  <span style="font-size:11px;color:var(--text-2)"> · αγορά ${new Date(pkg.purchased_at).toLocaleDateString('el-GR')}</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+                  ${done?`<span style="font-size:10px;font-weight:700;color:#53586B;background:#E4E6ED;padding:2px 8px;border-radius:8px">ΟΛΟΚΛΗΡΩΘΗΚΕ</span>`
+                    :lastOne?`<span style="font-size:10px;font-weight:700;color:#854F0B;background:#FAEEDA;padding:2px 8px;border-radius:8px">⚠ ΤΕΛΕΥΤΑΙΑ ΣΥΝΕΔΡΙΑ</span>`:''}
+                  <span style="font-size:13px;font-weight:700;color:${barColor}">${used} / ${total}</span>
+                  <button class="btn btn-ghost btn-sm" onclick="deletePackage('${pkg.id}')" style="color:var(--red)">🗑</button>
+                </div>
+              </div>
+              <div style="height:7px;background:var(--border-2);border-radius:99px;overflow:hidden;margin-top:8px">
+                <div style="height:100%;width:${pct}%;background:${barColor};border-radius:99px"></div>
+              </div>
+            </div>`;}).join('')}
+          </div>` : `<div style="padding:6px 0;color:var(--text-2);font-size:12.5px">Δεν υπάρχουν πακέτα. Τα πακέτα (π.χ. Laser x6) παρακολουθούν αυτόματα πόσες συνεδρίες έχουν γίνει — κάθε ραντεβού που συνδέεται με το πακέτο μετράει μία.</div>`}
+        </div>
+      </div>
       <div class="card" style="grid-column:1/-1;overflow:visible">
         <div class="card-header"><span class="card-title">👨‍👩‍👧 Συσχετισμοί Πελάτη</span></div>
         <div style="padding:12px 16px">
@@ -1993,7 +2050,7 @@ function renderPatientDetail() {
           <div style="padding:14px 18px;border-bottom:1px solid var(--border-2);display:flex;align-items:center;gap:14px">
             <div style="width:4px;align-self:stretch;border-radius:2px;background:${(STATUS_APPT[a.status]||STATUS_APPT.confirmed).c};flex-shrink:0"></div>
             <div style="flex:1">
-              <div style="font-size:13px;font-weight:500">${esc(a.service_name||'—')}</div>
+              <div style="font-size:13px;font-weight:500">${a.package_id?'<span title="Συνεδρία πακέτου">📦 </span>':''}${esc(a.service_name||'—')}</div>
               <div style="font-size:11px;color:var(--text-2)">${fmtDt(a.start_time)}</div>
             </div>
             ${canSeeFinancials&&a.price?`<div style="font-size:13px;font-weight:500;color:#0F6E56">${euro(a.price)}</div>`:''}
@@ -2300,7 +2357,7 @@ function renderAppointments() {
           <div style="width:4px;align-self:stretch;border-radius:2px;background:${st.c};flex-shrink:0"></div>
           <div style="flex:1;min-width:0;cursor:pointer" ${a.patient_id?`data-patient="${a.patient_id}"`:''}  >
             <div style="font-size:13px;font-weight:500">${esc(a.patients&&a.patients.full_name||'—')}</div>
-            <div style="font-size:11px;color:var(--text-2)">${esc(a.service_name||'')} · ${esc(a.patients&&a.patients.phone||'')}</div>
+            <div style="font-size:11px;color:var(--text-2)">${a.package_id?'<span title="Συνεδρία πακέτου">📦 </span>':''}${esc(a.service_name||'')} · ${esc(a.patients&&a.patients.phone||'')}</div>
             ${missingGrp?`<div style="margin-top:3px">${missingGrp.duplicateHasIt
               ?`<span class="badge" style="font-size:10px;background:#FAEEDA;color:#854F0B">⚠ Υπάρχει συναίνεση ${CONSENT_GROUP_LABELS[missingGrp.grp]} σε άλλη (πιθανό διπλότυπη) καρτέλα</span>`
               :`<span class="badge badge-red" style="font-size:10px">⚠ Χωρίς Συναίνεση ${CONSENT_GROUP_LABELS[missingGrp.grp]}</span>`
@@ -3357,6 +3414,31 @@ function renderConsents() {
 }
 
 // ── ΑΝΑΦΟΡΕΣ (REPORTS) ──
+// Πραγματικά διαθέσιμα λεπτά εργασίας σε ένα διάστημα, από τα ωράρια του
+// προσωπικού: εβδομαδιαίο πρόγραμμα ανά ημέρα, με προτεραιότητα στις
+// μεμονωμένες αλλαγές ημέρας (overrides) και αφαίρεση ημερών άδειας.
+// Χρησιμοποιείται και στις Αναφορές (συνολικά) και στα Στατιστικά (ανά άτομο).
+function computeScheduledMinutes(staffIds, fromStr, toStr, schedules, overrides, timeOff) {
+  const t2m = (t) => { if (!t) return 0; const [h,m] = String(t).split(':').map(Number); return (h||0)*60+(m||0); };
+  const schedBy = {}; (schedules||[]).forEach(r=>{ (schedBy[r.staff_id]=schedBy[r.staff_id]||{})[r.day_of_week]=r; });
+  const ovrBy = {}; (overrides||[]).forEach(r=>{ (ovrBy[r.staff_id]=ovrBy[r.staff_id]||{})[r.date]=r; });
+  let total = 0;
+  const from = new Date(fromStr+'T00:00:00'), to = new Date(toStr+'T00:00:00');
+  for (let d = new Date(from); d <= to; d.setDate(d.getDate()+1)) {
+    const ds = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+    const dow = d.getDay();
+    for (const sid of staffIds) {
+      if ((timeOff||[]).some(t=>t.staff_id===sid && t.start_date<=ds && ds<=t.end_date)) continue;
+      const ovr = ovrBy[sid] && ovrBy[sid][ds];
+      const row = ovr || (schedBy[sid] && schedBy[sid][dow]);
+      if (!row || !row.is_working) continue;
+      const mins = t2m(row.end_time) - t2m(row.start_time);
+      if (mins > 0) total += mins;
+    }
+  }
+  return total;
+}
+
 function computeReportStats() {
   const apts = S.reportAppointments||[];
   const newPatients = S.reportNewPatients||[];
@@ -3389,16 +3471,24 @@ function computeReportStats() {
   const consultDelta = consultations.length - prevConsultCount;
   const consultPct = prevConsultCount>0 ? Math.round((consultDelta/prevConsultCount)*100) : (consultations.length>0?100:0);
 
-  // % Κάλυψης Ωραρίου Λειτουργίας: κλεισμένα λεπτά ραντεβού / διαθέσιμα λεπτά χωρητικότητας
-  // (ώρες λειτουργίας × ημέρες περιόδου × αριθμός ενεργού προσωπικού — εκτίμηση χωρητικότητας
-  // όταν δουλεύουν παράλληλα περισσότερες από μία θεραπεύτριες).
+  // % Κάλυψης Ωραρίου: κλεισμένα λεπτά ραντεβού / ΠΡΑΓΜΑΤΙΚΑ διαθέσιμα λεπτά
+  // από τα ωράρια του προσωπικού (Προσωπικό & Υπηρεσίες → Ωράριο), με overrides
+  // και άδειες. Fallback στην παλιά εκτίμηση (ώρες λειτουργίας × πλήθος
+  // προσωπικού) μόνο αν δεν έχουν οριστεί ακόμα ωράρια.
   const fromDate = new Date((S.reportRange&&S.reportRange.from)+'T00:00:00');
   const toDate = new Date((S.reportRange&&S.reportRange.to)+'T23:59:59');
   const rangeDays = Math.max(1, Math.round((toDate-fromDate)/86400000)+1);
-  const startHour = (S.clinic&&S.clinic.settings&&S.clinic.settings.start_hour!=null) ? S.clinic.settings.start_hour : 9;
-  const endHour = (S.clinic&&S.clinic.settings&&S.clinic.settings.end_hour!=null) ? S.clinic.settings.end_hour : 20;
-  const staffCount = Math.max(1, S.reportStaffCount||1);
-  const capacityMinutes = Math.max(0, endHour-startHour) * 60 * rangeDays * staffCount;
+  const schedStaffIds = [...new Set((S.reportStaffSchedules||[]).map(r=>r.staff_id))];
+  let capacityMinutes = schedStaffIds.length
+    ? computeScheduledMinutes(schedStaffIds, S.reportRange.from, S.reportRange.to, S.reportStaffSchedules, S.reportScheduleOverrides, S.reportTimeOff)
+    : 0;
+  let utilizationIsReal = capacityMinutes > 0;
+  if (!capacityMinutes) {
+    const startHour = (S.clinic&&S.clinic.settings&&S.clinic.settings.start_hour!=null) ? S.clinic.settings.start_hour : 9;
+    const endHour = (S.clinic&&S.clinic.settings&&S.clinic.settings.end_hour!=null) ? S.clinic.settings.end_hour : 20;
+    const staffCount = Math.max(1, S.reportStaffCount||1);
+    capacityMinutes = Math.max(0, endHour-startHour) * 60 * rangeDays * staffCount;
+  }
   const bookedMinutes = apts.filter(a=>a.status!=='cancelled').reduce((s,a)=>s+(a.duration_minutes||60),0);
   const utilizationRate = capacityMinutes ? Math.round((bookedMinutes/capacityMinutes)*100) : null;
 
@@ -3426,7 +3516,7 @@ function computeReportStats() {
 
   return { apts, newPatients, allPatients, revenue, noShowRate, noShows, gdprRate, gdprSigned, activeCount:activePatients.length, topServices,
     newPatientsDelta, newPatientsPct, consultations, prevConsultCount, consultDelta, consultPct,
-    utilizationRate, recommendedTotal, recommendedDone, missedRecommendations,
+    utilizationRate, utilizationIsReal, recommendedTotal, recommendedDone, missedRecommendations,
     completedCount, cancelledCount, pendingCount };
 }
 
@@ -3492,7 +3582,7 @@ function renderReports() {
         <div class="stat-icon" style="background:#E6F1FB;color:#185FA5">◔</div>
         <div class="stat-label">Κάλυψη Ωραρίου</div>
         <div class="stat-value" style="color:#185FA5">${s.utilizationRate===null?'—':s.utilizationRate+'%'}</div>
-        <div class="stat-change">εκτίμηση βάσει ωραρίου × ενεργού προσωπικού</div>
+        <div class="stat-change">${s.utilizationIsReal?'βάσει πραγματικών ωραρίων προσωπικού (με άδειες)':'εκτίμηση βάσει ωραρίου × ενεργού προσωπικού'}</div>
       </div>
     </div>
 
@@ -3564,6 +3654,89 @@ function renderReports() {
       <div id="report-email-result" style="margin-top:10px;font-size:12px"></div>
     </div>
   </div>`;
+}
+
+// ── ΠΑΚΕΤΑ ΣΥΝΕΔΡΙΩΝ ──
+// Χρησιμοποιημένες συνεδρίες πακέτου = μη ακυρωμένα ραντεβού του ασθενή που
+// είναι συνδεδεμένα με το πακέτο (appointments.package_id).
+function packageUsedSessions(pkg) {
+  const appts = (S.patientDetail&&S.patientDetail.appointments)||[];
+  return appts.filter(a=>a.package_id===pkg.id && a.status!=='cancelled').length;
+}
+
+function openPackageModal() {
+  const p = S.patientDetail; if (!p) return;
+  const laserSvcs = (S.ssvServices||[]).filter(s=>/laser|alexandrite/i.test(s.name));
+  const old = document.getElementById('pkg-overlay'); if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'pkg-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9000;display:flex;align-items:center;justify-content:center;padding:12px';
+  ov.innerHTML = `
+    <div style="background:var(--white);border-radius:16px;max-width:440px;width:100%;padding:20px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div style="font-size:15px;font-weight:700">Νέο Πακέτο — ${esc(p.full_name)}</div>
+        <button onclick="document.getElementById('pkg-overlay').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-2)">×</button>
+      </div>
+      <div class="form-group"><label class="form-label">Όνομα πακέτου *</label>
+        <input class="form-control" id="pkg-name" placeholder="π.χ. Laser Μασχάλες x6"/></div>
+      <div class="form-group"><label class="form-label">Υπηρεσία (για αυτόματη πρόταση στο ραντεβού)</label>
+        <select class="form-control" id="pkg-service">
+          <option value="">— Χωρίς συγκεκριμένη υπηρεσία —</option>
+          ${((S.ssvServices&&S.ssvServices.length)?S.ssvServices:[]).map(s=>`<option value="${esc(s.name)}">${esc(s.name)}</option>`).join('')}
+        </select></div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Συνεδρίες</label><input class="form-control" type="number" id="pkg-total" value="6" min="1"/></div>
+        <div class="form-group"><label class="form-label">Τιμή πακέτου (€)</label><input class="form-control" type="number" id="pkg-price" placeholder="προαιρετικό"/></div>
+      </div>
+      <div class="form-group"><label class="form-label">Ημ/νία αγοράς</label><input class="form-control" type="date" id="pkg-date" value="${new Date().toISOString().slice(0,10)}"/></div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
+        <button class="btn btn-ghost" onclick="document.getElementById('pkg-overlay').remove()">Ακύρωση</button>
+        <button class="btn btn-primary" onclick="savePackage('${p.id}')">Αποθήκευση</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  // Λίστα υπηρεσιών για το dropdown: αν δεν είναι ήδη φορτωμένη (η σελίδα
+  // Προσωπικό & Υπηρεσίες τη φορτώνει), φέρε την τώρα.
+  if (!(S.ssvServices&&S.ssvServices.length)) {
+    sb.from('services').select('id,name').eq('clinic_id',clinicId()).eq('active',true).order('name').then(({data}) => {
+      const sel = document.getElementById('pkg-service');
+      if (sel && data) sel.innerHTML = '<option value="">— Χωρίς συγκεκριμένη υπηρεσία —</option>' + data.map(s=>`<option value="${esc(s.name)}">${esc(s.name)}</option>`).join('');
+    });
+  }
+  // Αυτόματο όνομα από την υπηρεσία, αν ο χρήστης δεν έχει γράψει δικό του
+  const svcSel = document.getElementById('pkg-service');
+  svcSel.addEventListener('change', () => {
+    const nameEl = document.getElementById('pkg-name');
+    const totalEl = document.getElementById('pkg-total');
+    if (svcSel.value && !nameEl.dataset.userEdited) nameEl.value = svcSel.value + ' x' + (totalEl.value||6);
+  });
+  document.getElementById('pkg-name').addEventListener('input', function(){ this.dataset.userEdited='1'; });
+}
+
+async function savePackage(patientId) {
+  const name = document.getElementById('pkg-name').value.trim();
+  if (!name) { alert('Γράψε όνομα πακέτου.'); return; }
+  const {error} = await sb.from('patient_packages').insert({
+    clinic_id: clinicId(), patient_id: patientId,
+    name,
+    service_name: document.getElementById('pkg-service').value||null,
+    total_sessions: parseInt(document.getElementById('pkg-total').value)||6,
+    price: parseFloat(document.getElementById('pkg-price').value)||null,
+    purchased_at: document.getElementById('pkg-date').value||new Date().toISOString().slice(0,10),
+  });
+  if (error) { alert('Σφάλμα: '+error.message); return; }
+  const ov = document.getElementById('pkg-overlay'); if (ov) ov.remove();
+  const {data:pkgs} = await sb.from('patient_packages').select('*').eq('patient_id',patientId).order('purchased_at',{ascending:false});
+  S.patientPackages = pkgs||[];
+  render();
+}
+
+async function deletePackage(id) {
+  if (!confirm('Διαγραφή αυτού του πακέτου; Τα ραντεβού που έχουν ήδη γίνει ΔΕΝ διαγράφονται — απλώς αποσυνδέονται από το πακέτο.')) return;
+  const {error} = await sb.from('patient_packages').delete().eq('id',id);
+  if (error) { alert('Σφάλμα: '+error.message); return; }
+  S.patientPackages = (S.patientPackages||[]).filter(p=>p.id!==id);
+  render();
 }
 
 // ── ΠΡΟΣΩΠΙΚΟ & ΥΠΗΡΕΣΙΕΣ ──
@@ -3804,15 +3977,17 @@ function renderSsvStatsTab() {
   // από το όνομα στα notes ("Προσωπικό: X" — έτσι αποθηκεύουν το προσωπικό όλα
   // τα ιστορικά ραντεβού του booking247 sync). Χωρίς αυτό το fallback, τα
   // στατιστικά ανά άτομο θα έδειχναν 0 για όλο το ιστορικό.
+  const staffIdFor = (a) => {
+    if (a.therapist_id) return a.therapist_id;
+    const nm = apptStaffName(a, S.ssvStaff);
+    const st = nm ? (S.ssvStaff||[]).find(p=>sameStaffName(p.full_name, nm)) : null;
+    return st ? st.id : 'unassigned';
+  };
   apts.forEach(a => {
-    let key = a.therapist_id;
-    if (!key) {
-      const nm = apptStaffName(a, S.ssvStaff);
-      const st = nm ? (S.ssvStaff||[]).find(p=>sameStaffName(p.full_name, nm)) : null;
-      key = st ? st.id : 'unassigned';
-    }
-    byStaff[key] = byStaff[key] || {count:0, completed:0, revenue:0};
+    const key = staffIdFor(a);
+    byStaff[key] = byStaff[key] || {count:0, completed:0, revenue:0, bookedMin:0};
     byStaff[key].count++;
+    if (a.status!=='cancelled') byStaff[key].bookedMin += (a.duration_minutes||60);
     if (a.status==='completed') { byStaff[key].completed++; byStaff[key].revenue += (a.price||0); }
   });
   const bySvc = {};
@@ -3825,6 +4000,34 @@ function renderSsvStatsTab() {
   const totalRevenue = Object.values(byStaff).reduce((s,v)=>s+v.revenue,0);
   const thisYear = new Date().getFullYear();
   const sortedSvcNames = Object.keys(bySvc).sort((a,b)=>bySvc[b].count-bySvc[a].count);
+
+  // ── Μηνιαία τάση (τελευταίοι 6 μήνες): τζίρος ανά μήνα, ανά άτομο, ανά κατηγορία ──
+  const MONTH_LABELS = ['Ιαν','Φεβ','Μαρ','Απρ','Μαϊ','Ιουν','Ιουλ','Αυγ','Σεπ','Οκτ','Νοε','Δεκ'];
+  const months = [];
+  for (let i=5; i>=0; i--) {
+    const d = new Date(); d.setDate(1); d.setMonth(d.getMonth()-i);
+    months.push({key: d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'), label: MONTH_LABELS[d.getMonth()]+' '+String(d.getFullYear()).slice(2)});
+  }
+  const catOfService = (name) => {
+    const svcRow = (S.ssvServices||[]).find(s=>normalizeGreek(s.name)===normalizeGreek(name||''));
+    return (svcRow && svcRow.category) || 'Άλλες';
+  };
+  const trendByMonth = {}, trendByStaffMonth = {}, trendByCatMonth = {};
+  (S.ssvTrendAppointments||[]).filter(a=>a.status==='completed').forEach(a => {
+    const mk = String(a.start_time||'').slice(0,7);
+    const rev = a.price||0;
+    trendByMonth[mk] = (trendByMonth[mk]||0) + rev;
+    const sid = staffIdFor(a);
+    (trendByStaffMonth[sid]=trendByStaffMonth[sid]||{})[mk] = ((trendByStaffMonth[sid]||{})[mk]||0) + rev;
+    const cat = catOfService(a.service_name);
+    (trendByCatMonth[cat]=trendByCatMonth[cat]||{})[mk] = ((trendByCatMonth[cat]||{})[mk]||0) + rev;
+  });
+  const trendMax = Math.max(1, ...months.map(m=>trendByMonth[m.key]||0));
+  const trendCats = Object.keys(trendByCatMonth).sort((a,b)=>{
+    const ta = months.reduce((s,m)=>s+((trendByCatMonth[a]||{})[m.key]||0),0);
+    const tb = months.reduce((s,m)=>s+((trendByCatMonth[b]||{})[m.key]||0),0);
+    return tb-ta;
+  });
 
   return `
     <div class="card" style="padding:16px;margin-bottom:16px">
@@ -3847,23 +4050,67 @@ function renderSsvStatsTab() {
     <div class="card" style="padding:16px;margin-bottom:16px">
       <div class="card-title" style="margin-bottom:10px">Ανά Μέλος Προσωπικού</div>
       <div class="table-wrap"><table>
-        <thead><tr><th>Όνομα</th><th>Ραντεβού</th><th>Ολοκληρωμένα</th>${canFin?'<th>Τζίρος</th>':''}<th>Άδειες ${thisYear} (χρησιμ. / υπόλοιπο)</th></tr></thead>
+        <thead><tr><th>Όνομα</th><th>Ραντεβού</th><th>Ολοκληρωμένα</th>${canFin?'<th>Τζίρος</th>':''}<th>Κάλυψη Ωραρίου</th><th>Άδειες ${thisYear} (χρησιμ. / υπόλοιπο)</th></tr></thead>
         <tbody>
           ${(S.ssvStaff||[]).length?(S.ssvStaff||[]).map(p=>{
-            const st = byStaff[p.id]||{count:0,completed:0,revenue:0};
+            const st = byStaff[p.id]||{count:0,completed:0,revenue:0,bookedMin:0};
             const usedDays = (S.ssvTimeOff||[]).filter(r=>r.staff_id===p.id && r.type==='vacation' && new Date(r.start_date).getFullYear()===thisYear).reduce((s,r)=>s+Number(r.days_count||0),0);
             const quota = p.annual_leave_days!=null?Number(p.annual_leave_days):20;
+            // Πραγματική κάλυψη: κλεισμένα λεπτά / προγραμματισμένα λεπτά εργασίας
+            // του ατόμου στο επιλεγμένο διάστημα (με overrides και άδειες).
+            const availMin = (range.from&&range.to) ? computeScheduledMinutes([p.id], range.from, range.to, S.ssvSchedules, S.ssvOverrides, S.ssvTimeOff) : 0;
+            const utilPct = availMin > 0 ? Math.round(st.bookedMin/availMin*100) : null;
             return `<tr>
               <td>${esc(p.full_name)}</td>
               <td>${st.count}</td>
               <td>${st.completed}</td>
               ${canFin?`<td>${euro(st.revenue)}</td>`:''}
+              <td>${utilPct===null?'<span style="color:var(--text-3)" title="Δεν έχει οριστεί ωράριο">—</span>':`
+                <div style="display:flex;align-items:center;gap:8px;min-width:110px">
+                  <div style="flex:1;height:6px;background:var(--border-2);border-radius:99px;overflow:hidden"><div style="height:100%;width:${Math.min(100,utilPct)}%;background:${utilPct>=75?'#0F6E56':utilPct>=40?'#185FA5':'#D97706'};border-radius:99px"></div></div>
+                  <span style="font-size:12px;font-weight:600">${utilPct}%</span>
+                </div>`}</td>
               <td>${usedDays} / ${Math.max(0,quota-usedDays)}</td>
             </tr>`;
-          }).join(''):`<tr><td colspan="${canFin?5:4}" style="text-align:center;padding:16px;color:var(--text-2)">Δεν υπάρχει προσωπικό.</td></tr>`}
+          }).join(''):`<tr><td colspan="${canFin?6:5}" style="text-align:center;padding:16px;color:var(--text-2)">Δεν υπάρχει προσωπικό.</td></tr>`}
         </tbody>
       </table></div>
     </div>
+
+    ${canFin?`<div class="card" style="padding:16px;margin-bottom:16px">
+      <div class="card-title" style="margin-bottom:4px">Μηνιαία Εξέλιξη Τζίρου</div>
+      <div style="font-size:11px;color:var(--text-2);margin-bottom:12px">Τελευταίοι 6 μήνες · μόνο ολοκληρωμένα ραντεβού</div>
+      <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px">
+        ${months.map(m=>{
+          const v = trendByMonth[m.key]||0;
+          return `<div style="display:flex;align-items:center;gap:10px">
+            <span style="width:56px;font-size:11px;color:var(--text-2);flex-shrink:0">${m.label}</span>
+            <div style="flex:1;height:16px;background:var(--surface-2);border-radius:6px;overflow:hidden">
+              <div style="height:100%;width:${Math.round(v/trendMax*100)}%;background:#185FA5;border-radius:6px;transition:.3s"></div>
+            </div>
+            <span style="width:80px;text-align:right;font-size:12px;font-weight:600;flex-shrink:0">${euro(v)}</span>
+          </div>`;
+        }).join('')}
+      </div>
+      <div class="table-wrap" style="margin-bottom:14px"><table>
+        <thead><tr><th>Ανά άτομο</th>${months.map(m=>`<th style="text-align:right">${m.label}</th>`).join('')}</tr></thead>
+        <tbody>
+          ${(S.ssvStaff||[]).map(p=>`<tr>
+            <td>${esc(p.full_name)}</td>
+            ${months.map(m=>`<td style="text-align:right">${euro((trendByStaffMonth[p.id]||{})[m.key]||0)}</td>`).join('')}
+          </tr>`).join('')}
+        </tbody>
+      </table></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Ανά κατηγορία</th>${months.map(m=>`<th style="text-align:right">${m.label}</th>`).join('')}</tr></thead>
+        <tbody>
+          ${trendCats.length?trendCats.map(cat=>`<tr>
+            <td>${esc(cat)}</td>
+            ${months.map(m=>`<td style="text-align:right">${euro((trendByCatMonth[cat]||{})[m.key]||0)}</td>`).join('')}
+          </tr>`).join(''):`<tr><td colspan="7" style="text-align:center;padding:12px;color:var(--text-2)">Δεν υπάρχουν ολοκληρωμένα ραντεβού στο 6μηνο.</td></tr>`}
+        </tbody>
+      </table></div>
+    </div>`:''}
 
     <div class="card" style="padding:16px">
       <div class="card-title" style="margin-bottom:10px">Ανά Υπηρεσία</div>
@@ -4541,6 +4788,11 @@ function modalNewAppt() {
           <option value="__custom__">✎ Άλλη (πληκτρολόγηση)...</option>
         </select>
         <input class="form-control" id="a-service-custom" placeholder="Όνομα υπηρεσίας" style="display:none;margin-top:6px"/>
+      </div>
+      <div class="form-group" id="a-package-wrap" style="display:none">
+        <label class="form-label">📦 Πακέτο Συνεδριών</label>
+        <select class="form-control" id="a-package"><option value="">Χωρίς πακέτο (κανονική χρέωση)</option></select>
+        <div id="a-package-hint" style="font-size:11px;color:var(--text-2);margin-top:4px"></div>
       </div>
       <div class="form-row">
         <div class="form-group"><label class="form-label">Διάρκεια (λεπτά)</label><input class="form-control" id="a-duration" type="number" value="60"/></div>
@@ -6201,7 +6453,7 @@ function bindModalEvents() {
       res.innerHTML = (rows || `<div style="padding:9px 12px;font-size:12px;color:var(--text-3)">Κανένα αποτέλεσμα</div>`) + newOpt;
       res.style.display='block';
       res.querySelectorAll('.pt-opt').forEach(el => {
-        el.onclick = () => { document.getElementById('a-patient-id').value=el.dataset.pid; ps.value=el.dataset.pname; res.style.display='none'; };
+        el.onclick = () => { document.getElementById('a-patient-id').value=el.dataset.pid; ps.value=el.dataset.pname; res.style.display='none'; _apptLoadPatientPackages(el.dataset.pid); };
         el.onmouseover = () => el.style.background='var(--surface)';
         el.onmouseout = () => el.style.background='';
       });
@@ -6230,6 +6482,55 @@ function bindModalEvents() {
     }, {once:false});
   }
 
+  // Πακέτα συνεδριών του επιλεγμένου ασθενή: γεμίζει το dropdown με όσα έχουν
+  // ακόμα υπόλοιπο, και προεπιλέγει αυτόματα όποιο ταιριάζει με την υπηρεσία.
+  window._apptPatientPackages = [];
+  window._apptLoadPatientPackages = async (pid) => {
+    const wrap = document.getElementById('a-package-wrap');
+    const sel = document.getElementById('a-package');
+    if (!wrap || !sel) return;
+    window._apptPatientPackages = [];
+    wrap.style.display = 'none';
+    sel.innerHTML = '<option value="">Χωρίς πακέτο (κανονική χρέωση)</option>';
+    if (!pid) return;
+    const [{data:pkgs}, {data:usedRows}] = await Promise.all([
+      sb.from('patient_packages').select('*').eq('patient_id',pid).order('purchased_at',{ascending:false}),
+      sb.from('appointments').select('package_id,status').eq('patient_id',pid).not('package_id','is',null),
+    ]);
+    if (!pkgs || !pkgs.length) return;
+    const usedBy = {};
+    (usedRows||[]).forEach(r=>{ if(r.status!=='cancelled') usedBy[r.package_id]=(usedBy[r.package_id]||0)+1; });
+    const active = pkgs.map(pkg=>({...pkg, used: usedBy[pkg.id]||0})).filter(pkg=>pkg.used < (pkg.total_sessions||6));
+    window._apptPatientPackages = active;
+    if (!active.length) return;
+    sel.innerHTML = '<option value="">Χωρίς πακέτο (κανονική χρέωση)</option>' +
+      active.map(pkg=>`<option value="${pkg.id}" data-svc="${esc(pkg.service_name||'')}">${esc(pkg.name)} — ${pkg.used}/${pkg.total_sessions||6} συνεδρίες</option>`).join('');
+    wrap.style.display = 'block';
+    _apptAutoPickPackage();
+  };
+  // Αν η επιλεγμένη υπηρεσία ταιριάζει με πακέτο που έχει υπόλοιπο → προεπιλογή
+  const _apptAutoPickPackage = () => {
+    const sel = document.getElementById('a-package');
+    const svcSel2 = document.getElementById('a-service');
+    if (!sel || !svcSel2 || sel.value) return;
+    const svcName = svcSel2.value==='__custom__' ? '' : svcSel2.value;
+    if (!svcName) return;
+    const match = (window._apptPatientPackages||[]).find(pkg=>pkg.service_name && normalizeGreek(pkg.service_name)===normalizeGreek(svcName));
+    if (match) { sel.value = match.id; sel.dispatchEvent(new Event('change')); }
+  };
+  const aPackageSel = document.getElementById('a-package');
+  if (aPackageSel) aPackageSel.addEventListener('change', () => {
+    const hint = document.getElementById('a-package-hint');
+    const pkg = (window._apptPatientPackages||[]).find(x=>x.id===aPackageSel.value);
+    if (pkg) {
+      // Συνεδρία πακέτου: προπληρωμένη — μηδενίζουμε την τιμή του ραντεβού για
+      // να μη διπλομετρηθεί ο τζίρος (μετράει στην αγορά του πακέτου).
+      document.getElementById('a-price').value = 0;
+      const after = pkg.used + 1;
+      hint.textContent = `Θα καταναλωθεί η συνεδρία ${after}/${pkg.total_sessions||6}` + (after >= (pkg.total_sessions||6) ? ' — ΤΕΛΕΥΤΑΙΑ του πακέτου!' : '') + ' · Τιμή ραντεβού: 0€ (προπληρωμένο).';
+    } else if (hint) hint.textContent = '';
+  });
+
   // Υπηρεσία: αυτόματη συμπλήρωση διάρκειας/τιμής από τον κατάλογο Υπηρεσιών,
   // εναλλαγή σε ελεύθερο πεδίο κειμένου για "Άλλη". Προσωπικό: φιλτράρει τη
   // λίστα υπηρεσιών σε όσες πραγματικά εκτελεί το επιλεγμένο άτομο (staff_services) —
@@ -6242,6 +6543,7 @@ function bindModalEvents() {
     if (aServiceCustom) aServiceCustom.style.display = aServiceSel.value==='__custom__' ? 'block' : 'none';
     if (opt && opt.dataset.duration) document.getElementById('a-duration').value = opt.dataset.duration;
     if (opt && opt.dataset.price) document.getElementById('a-price').value = opt.dataset.price;
+    _apptAutoPickPackage();
   });
   if (aTherapistSel) aTherapistSel.addEventListener('change', () => {
     const staffId = aTherapistSel.value;
@@ -6265,10 +6567,12 @@ function bindModalEvents() {
     const therapistSel = document.getElementById('a-therapist');
     const btn = document.getElementById('save-appt');
     btn.textContent='Αποθήκευση...'; btn.disabled=true;
+    const pkgSel = document.getElementById('a-package');
     const {error} = await sb.from('appointments').insert({
       clinic_id:clinicId(), patient_id:pid||null,
       service_name:serviceName,
       therapist_id: therapistSel ? (therapistSel.value||null) : null,
+      package_id: pkgSel && pkgSel.value ? pkgSel.value : null,
       start_time:timeWithTz,
       duration_minutes:parseInt(document.getElementById('a-duration').value)||60,
       price:parseFloat(document.getElementById('a-price').value)||null,
