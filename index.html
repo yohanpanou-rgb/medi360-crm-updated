@@ -570,6 +570,7 @@ async function logout() {
 function selectClinic(id) {
   S.selectedClinicId = id;
   S.clinic = S.allClinics.find(c=>c.id===id)||null;
+  S._apptRefsLoaded = false;
   localStorage.setItem('medi360_clinic',id);
   loadPageData();
   render();
@@ -4492,8 +4493,22 @@ function modalNewAppt() {
         <input type="hidden" id="a-patient-id"/>
       </div>
       <div class="form-row">
-        <div class="form-group"><label class="form-label">Υπηρεσία</label><input class="form-control" id="a-service" placeholder="π.χ. Laser"/></div>
+        <div class="form-group"><label class="form-label">Προσωπικό</label>
+          <select class="form-control" id="a-therapist">
+            <option value="">Χωρίς ανάθεση</option>
+            ${(S.apptStaffList||[]).map(p=>`<option value="${p.id}">${esc(p.full_name)}</option>`).join('')}
+          </select>
+        </div>
         <div class="form-group"><label class="form-label">Ημ/νία & Ώρα *</label><input class="form-control" id="a-time" type="datetime-local"/></div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Υπηρεσία</label>
+        <select class="form-control" id="a-service">
+          <option value="">Επίλεξε υπηρεσία...</option>
+          ${(S.apptServicesCatalog||[]).map(s=>`<option value="${esc(s.name)}" data-duration="${s.duration_minutes}" data-price="${s.price!=null?s.price:''}" data-staff="${(S.apptStaffServices||[]).filter(x=>x.service_id===s.id).map(x=>x.staff_id).join(',')}">${esc(s.name)}</option>`).join('')}
+          <option value="__custom__">✎ Άλλη (πληκτρολόγηση)...</option>
+        </select>
+        <input class="form-control" id="a-service-custom" placeholder="Όνομα υπηρεσίας" style="display:none;margin-top:6px"/>
       </div>
       <div class="form-row">
         <div class="form-group"><label class="form-label">Διάρκεια (λεπτά)</label><input class="form-control" id="a-duration" type="number" value="60"/></div>
@@ -4754,7 +4769,21 @@ function bindEvents() {
 
   // Modals trigger
   document.querySelectorAll('[data-modal]').forEach(el => {
-    el.onclick = (e) => { if(e) e.stopPropagation(); S.modal=el.dataset.modal; S.modalData = el.dataset.clinicId ? {clinicId: el.dataset.clinicId} : {}; render(); };
+    el.onclick = async (e) => {
+      if(e) e.stopPropagation();
+      const modal = el.dataset.modal;
+      if (modal==='new-appt' && !S._apptRefsLoaded) {
+        const cid = clinicId();
+        const [{data:svc}, {data:staffRows}, {data:ss}] = await Promise.all([
+          sb.from('services').select('*').eq('clinic_id',cid).eq('active',true).order('category').order('name'),
+          sb.from('profiles').select('*').eq('clinic_id',cid).in('role',['therapist','clinic_admin']).order('full_name'),
+          sb.from('staff_services').select('*').eq('clinic_id',cid),
+        ]);
+        S.apptServicesCatalog = svc||[]; S.apptStaffList = staffRows||[]; S.apptStaffServices = ss||[];
+        S._apptRefsLoaded = true;
+      }
+      S.modal=modal; S.modalData = el.dataset.clinicId ? {clinicId: el.dataset.clinicId} : {}; render();
+    };
   });
 
   // Save laser form detail
@@ -6165,17 +6194,45 @@ function bindModalEvents() {
     }, {once:false});
   }
 
+  // Υπηρεσία: αυτόματη συμπλήρωση διάρκειας/τιμής από τον κατάλογο Υπηρεσιών,
+  // εναλλαγή σε ελεύθερο πεδίο κειμένου για "Άλλη". Προσωπικό: φιλτράρει τη
+  // λίστα υπηρεσιών σε όσες πραγματικά εκτελεί το επιλεγμένο άτομο (staff_services) —
+  // αν δεν έχει καμία ανάθεση ακόμα, δείχνει όλες (δεν μπλοκάρει, μόνο βοηθάει).
+  const aServiceSel = document.getElementById('a-service');
+  const aServiceCustom = document.getElementById('a-service-custom');
+  const aTherapistSel = document.getElementById('a-therapist');
+  if (aServiceSel) aServiceSel.addEventListener('change', () => {
+    const opt = aServiceSel.selectedOptions[0];
+    if (aServiceCustom) aServiceCustom.style.display = aServiceSel.value==='__custom__' ? 'block' : 'none';
+    if (opt && opt.dataset.duration) document.getElementById('a-duration').value = opt.dataset.duration;
+    if (opt && opt.dataset.price) document.getElementById('a-price').value = opt.dataset.price;
+  });
+  if (aTherapistSel) aTherapistSel.addEventListener('change', () => {
+    const staffId = aTherapistSel.value;
+    const staffHasAssignments = (S.apptStaffServices||[]).some(x=>x.staff_id===staffId);
+    Array.from(aServiceSel ? aServiceSel.options : []).forEach(opt => {
+      if (opt.dataset.staff===undefined) return; // "Επίλεξε υπηρεσία..." / "Άλλη" — πάντα ορατές
+      const canDo = !staffId || !staffHasAssignments || opt.dataset.staff.split(',').includes(staffId);
+      opt.hidden = !canDo;
+      if (!canDo && opt.selected) { aServiceSel.value = ''; }
+    });
+  });
+
   // Save appointment
   const _sa=document.getElementById('save-appt');if(_sa)_sa.addEventListener('click', async () => {
     const pid = document.getElementById('a-patient-id').value;
     const time = document.getElementById('a-time').value;
     if (!time) return alert('Συμπλήρωσε ημερομηνία και ώρα');
     const timeWithTz = time.length===16 ? time+':00+03:00' : time+'+03:00'; // datetime-local: "YYYY-MM-DDTHH:MM"
+    const svcSel = document.getElementById('a-service');
+    const serviceName = svcSel.value==='__custom__' ? document.getElementById('a-service-custom').value.trim() : svcSel.value;
+    const therapistSel = document.getElementById('a-therapist');
     const btn = document.getElementById('save-appt');
     btn.textContent='Αποθήκευση...'; btn.disabled=true;
     const {error} = await sb.from('appointments').insert({
       clinic_id:clinicId(), patient_id:pid||null,
-      service_name:document.getElementById('a-service').value,
+      service_name:serviceName,
+      therapist_id: therapistSel ? (therapistSel.value||null) : null,
       start_time:timeWithTz,
       duration_minutes:parseInt(document.getElementById('a-duration').value)||60,
       price:parseFloat(document.getElementById('a-price').value)||null,
