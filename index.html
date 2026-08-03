@@ -2525,7 +2525,7 @@ function renderCalendar() {
                 data-drag-appt="${a.id}"
                 draggable="true"
                 style="position:absolute;left:3px;right:3px;top:${topPx}px;height:${heightPx}px;
-                  background:${hasConflict?'rgba(239,68,68,0.15)':hasNoConsent?'rgba(217,119,6,0.14)':c.bg};border-left:3px solid ${hasConflict?'#DC2626':hasNoConsent?'#D97706':c.border};${hasConflict?'outline:2px solid #DC2626;':hasNoConsent?'outline:2px dashed #D97706;':''}border-radius:6px;
+                  background:${hasConflict?'rgba(239,68,68,0.15)':c.bg};border-left:3px solid ${hasConflict?'#DC2626':c.border};${hasConflict?'outline:2px solid #DC2626;':''}border-radius:6px;
                   padding:3px 6px;cursor:pointer;overflow:hidden;z-index:${hasConflict||hasNoConsent?6:5};transition:.15s"
                 onmouseover="showCalTooltip(this, event)"
                 onmouseout="hideCalTooltip(this)"
@@ -2541,9 +2541,9 @@ function renderCalendar() {
                 data-status="${a.status||'confirmed'}"
                 data-consent-missing="${missingGrp?CONSENT_GROUP_LABEL[missingGrp]:''}">
                 <div style="font-size:10px;font-weight:500;color:${c.text};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
-                  ${hasNoConsent?'⚠ ':''}${isVip?'★ ':''}${esc(a.patients&&a.patients.full_name||'—')}
+                  ${hasNoConsent?'<span style="font-size:13px;font-weight:700;color:#D97706">⚠</span> ':''}${isVip?'★ ':''}${esc(a.patients&&a.patients.full_name||'—')}
                 </div>
-                ${hasNoConsent&&heightPx>30?`<div style="font-size:8px;font-weight:700;color:#B45309;white-space:nowrap;overflow:hidden">⚠ ΧΩΡΙΣ ΣΥΝΑΙΝΕΣΗ ${CONSENT_GROUP_LABEL[missingGrp]}</div>`:''}
+                ${hasNoConsent&&heightPx>30?`<div style="font-size:9px;font-weight:700;color:#D97706;white-space:nowrap;overflow:hidden">⚠ ΧΩΡΙΣ ΣΥΝΑΙΝΕΣΗ ${CONSENT_GROUP_LABEL[missingGrp]}</div>`:''}
                 ${heightPx>(hasNoConsent?58:30)?`<div style="font-size:9px;color:${c.text};opacity:0.8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(a.service_name||'')}</div>`:''}
                 ${heightPx>44?`<div style="font-size:9px;color:${c.text};opacity:0.7">${startTime}${!gdpr?' ⚠':''}</div>`:''}
               </div>`;
@@ -2651,10 +2651,7 @@ function renderCalendar() {
         <div style="width:10px;height:10px;border-radius:2px;background:${bg};border-left:3px solid ${c}"></div>
         <span style="color:var(--text-2)">${l}</span>
       </div>`).join('')}
-      <div style="display:flex;align-items:center;gap:4px">
-        <div style="width:10px;height:10px;border-radius:2px;background:rgba(217,119,6,0.14);border-left:3px solid #D97706;outline:1.5px dashed #D97706;outline-offset:1px"></div>
-        <span style="color:var(--text-2)">⚠ Χωρίς Συναίνεση</span>
-      </div>
+      <div style="display:flex;align-items:center;gap:4px"><span style="font-size:13px;font-weight:700;color:#D97706">⚠</span><span style="color:var(--text-2)">Χωρίς Συναίνεση</span></div>
       <div style="display:flex;align-items:center;gap:4px"><span style="color:#D85A30">⚠</span><span style="color:var(--text-2)">Χωρίς GDPR</span></div>
       <div style="display:flex;align-items:center;gap:4px"><span style="color:#534AB7">★</span><span style="color:var(--text-2)">VIP</span></div>
     </div>
