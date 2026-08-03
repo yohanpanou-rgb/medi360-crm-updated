@@ -408,6 +408,37 @@ function isBodyOrHairRemovalService(serviceName) {
   return /alexandrite|laser|αποτριχωσ|ηλεκτρολυσ|μασαζ|massage|drainage|λεμφικ|vacuum|θερμοκουβ|panotherm|mydren|σωμα|πλατ/.test(s);
 }
 
+// Σύγκριση ονομάτων προσωπικού ανεξαρτήτως αλφαβήτου/τόνων/κεφαλαίων —
+// στη βάση συνυπάρχουν ελληνικές ("Λίνα", "Χριστιάνα") και λατινικές
+// ("Lina Panou") γραφές του ίδιου προσώπου, και τα ιστορικά ραντεβού
+// αποθηκεύουν το όνομα ως ελεύθερο κείμενο στα notes ("Προσωπικό: Λίνα").
+function greekToLatinKey(s) {
+  const m = {'α':'a','β':'v','γ':'g','δ':'d','ε':'e','ζ':'z','η':'i','θ':'th','ι':'i','κ':'k','λ':'l','μ':'m','ν':'n','ξ':'x','ο':'o','π':'p','ρ':'r','σ':'s','ς':'s','τ':'t','υ':'y','φ':'f','χ':'ch','ψ':'ps','ω':'o'};
+  return (s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .split('').map(c=>m[c]||c).join('')
+    .replace(/[^a-z0-9]+/g,' ').trim();
+}
+function sameStaffName(a, b) {
+  const ka = greekToLatinKey(a), kb = greekToLatinKey(b);
+  if (!ka || !kb) return false;
+  if (ka === kb) return true;
+  // Ταίριασμα με το πρώτο όνομα: "lina" ↔ "lina panou"
+  return ka.split(' ')[0] === kb.split(' ')[0];
+}
+// Το προσωπικό ενός ραντεβού: από therapist_id αν υπάρχει, αλλιώς από τα
+// notes (δύο γνωστές μορφές — "Προσωπικό: X" και "booking247_id:NNN | X").
+function apptStaffName(a, staffList) {
+  if (a.therapist_id) {
+    const st = (staffList||[]).find(s=>s.id===a.therapist_id);
+    if (st) return st.full_name;
+  }
+  const notes = a.notes||'';
+  const m = notes.match(/Προσωπικό:\s*([^\n·|]+)/i);
+  if (m) return m[1].trim();
+  const m2 = notes.match(/booking247_id:\S+\s*\|\s*([^\n·|]+)/i);
+  return m2 ? m2[1].trim() : null;
+}
+
 // Η ομάδα συναίνεσης είναι σχετική με τον ασθενή μόνο αν έχει κλεισμένο (μη ακυρωμένο)
 // ή ολοκληρωμένο ραντεβού σε αυτή την κατηγορία υπηρεσίας — αλλιώς δεν έχει νόημα
 // να δείχνουμε προειδοποίηση για συναίνεση υπηρεσίας που ποτέ δεν έκανε/έκλεισε.
@@ -851,8 +882,11 @@ async function loadPageData() {
       S.ssvStatsRange = { from: firstOfMonth.toISOString().slice(0,10), to: now.toISOString().slice(0,10) };
     }
     const sFrom = S.ssvStatsRange.from+'T00:00:00', sTo = S.ssvStatsRange.to+'T23:59:59';
-    const {data:statsApts} = await sb.from('appointments').select('therapist_id,service_name,price,duration_minutes,status,start_time').eq('clinic_id',cid).gte('start_time',sFrom).lte('start_time',sTo);
+    const {data:statsApts} = await sb.from('appointments').select('therapist_id,service_name,price,duration_minutes,status,start_time,notes').eq('clinic_id',cid).gte('start_time',sFrom).lte('start_time',sTo);
     S.ssvStatsAppointments = statsApts||[];
+    // Οι λίστες υπηρεσιών/προσωπικού άλλαξαν πιθανώς — ανανέωσε το cache του
+    // modal "Νέο Ραντεβού" την επόμενη φορά που θα ανοίξει.
+    S._apptRefsLoaded = false;
   }
   // Επιτρέπει ξανά το auto-scroll στην τρέχουσα ώρα ΜΕΤΑ τη φόρτωση δεδομένων —
   // αν γινόταν νωρίτερα (πριν τα awaits), «κατανάλωνε» το flag σε ένα πρόωρο render με
@@ -2421,23 +2455,9 @@ function renderCalendar() {
   const PX_PER_MIN = 1.2;
   const HOUR_H = 60 * PX_PER_MIN;
 
-  // Θεραπευτής ραντεβού: από therapist_id (αν υπάρχει) ή από τις σημειώσεις.
-  // Δύο γνωστές μορφές σημειώσεων αποθηκεύουν το προσωπικό διαφορετικά:
-  //  - "Προσωπικό: X" — gmail-auto-sync, booking247-ingest, το CSV import εργαλείο
-  //  - "booking247_id:NNN | X" — ένα άλλο (deployed αλλά όχι στο repo) sync pipeline
-  // Χωρίς και τα δύο patterns, ραντεβού από τη 2η πηγή καταλήγουν πάντα στη
-  // στήλη "Μη ανατεθειμένα" παρότι η σημείωση περιέχει το σωστό όνομα.
-  const apptTherapist = (a) => {
-    if (a.therapist_id) {
-      const st = staff.find(s=>s.id===a.therapist_id);
-      if (st) return st.full_name;
-    }
-    const notes = a.notes||'';
-    const m = notes.match(/Προσωπικό:\s*([^\n·|]+)/i);
-    if (m) return m[1].trim();
-    const m2 = notes.match(/booking247_id:\S+\s*\|\s*([^\n·|]+)/i);
-    return m2 ? m2[1].trim() : null;
-  };
+  // Θεραπευτής ραντεβού: κοινός helper (therapist_id → profile, αλλιώς notes)
+  // ώστε Πρόγραμμα και Στατιστικά να συμφωνούν πάντα στην ίδια αντιστοίχιση.
+  const apptTherapist = (a) => apptStaffName(a, staff);
 
   // Στήλες θεραπευτών: ΔΥΝΑΜΙΚΑ από τα ραντεβού της ημέρας — όχι από τη λίστα users.
   // (Οι users αφορούν tiers πρόσβασης/permissions, όχι το πρόγραμμα.)
@@ -2446,7 +2466,10 @@ function renderCalendar() {
 
   // Σταθερές στήλες θεραπευτών — πάντα ορατές με αυτή τη σειρά
   const FIXED_THERAPISTS = ['Λίνα','Χριστιάνα','Αθανασία','Νάνσυ'];
-  const canonTherapist = (t) => FIXED_THERAPISTS.find(f=>norm(f)===norm(t)) || t;
+  // sameStaffName: ταιριάζει και διαφορετικές γραφές του ίδιου προσώπου
+  // (π.χ. profile "Lina Panou" ↔ στήλη "Λίνα") ώστε ραντεβού με therapist_id
+  // να μην ανοίγουν δεύτερη, διπλότυπη στήλη δίπλα στη σταθερή.
+  const canonTherapist = (t) => FIXED_THERAPISTS.find(f=>sameStaffName(f,t)) || t;
   const dayTherapistsRaw = [...new Set(dayAppts.map(apptTherapist).filter(Boolean).map(canonTherapist))];
   const extraTherapists = dayTherapistsRaw.filter(t=>!FIXED_THERAPISTS.includes(t)).sort((a,b)=>a.localeCompare(b,'el'));
 
@@ -3777,8 +3800,17 @@ function renderSsvStatsTab() {
   const range = S.ssvStatsRange||{from:'',to:''};
   const apts = S.ssvStatsAppointments||[];
   const byStaff = {};
+  // Αντιστοίχιση ραντεβού → μέλος προσωπικού: πρώτα από therapist_id, αλλιώς
+  // από το όνομα στα notes ("Προσωπικό: X" — έτσι αποθηκεύουν το προσωπικό όλα
+  // τα ιστορικά ραντεβού του booking247 sync). Χωρίς αυτό το fallback, τα
+  // στατιστικά ανά άτομο θα έδειχναν 0 για όλο το ιστορικό.
   apts.forEach(a => {
-    const key = a.therapist_id||'unassigned';
+    let key = a.therapist_id;
+    if (!key) {
+      const nm = apptStaffName(a, S.ssvStaff);
+      const st = nm ? (S.ssvStaff||[]).find(p=>sameStaffName(p.full_name, nm)) : null;
+      key = st ? st.id : 'unassigned';
+    }
     byStaff[key] = byStaff[key] || {count:0, completed:0, revenue:0};
     byStaff[key].count++;
     if (a.status==='completed') { byStaff[key].completed++; byStaff[key].revenue += (a.price||0); }
@@ -5111,9 +5143,13 @@ function bindEvents() {
       const newNotes = /Προσωπικό:\s*[^\n·|]+/.test(notes)
         ? notes.replace(/Προσωπικό:\s*[^\n·|]+/, 'Προσωπικό: '+newTherapist)
         : (notes ? notes+'\n' : '') + 'Προσωπικό: '+newTherapist;
-      const {error} = await sb.from('appointments').update({notes:newNotes}).eq('id', aid);
+      // Ενημέρωση ΚΑΙ του therapist_id — το apptTherapist το προτιμά από τα notes,
+      // οπότε αν έμενε το παλιό id η κάρτα θα επέστρεφε στην προηγούμενη στήλη.
+      const stMatch = (S.staff||[]).find(s=>sameStaffName(s.full_name, newTherapist));
+      const {error} = await sb.from('appointments').update({notes:newNotes, therapist_id: stMatch?stMatch.id:null}).eq('id', aid);
       if (error) { alert('Σφάλμα μεταφοράς: '+error.message); return; }
       appt.notes = newNotes;
+      appt.therapist_id = stMatch?stMatch.id:null;
       render();
     });
   });
