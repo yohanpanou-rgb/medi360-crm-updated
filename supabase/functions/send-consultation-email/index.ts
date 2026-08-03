@@ -45,6 +45,7 @@ interface ConsultationEmailInput {
   skinLine?: string;
   expectedResults?: string[];
   inClinicSteps?: InClinicStep[];
+  bodySteps?: InClinicStep[];
   homecareSteps?: InClinicStep[];
   additionalNotes?: string;
   bookingLink?: string;
@@ -57,7 +58,7 @@ interface ConsultationEmailInput {
 
 const COLORS = {
   bgOuter: '#050811', bgContainer: '#0c1b2e', bgTop: '#101a33', bgIntro: '#1B2647',
-  bgCardDark: '#1B2647', bgTeal: '#0B6E7A', bgPurple: '#6A1B7B', bgGold: '#D28B1F',
+  bgCardDark: '#1B2647', bgTeal: '#0B6E7A', bgPurple: '#6A1B7B', bgGold: '#D28B1F', bgBody: '#4A2942',
   textWhite: '#FFFFFF', textDark: '#0B0B0B', linkGold: '#FFDF8C', ctaBg: '#FFDF8C', ctaText: '#003F87',
 };
 
@@ -87,6 +88,9 @@ function renderConsultationEmailHtml(d: ConsultationEmailInput) {
 
   const inClinicSections = (d.inClinicSteps || [])
     .map((s, i) => section('In-clinic', `${i + 1}) ${s.label}`, fmtList(s.items), COLORS.bgCardDark))
+    .join('');
+  const bodySections = (d.bodySteps || [])
+    .map((s) => section('Θεραπεία σώματος · προαιρετικό', s.label, fmtList(s.items), COLORS.bgBody))
     .join('');
   const homecareSections = (d.homecareSteps || [])
     .map((s) => section('Homecare', s.label, fmtList(s.items), COLORS.bgTeal))
@@ -123,6 +127,7 @@ ${gmailExpandFix}
 ${section('Skin profile', 'Τύπος δέρματος / κύρια ανάγκη', d.skinLine ? `<div style="margin:0;color:${COLORS.textWhite};-webkit-text-fill-color:${COLORS.textWhite};">${esc(d.skinLine)}</div>` : '', COLORS.bgPurple)}
 ${section('Expected results', 'Τι να περιμένετε', fmtList(d.expectedResults || []), COLORS.bgGold, COLORS.textDark, COLORS.textDark)}
 ${inClinicSections}
+${bodySections}
 ${homecareSections}
 ${d.additionalNotes ? section('Notes', 'Σημειώσεις', `<div style="color:${COLORS.textWhite};-webkit-text-fill-color:${COLORS.textWhite};">${esc(d.additionalNotes)}</div>`, COLORS.bgCardDark) : ''}
 </table>
@@ -202,6 +207,7 @@ Deno.serve(async (req: Request) => {
       skinLine: body.skin_line,
       expectedResults: body.expected_results || [],
       inClinicSteps: body.in_clinic_steps || [],
+      bodySteps: body.body_steps || [],
       homecareSteps: body.homecare_steps || [],
       additionalNotes: body.additional_notes,
       bookingLink: body.booking_link,
