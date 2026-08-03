@@ -782,6 +782,16 @@ async function loadPageData() {
         const {data:lc} = await sb.from('laser_consents').select('*').eq('patient_id', data.patient_id).order('signed_at',{ascending:false}).limit(1);
         S.laserPatientConsent = (lc&&lc[0])||null;
       }
+      // Πακέτα συνδεδεμένα με αυτή τη φόρμα — δείχνουμε το υπόλοιπό τους στη
+      // φόρμα (used = μη ακυρωμένα ραντεβού με το package_id τους).
+      S.laserFormPackages = [];
+      const {data:linkedPkgs} = await sb.from('patient_packages').select('*').eq('laser_form_id', S.laserFormId);
+      if (linkedPkgs && linkedPkgs.length) {
+        const {data:pkgAppts} = await sb.from('appointments').select('package_id,status').in('package_id', linkedPkgs.map(p=>p.id));
+        const usedBy = {};
+        (pkgAppts||[]).forEach(r=>{ if(r.status!=='cancelled') usedBy[r.package_id]=(usedBy[r.package_id]||0)+1; });
+        S.laserFormPackages = linkedPkgs.map(pkg=>({...pkg, used: usedBy[pkg.id]||0}));
+      }
     }
   }
   if (S.page==='sms') {
@@ -2002,6 +2012,27 @@ function renderPatientDetail() {
               <div style="height:7px;background:var(--border-2);border-radius:99px;overflow:hidden;margin-top:8px">
                 <div style="height:100%;width:${pct}%;background:${barColor};border-radius:99px"></div>
               </div>
+              ${(()=>{
+                const fs = packageFormSessions(pkg);
+                if (!fs) return '';
+                return `<div style="margin-top:10px;border-top:1px dashed var(--border);padding-top:8px">
+                  <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px">
+                    <span style="font-size:10px;font-weight:700;color:#C4618A;text-transform:uppercase;letter-spacing:.4px">Συνεδρίες Φόρμας Laser (μέρη σώματος & ρυθμίσεις)</span>
+                    <button class="btn btn-ghost btn-sm" onclick="loadLaserForm('${fs.form.id}')" style="color:#C4618A;font-size:11px">Άνοιγμα Φόρμας →</button>
+                  </div>
+                  ${fs.rows.length?`<div style="display:flex;flex-direction:column;gap:3px">
+                    ${fs.rows.map(r=>`<div style="font-size:11.5px;color:var(--text);display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+                      <span style="font-weight:700;color:#C4618A">Σ${r.num}</span>
+                      <span>${new Date(r.date+'T00:00:00').toLocaleDateString('el-GR')}</span>
+                      <span style="background:#F5E8EF;color:#C4618A;border-radius:6px;padding:1px 7px;font-size:10.5px">${esc(r.body_part)}</span>
+                      ${r.spot_size?`<span style="color:var(--text-2)">Spot ${esc(r.spot_size)}</span>`:''}
+                      ${r.energy?`<span style="color:var(--text-2)">${esc(r.energy)} j/cm²</span>`:''}
+                      ${r.dcd?`<span style="color:var(--text-2)">DCD ${esc(r.dcd)}</span>`:''}
+                      ${r.notes?`<span style="color:var(--text-3);font-style:italic">${esc(r.notes)}</span>`:''}
+                    </div>`).join('')}
+                  </div>`:`<div style="font-size:11.5px;color:var(--text-2)">Δεν έχουν καταγραφεί ακόμα συνεδρίες στη φόρμα — συμπληρώνονται στους Πίνακες Θεραπείας της.</div>`}
+                </div>`;
+              })()}
             </div>`;}).join('')}
           </div>` : `<div style="padding:6px 0;color:var(--text-2);font-size:12.5px">Δεν υπάρχουν πακέτα. Τα πακέτα (π.χ. Laser x6) παρακολουθούν αυτόματα πόσες συνεδρίες έχουν γίνει — κάθε ραντεβού που συνδέεται με το πακέτο μετράει μία.</div>`}
         </div>
@@ -2865,7 +2896,7 @@ function renderLaserDetail() {
 
   return `<div class="page">
     <!-- Header -->
-    <div style="background:linear-gradient(135deg,#C4618A,#e891b5);padding:16px 24px;border-radius:12px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+    <div style="background:linear-gradient(135deg,#C4618A,#e891b5);padding:16px 24px;border-radius:12px;margin-bottom:${(S.laserFormPackages&&S.laserFormPackages.length)?'10px':'20px'};display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
       <div>
         <div style="font-size:11px;font-weight:700;color:rgba(255,255,255,0.7);letter-spacing:1px;text-transform:uppercase">${esc(S.clinic&&S.clinic.name||'medi360')}</div>
         <div style="font-size:16px;font-weight:700;color:#fff;margin-top:2px">ΚΑΡΤΕΛΑ ΠΕΛΑΤΗ - LASER ΑΠΟΤΡΙΧΩΣΗΣ</div>
@@ -2876,6 +2907,23 @@ function renderLaserDetail() {
         <button class="btn btn-sm" id="save-laser-form" style="background:#fff;color:#C4618A;font-weight:600">💾 Αποθήκευση</button>
       </div>
     </div>
+
+    ${(S.laserFormPackages&&S.laserFormPackages.length)?`
+    <!-- Συνδεδεμένα πακέτα συνεδριών -->
+    <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px">
+      ${S.laserFormPackages.map(pkg=>{
+        const total = pkg.total_sessions||6;
+        const done = pkg.used>=total, lastOne = pkg.used===total-1;
+        const c = done?'#8A8FA3':lastOne?'#D97706':'#0F6E56';
+        return `<div style="display:flex;align-items:center;gap:10px;background:var(--white);border:1px solid var(--border-2);border-left:3px solid ${c};border-radius:10px;padding:8px 14px;flex-wrap:wrap">
+          <span style="font-size:13px">📦</span>
+          <span style="font-size:12.5px;font-weight:600;cursor:pointer;color:var(--blue)" onclick="loadPatientDetail('${pkg.patient_id}')">${esc(pkg.name)}</span>
+          <div style="flex:1;min-width:80px;height:6px;background:var(--border-2);border-radius:99px;overflow:hidden"><div style="height:100%;width:${Math.min(100,Math.round(pkg.used/total*100))}%;background:${c};border-radius:99px"></div></div>
+          <span style="font-size:12.5px;font-weight:700;color:${c}">${pkg.used} / ${total}</span>
+          ${done?`<span style="font-size:10px;font-weight:700;color:#53586B;background:#E4E6ED;padding:2px 8px;border-radius:8px">ΟΛΟΚΛΗΡΩΘΗΚΕ</span>`
+            :lastOne?`<span style="font-size:10px;font-weight:700;color:#854F0B;background:#FAEEDA;padding:2px 8px;border-radius:8px">⚠ ΤΕΛΕΥΤΑΙΑ ΣΥΝΕΔΡΙΑ</span>`:''}
+        </div>`;}).join('')}
+    </div>`:''}
 
     <!-- Patient info -->
     <div class="card" style="padding:20px;margin-bottom:16px;border-top:3px solid #C4618A">
@@ -3664,6 +3712,25 @@ function packageUsedSessions(pkg) {
   return appts.filter(a=>a.package_id===pkg.id && a.status!=='cancelled').length;
 }
 
+// Καταγεγραμμένες συνεδρίες της συνδεδεμένης Φόρμας Laser: μία γραμμή ανά
+// συμπληρωμένη συνεδρία περιοχής, με μέρος σώματος + ρυθμίσεις μηχανήματος.
+function packageFormSessions(pkg) {
+  if (!pkg.laser_form_id) return null;
+  const form = (S.laserForms||[]).find(f=>f.id===pkg.laser_form_id);
+  if (!form) return null;
+  const regions = (form.machine_settings&&form.machine_settings.regions)||[];
+  const rows = [];
+  regions.forEach(r => {
+    if (!r.body_part) return;
+    (r.sessions||[]).forEach((s,si) => {
+      if (!s || !s.date) return;
+      rows.push({num: si+1, date: s.date, body_part: r.body_part, spot_size: s.spot_size||'', energy: s.energy||'', dcd: s.dcd||'', notes: s.notes||''});
+    });
+  });
+  rows.sort((a,b)=>a.date.localeCompare(b.date));
+  return {form, rows};
+}
+
 function openPackageModal() {
   const p = S.patientDetail; if (!p) return;
   const laserSvcs = (S.ssvServices||[]).filter(s=>/laser|alexandrite/i.test(s.name));
@@ -3689,6 +3756,14 @@ function openPackageModal() {
         <div class="form-group"><label class="form-label">Τιμή πακέτου (€)</label><input class="form-control" type="number" id="pkg-price" placeholder="προαιρετικό"/></div>
       </div>
       <div class="form-group"><label class="form-label">Ημ/νία αγοράς</label><input class="form-control" type="date" id="pkg-date" value="${new Date().toISOString().slice(0,10)}"/></div>
+      ${(S.laserForms&&S.laserForms.length)?`
+      <div class="form-group"><label class="form-label">Σύνδεση με Φόρμα Laser</label>
+        <select class="form-control" id="pkg-laser-form">
+          <option value="">— Χωρίς σύνδεση —</option>
+          ${S.laserForms.map(lf=>`<option value="${lf.id}">${new Date(lf.created_at).toLocaleDateString('el-GR')} · ${esc((lf.body_parts||[]).slice(0,3).join(', ')||'χωρίς περιοχές')}</option>`).join('')}
+        </select>
+        <div style="font-size:11px;color:var(--text-2);margin-top:4px">Το πακέτο θα δείχνει τις συνεδρίες της φόρμας (ημερομηνίες, μέρη σώματος, ρυθμίσεις μηχανήματος).</div>
+      </div>`:''}
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
         <button class="btn btn-ghost" onclick="document.getElementById('pkg-overlay').remove()">Ακύρωση</button>
         <button class="btn btn-primary" onclick="savePackage('${p.id}')">Αποθήκευση</button>
@@ -3703,12 +3778,18 @@ function openPackageModal() {
       if (sel && data) sel.innerHTML = '<option value="">— Χωρίς συγκεκριμένη υπηρεσία —</option>' + data.map(s=>`<option value="${esc(s.name)}">${esc(s.name)}</option>`).join('');
     });
   }
-  // Αυτόματο όνομα από την υπηρεσία, αν ο χρήστης δεν έχει γράψει δικό του
+  // Αυτόματο όνομα από την υπηρεσία, αν ο χρήστης δεν έχει γράψει δικό του —
+  // και αυτόματη πρόταση σύνδεσης με την πιο πρόσφατη Φόρμα Laser όταν η
+  // υπηρεσία είναι laser (η λίστα S.laserForms είναι ήδη ταξινομημένη desc).
   const svcSel = document.getElementById('pkg-service');
   svcSel.addEventListener('change', () => {
     const nameEl = document.getElementById('pkg-name');
     const totalEl = document.getElementById('pkg-total');
     if (svcSel.value && !nameEl.dataset.userEdited) nameEl.value = svcSel.value + ' x' + (totalEl.value||6);
+    const lfSel = document.getElementById('pkg-laser-form');
+    if (lfSel && !lfSel.value && /laser|alexandrite/i.test(svcSel.value) && (S.laserForms||[]).length) {
+      lfSel.value = S.laserForms[0].id;
+    }
   });
   document.getElementById('pkg-name').addEventListener('input', function(){ this.dataset.userEdited='1'; });
 }
@@ -3716,6 +3797,7 @@ function openPackageModal() {
 async function savePackage(patientId) {
   const name = document.getElementById('pkg-name').value.trim();
   if (!name) { alert('Γράψε όνομα πακέτου.'); return; }
+  const lfSel = document.getElementById('pkg-laser-form');
   const {error} = await sb.from('patient_packages').insert({
     clinic_id: clinicId(), patient_id: patientId,
     name,
@@ -3723,6 +3805,7 @@ async function savePackage(patientId) {
     total_sessions: parseInt(document.getElementById('pkg-total').value)||6,
     price: parseFloat(document.getElementById('pkg-price').value)||null,
     purchased_at: document.getElementById('pkg-date').value||new Date().toISOString().slice(0,10),
+    laser_form_id: lfSel && lfSel.value ? lfSel.value : null,
   });
   if (error) { alert('Σφάλμα: '+error.message); return; }
   const ov = document.getElementById('pkg-overlay'); if (ov) ov.remove();
