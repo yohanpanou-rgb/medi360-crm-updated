@@ -7805,6 +7805,7 @@ async function saveGroupConsent(groupKey) {
     clinic_id: clinicId(),
     patient_id: p.id,
     consent_group: g.dbKey,
+    service_name: g.title,
     signed_at: new Date().toISOString(),
     signature_data: cv.toDataURL('image/png'),
     photo_consent: photo ? photo.checked : false,
