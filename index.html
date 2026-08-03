@@ -3618,9 +3618,86 @@ function renderSsvStaffTab() {
 
 const SSV_DAYS = ['Κυριακή','Δευτέρα','Τρίτη','Τετάρτη','Πέμπτη','Παρασκευή','Σάββατο'];
 
+function renderSsvInstituteHoursCard() {
+  const bh = (S.clinic&&S.clinic.settings&&S.clinic.settings.business_hours)||{};
+  const schedule = bh.schedule||[];
+  const closedDates = bh.closed_dates||[];
+  const byDay = {}; schedule.forEach(r=>byDay[r.day_of_week]=r);
+  return `<div class="card" style="padding:16px;margin-bottom:16px">
+    <div class="card-title" style="margin-bottom:10px">Ωράριο Λειτουργίας Ινστιτούτου</div>
+    ${SSV_DAYS.map((d,i)=>{
+      const r = byDay[i];
+      const open = r ? r.is_open : (i!==0 && i!==1);
+      return `<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border-2);flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:6px;width:120px;font-size:12px;cursor:pointer">
+          <input type="checkbox" class="ssv-inst-open" data-day="${i}" ${open?'checked':''}/> ${d}
+        </label>
+        <input class="form-control ssv-inst-start" data-day="${i}" type="time" value="${r&&r.start?r.start:'10:00'}" style="max-width:110px"/>
+        <span style="color:var(--text-2)">–</span>
+        <input class="form-control ssv-inst-end" data-day="${i}" type="time" value="${r&&r.end?r.end:'19:30'}" style="max-width:110px"/>
+      </div>`;
+    }).join('')}
+    <button class="btn btn-primary btn-sm" style="margin-top:12px" onclick="saveInstituteHours()">Αποθήκευση Ωραρίου Ινστιτούτου</button>
+
+    <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border-2)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px">Ειδικές Κλειστές Ημέρες</div>
+        <button class="btn btn-ghost btn-sm" onclick="addInstituteClosedDate()">+ Προσθήκη</button>
+      </div>
+      ${closedDates.length?closedDates.slice().sort().map(dt=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border-2);font-size:12px">
+        <span>${new Date(dt+'T00:00:00').toLocaleDateString('el-GR')}</span>
+        <button class="btn btn-ghost btn-sm" onclick="removeInstituteClosedDate('${dt}')" style="color:var(--red)">🗑</button>
+      </div>`).join(''):'<div style="color:var(--text-2);font-size:12px">Καμία καταχώρηση.</div>'}
+    </div>
+  </div>`;
+}
+
+async function saveInstituteHours() {
+  const schedule = [];
+  for (let d=0; d<7; d++) {
+    const openEl = document.querySelector(`.ssv-inst-open[data-day="${d}"]`);
+    const startEl = document.querySelector(`.ssv-inst-start[data-day="${d}"]`);
+    const endEl = document.querySelector(`.ssv-inst-end[data-day="${d}"]`);
+    schedule.push({day_of_week:d, is_open:openEl.checked, start:startEl.value, end:endEl.value});
+  }
+  const bh = Object.assign({}, (S.clinic&&S.clinic.settings&&S.clinic.settings.business_hours)||{}, {schedule});
+  const settings = Object.assign({}, (S.clinic&&S.clinic.settings)||{}, {business_hours: bh});
+  const {error} = await sb.from('clinics').update({settings}).eq('id', clinicId());
+  if (error) { alert('Σφάλμα: '+error.message); return; }
+  if (S.clinic) S.clinic.settings = settings;
+  render();
+}
+
+function addInstituteClosedDate() {
+  const d = prompt('Ημερομηνία κλειστής ημέρας (ΕΕΕΕ-ΜΜ-ΗΗ):');
+  if (!d) return;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) { alert('Μη έγκυρη μορφή ημερομηνίας. Χρησιμοποίησε ΕΕΕΕ-ΜΜ-ΗΗ.'); return; }
+  const bh = (S.clinic&&S.clinic.settings&&S.clinic.settings.business_hours)||{};
+  const dates = new Set(bh.closed_dates||[]); dates.add(d);
+  const newBh = Object.assign({}, bh, {closed_dates:[...dates]});
+  const settings = Object.assign({}, (S.clinic&&S.clinic.settings)||{}, {business_hours:newBh});
+  sb.from('clinics').update({settings}).eq('id',clinicId()).then(({error}) => {
+    if (error) { alert('Σφάλμα: '+error.message); return; }
+    if (S.clinic) S.clinic.settings = settings;
+    render();
+  });
+}
+
+function removeInstituteClosedDate(d) {
+  const bh = (S.clinic&&S.clinic.settings&&S.clinic.settings.business_hours)||{};
+  const dates = (bh.closed_dates||[]).filter(x=>x!==d);
+  const newBh = Object.assign({}, bh, {closed_dates:dates});
+  const settings = Object.assign({}, (S.clinic&&S.clinic.settings)||{}, {business_hours:newBh});
+  sb.from('clinics').update({settings}).eq('id',clinicId()).then(({error}) => {
+    if (error) { alert('Σφάλμα: '+error.message); return; }
+    if (S.clinic) S.clinic.settings = settings;
+    render();
+  });
+}
+
 function renderSsvScheduleTab() {
   const staff = S.ssvStaff||[];
-  if (!staff.length) return `<div class="card" style="padding:20px;text-align:center;color:var(--text-2)">Δεν υπάρχει προσωπικό σε αυτή την κλινική ακόμα. Πρόσθεσε από τη <a href="#" onclick="goToUsersSettings();return false" style="color:var(--blue)">Διαχείριση Χρηστών</a>.</div>`;
+  if (!staff.length) return `${renderSsvInstituteHoursCard()}<div class="card" style="padding:20px;text-align:center;color:var(--text-2)">Δεν υπάρχει προσωπικό σε αυτή την κλινική ακόμα. Πρόσθεσε από τη <a href="#" onclick="goToUsersSettings();return false" style="color:var(--blue)">Διαχείριση Χρηστών</a>.</div>`;
   const sel = staff.find(p=>p.id===S.ssvSelectedStaffId) || staff[0];
   const schedByDay = {};
   (S.ssvSchedules||[]).filter(r=>r.staff_id===sel.id).forEach(r=>schedByDay[r.day_of_week]=r);
@@ -3632,7 +3709,8 @@ function renderSsvScheduleTab() {
   const remaining = Math.max(0, quota - usedDays);
   const TYPE_LABEL = {vacation:'Διακοπές', sick:'Αναρρωτική', other:'Άλλο'};
 
-  return `<div style="display:grid;grid-template-columns:220px 1fr;gap:16px" class="dash-grid">
+  return `${renderSsvInstituteHoursCard()}
+  <div style="display:grid;grid-template-columns:220px 1fr;gap:16px" class="dash-grid">
     <div class="card" style="padding:8px;height:fit-content">
       ${staff.map(p=>`<button class="btn" style="width:100%;justify-content:flex-start;background:${p.id===sel.id?'var(--surface-2)':'transparent'};border-radius:8px;margin-bottom:2px;font-size:13px" onclick="S.ssvSelectedStaffId='${p.id}';render()">${esc(p.full_name)}</button>`).join('')}
     </div>
