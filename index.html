@@ -789,16 +789,11 @@ async function loadPageData() {
         const {data:lc} = await sb.from('laser_consents').select('*').eq('patient_id', data.patient_id).order('signed_at',{ascending:false}).limit(1);
         S.laserPatientConsent = (lc&&lc[0])||null;
       }
-      // Πακέτα συνδεδεμένα με αυτή τη φόρμα — δείχνουμε το υπόλοιπό τους στη
-      // φόρμα (used = μη ακυρωμένα ραντεβού με το package_id τους).
-      S.laserFormPackages = [];
+      // Πακέτα συνδεδεμένα με αυτή τη φόρμα — το used υπολογίζεται στο render
+      // από τις μοναδικές ημερομηνίες των Πινάκων Θεραπείας (κλινικό αρχείο),
+      // ώστε να ενημερώνεται ζωντανά καθώς συμπληρώνονται συνεδρίες.
       const {data:linkedPkgs} = await sb.from('patient_packages').select('*').eq('laser_form_id', S.laserFormId);
-      if (linkedPkgs && linkedPkgs.length) {
-        const {data:pkgAppts} = await sb.from('appointments').select('package_id,status').in('package_id', linkedPkgs.map(p=>p.id));
-        const usedBy = {};
-        (pkgAppts||[]).forEach(r=>{ if(r.status!=='cancelled') usedBy[r.package_id]=(usedBy[r.package_id]||0)+1; });
-        S.laserFormPackages = linkedPkgs.map(pkg=>({...pkg, used: usedBy[pkg.id]||0}));
-      }
+      S.laserFormPackages = linkedPkgs||[];
     }
   }
   if (S.page==='sms') {
@@ -2923,9 +2918,11 @@ function renderLaserDetail() {
     </div>
 
     ${(S.laserFormPackages&&S.laserFormPackages.length)?`
-    <!-- Συνδεδεμένα πακέτα συνεδριών -->
+    <!-- Συνδεδεμένα πακέτα συνεδριών: used = μοναδικές ημερομηνίες συνεδριών
+         της φόρμας (ζωντανά, από τους Πίνακες Θεραπείας) -->
     <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px">
-      ${S.laserFormPackages.map(pkg=>{
+      ${S.laserFormPackages.map(pkgRow=>{
+        const pkg = {...pkgRow, used: formSessionDates(f.machine_settings).size};
         const total = pkg.total_sessions||6;
         const done = pkg.used>=total, lastOne = pkg.used===total-1;
         const c = done?'#8A8FA3':lastOne?'#D97706':'#0F6E56';
@@ -3735,9 +3732,21 @@ function renderReports() {
 }
 
 // ── ΠΑΚΕΤΑ ΣΥΝΕΔΡΙΩΝ ──
-// Χρησιμοποιημένες συνεδρίες πακέτου = μη ακυρωμένα ραντεβού του ασθενή που
-// είναι συνδεδεμένα με το πακέτο (appointments.package_id).
+// Χρησιμοποιημένες συνεδρίες: με συνδεδεμένη Φόρμα Laser, πηγή αλήθειας είναι
+// το ΚΛΙΝΙΚΟ ΑΡΧΕΙΟ της — κάθε ΜΟΝΑΔΙΚΗ ημερομηνία στους Πίνακες Θεραπείας =
+// μία συνεδρία (μία επίσκεψη που δουλεύτηκαν πολλές περιοχές μετράει μία φορά).
+// Χωρίς φόρμα, μετράνε τα μη ακυρωμένα ραντεβού με appointments.package_id.
+function formSessionDates(machineSettings) {
+  const dates = new Set();
+  ((machineSettings&&machineSettings.regions)||[]).forEach(r => {
+    if (!r.body_part) return;
+    (r.sessions||[]).forEach(s => { if (s && s.date) dates.add(s.date); });
+  });
+  return dates;
+}
 function packageUsedSessions(pkg) {
+  const fs = packageFormSessions(pkg);
+  if (fs) return formSessionDates(fs.form.machine_settings).size;
   const appts = (S.patientDetail&&S.patientDetail.appointments)||[];
   return appts.filter(a=>a.package_id===pkg.id && a.status!=='cancelled').length;
 }
@@ -6802,7 +6811,17 @@ function bindModalEvents() {
     if (!pkgs || !pkgs.length) return;
     const usedBy = {};
     (usedRows||[]).forEach(r=>{ if(r.status!=='cancelled') usedBy[r.package_id]=(usedBy[r.package_id]||0)+1; });
-    const active = pkgs.map(pkg=>({...pkg, used: usedBy[pkg.id]||0})).filter(pkg=>pkg.used < (pkg.total_sessions||6));
+    // Πακέτα με συνδεδεμένη Φόρμα Laser: το υπόλοιπο μετράει από το κλινικό
+    // αρχείο της φόρμας (μοναδικές ημερομηνίες συνεδριών), όχι από ραντεβού.
+    const formIds = pkgs.map(p=>p.laser_form_id).filter(Boolean);
+    const usedByForm = {};
+    if (formIds.length) {
+      const {data:formRows} = await sb.from('laser_forms').select('id,machine_settings').in('id', formIds);
+      (formRows||[]).forEach(fr=>{ usedByForm[fr.id] = formSessionDates(fr.machine_settings).size; });
+    }
+    const active = pkgs.map(pkg=>({...pkg,
+      used: (pkg.laser_form_id && usedByForm[pkg.laser_form_id]!==undefined) ? usedByForm[pkg.laser_form_id] : (usedBy[pkg.id]||0)
+    })).filter(pkg=>pkg.used < (pkg.total_sessions||6));
     window._apptPatientPackages = active;
     if (!active.length) return;
     sel.innerHTML = '<option value="">Χωρίς πακέτο (κανονική χρέωση)</option>' +
@@ -6829,7 +6848,10 @@ function bindModalEvents() {
       // να μη διπλομετρηθεί ο τζίρος (μετράει στην αγορά του πακέτου).
       document.getElementById('a-price').value = 0;
       const after = pkg.used + 1;
-      hint.textContent = `Θα καταναλωθεί η συνεδρία ${after}/${pkg.total_sessions||6}` + (after >= (pkg.total_sessions||6) ? ' — ΤΕΛΕΥΤΑΙΑ του πακέτου!' : '') + ' · Τιμή ραντεβού: 0€ (προπληρωμένο).';
+      const lastNote = after >= (pkg.total_sessions||6) ? ' — ΤΕΛΕΥΤΑΙΑ του πακέτου!' : '';
+      hint.textContent = pkg.laser_form_id
+        ? `Συνεδρία ${after}/${pkg.total_sessions||6}${lastNote} · Τιμή ραντεβού: 0€ (προπληρωμένο). Το υπόλοιπο ενημερώνεται όταν καταγραφεί η συνεδρία στη Φόρμα Laser.`
+        : `Θα καταναλωθεί η συνεδρία ${after}/${pkg.total_sessions||6}${lastNote} · Τιμή ραντεβού: 0€ (προπληρωμένο).`;
     } else if (hint) hint.textContent = '';
   });
 
