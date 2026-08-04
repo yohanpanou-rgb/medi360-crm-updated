@@ -66,29 +66,64 @@ function parseBooking247Email_(text) {
   if (durMatch && (durMatch[1] || durMatch[2])) {
     duration = (parseInt(durMatch[1], 10) || 0) * 60 + (parseInt(durMatch[2], 10) || 0);
   }
-  if (!name || !date || !phone) return null;
+  // Το τηλέφωνο είναι πλέον ΠΡΟΑΙΡΕΤΙΚΟ: κράτηση χωρίς τηλέφωνο περνάει στο
+  // CRM με ταίριασμα ονόματος (το booking247-ingest το χειρίζεται) αντί να
+  // χάνεται σιωπηλά.
+  if (!name || !date) return null;
   return { name: name.trim(), phone: phone.trim(), date, time, service: service.trim(), staff: staff.trim(), duration };
+}
+
+// ── Παρακολούθηση ΑΝΑ EMAIL (όχι ανά συζήτηση) ──
+// Τα Gmail labels εφαρμόζονται σε επίπεδο ΣΥΖΗΤΗΣΗΣ: αν δύο emails κρατήσεων
+// ομαδοποιηθούν στην ίδια συζήτηση (ίδιο θέμα), το δεύτερο που έφτανε μετά το
+// label ΔΕΝ το έβλεπε ποτέ η αναζήτηση "-label:medi360-synced" — αυτός ήταν ο
+// λόγος που "χάνονταν" ραντεβού. Τώρα κρατάμε τα IDs των επεξεργασμένων emails
+// στα Script Properties και ελέγχουμε κάθε email ξεχωριστά· το label μένει
+// μόνο ως οπτική ένδειξη στο Gmail.
+function getProcessedIds_() {
+  const raw = PropertiesService.getScriptProperties().getProperty('PROCESSED_IDS');
+  return raw ? JSON.parse(raw) : [];
+}
+function saveProcessedIds_(ids) {
+  // κρατάμε τα πιο πρόσφατα 2000 — υπεραρκετά για το παράθυρο αναζήτησης 7 ημερών
+  PropertiesService.getScriptProperties().setProperty('PROCESSED_IDS', JSON.stringify(ids.slice(-2000)));
 }
 
 function syncBooking247Emails() {
   const label = getOrCreateLabel_();
-  const threads = GmailApp.search(`from:appointments@booking247.gr -label:${SYNCED_LABEL}`, 0, 100);
+  const processedIds = getProcessedIds_();
+  const processedSet = new Set(processedIds);
+  const firstRun = processedIds.length === 0; // μετάβαση από το παλιό σύστημα (μόνο labels)
+
+  const threads = GmailApp.search('from:appointments@booking247.gr newer_than:7d', 0, 100);
   if (!threads.length) return;
 
-  // Τα labels στο Gmail εφαρμόζονται σε επίπεδο THREAD, όχι μεμονωμένου
-  // μηνύματος — γι' αυτό το addLabel/removeLabel γίνεται πάντα στο thread.
   const rows = [];
   const threadsByRow = [];
+  const seededIds = [];
   threads.forEach(thread => {
-    thread.getMessages().forEach(message => {
+    const messages = thread.getMessages();
+    const threadLabeled = thread.getLabels().some(l => l.getName() === SYNCED_LABEL);
+    messages.forEach(message => {
+      const id = message.getId();
+      if (processedSet.has(id)) return;
+      // Πρώτο τρέξιμο μετά την αναβάθμιση: συζήτηση με label και ΕΝΑ μόνο email
+      // είναι σίγουρα ήδη περασμένη — καταγράφεται χωρίς να ξανασταλεί. Συζήτηση
+      // με label και ΠΟΛΛΑ emails είναι η ύποπτη περίπτωση των χαμένων ραντεβού:
+      // στέλνονται όλα (ο server αναγνωρίζει τα ήδη περασμένα ως duplicates).
+      if (firstRun && threadLabeled && messages.length === 1) { seededIds.push(id); return; }
       const text = message.getPlainBody() || message.getBody().replace(/<[^>]+>/g, ' ');
       const parsed = parseBooking247Email_(text);
-      if (!parsed) { thread.addLabel(label); return; } // δεν έγινε parse — μην το ξαναδοκιμάζεις επ' άπειρον
-      rows.push(Object.assign({ messageId: message.getId() }, parsed));
+      if (!parsed) { seededIds.push(id); thread.addLabel(label); return; } // δεν έγινε parse — μην το ξαναδοκιμάζεις επ' άπειρον
+      rows.push(Object.assign({ messageId: id }, parsed));
       threadsByRow.push(thread);
     });
   });
-  if (!rows.length) return;
+
+  if (!rows.length) {
+    if (seededIds.length) saveProcessedIds_(processedIds.concat(seededIds));
+    return;
+  }
 
   const resp = UrlFetchApp.fetch(INGEST_URL, {
     method: 'post',
@@ -99,12 +134,18 @@ function syncBooking247Emails() {
   });
   if (resp.getResponseCode() !== 200) {
     console.log('Ingest failed: ' + resp.getContentText());
-    return; // μην κάνεις label τίποτα — ξαναδοκίμασε όλα στο επόμενο τρέξιμο
+    if (seededIds.length) saveProcessedIds_(processedIds.concat(seededIds));
+    return; // τα rows ΔΕΝ καταγράφονται — ξαναδοκιμάζονται όλα στο επόμενο τρέξιμο
   }
   const result = JSON.parse(resp.getContentText());
   const okIds = new Set((result.results || []).filter(r => r.ok).map(r => r.messageId));
+  const newlyDone = [];
   rows.forEach((row, i) => {
-    if (okIds.has(row.messageId)) threadsByRow[i].addLabel(label);
-    // αν απέτυχε (π.χ. σφάλμα βάσης), ΔΕΝ κάνουμε label — ξαναδοκιμάζεται στο επόμενο τρέξιμο
+    if (okIds.has(row.messageId)) {
+      newlyDone.push(row.messageId);
+      threadsByRow[i].addLabel(label); // οπτική ένδειξη στο Gmail
+    }
+    // αν απέτυχε (π.χ. σφάλμα βάσης), ΔΕΝ καταγράφεται — ξαναδοκιμάζεται στο επόμενο τρέξιμο
   });
+  saveProcessedIds_(processedIds.concat(seededIds, newlyDone));
 }

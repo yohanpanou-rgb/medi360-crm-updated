@@ -94,7 +94,7 @@ Deno.serve(async (req: Request) => {
     try {
       const phone = normalizePhone(row.phone);
       const name = normalizePatientName(row.name);
-      if (!phone || !row.date) return { messageId: row.messageId, ok: false, reason: 'parse' };
+      if ((!phone && !name) || !row.date) return { messageId: row.messageId, ok: false, reason: 'parse' };
 
       const [d, m, y] = row.date.split('/');
       const [h, mi] = (row.time || '09:00').split(':');
@@ -102,18 +102,53 @@ Deno.serve(async (req: Request) => {
       const localTs = `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}T${(h || '09').padStart(2, '0')}:${(mi || '00').padStart(2, '0')}:00`;
 
       let patientId: string | null = null;
-      const { data: existingPatients } = await supabase
-        .from('patients').select('id')
-        .eq('clinic_id', cid).ilike('phone', `%${phone}%`).limit(1);
-      if (existingPatients && existingPatients.length) {
-        patientId = existingPatients[0].id;
+      let matchedName = '';
+      if (phone) {
+        // ΑΚΡΙΒΕΣ ταίριασμα τηλεφώνου: το ilike φέρνει υποψηφίους, αλλά κρατάμε
+        // ΜΟΝΟ όσους έχουν ακριβώς ίδιο κανονικοποιημένο νούμερο — ένα χαλασμένο
+        // 12ψήφιο (π.χ. "695180422309") που ΠΕΡΙΕΧΕΙ το νούμερο της κράτησης δεν
+        // πρέπει να "κλέβει" το ραντεβού. Ανάμεσα σε πολλούς (οικογένεια με κοινό
+        // κινητό) προτιμάται αυτός που ταιριάζει και στο όνομα της κράτησης.
+        const { data: candidates } = await supabase
+          .from('patients').select('id, full_name, phone')
+          .eq('clinic_id', cid).ilike('phone', `%${phone.slice(-9)}%`).limit(20);
+        const exact = (candidates || []).filter((p) => normalizePhone(p.phone) === phone);
+        if (exact.length) {
+          // Βαθμολόγηση με πλήθος κοινών λέξεων ονόματος: σε οικογένεια με κοινό
+          // κινητό ΚΑΙ κοινό επώνυμο ("ΜΑΡΙΑ ΓΕΩΡΓΙΟΥ"/"ΕΛΕΝΗ ΓΕΩΡΓΙΟΥ"), η
+          // κράτηση "Ελένη Γεωργίου" πρέπει να πάει στην Ελένη (2 κοινές λέξεις),
+          // όχι στην πρώτη τυχούσα με ίδιο επώνυμο (1 κοινή).
+          const words = name.split(/\s+/).filter((w) => w.length >= 3);
+          const score = (p: { full_name: string }) => {
+            const pn = normalizePatientName(p.full_name);
+            return words.filter((w) => pn.includes(w)).length;
+          };
+          const chosen = exact.slice().sort((a, b) => score(b) - score(a))[0];
+          patientId = chosen.id;
+          matchedName = normalizePatientName(chosen.full_name);
+        }
       } else {
+        // Κράτηση χωρίς τηλέφωνο: ταίριασμα με ακριβές (κανονικοποιημένο) όνομα —
+        // ανεξάρτητα από σειρά λέξεων ("ΠΛΑΤΑΚΗ ΑΝΤΩΝΙΑ" = "ΑΝΤΩΝΙΑ ΠΛΑΤΑΚΗ") —
+        // αντί να χάνεται σιωπηλά η κράτηση.
+        const words = name.split(/\s+/).filter(Boolean);
+        const nameKey = words.slice().sort().join(' ');
+        const longest = words.slice().sort((a, b) => b.length - a.length)[0] || '';
+        const { data: byName } = await supabase
+          .from('patients').select('id, full_name')
+          .eq('clinic_id', cid).ilike('full_name', `%${longest}%`).limit(10);
+        const hit = (byName || []).find((p) =>
+          normalizePatientName(p.full_name).split(/\s+/).filter(Boolean).sort().join(' ') === nameKey);
+        if (hit) { patientId = hit.id; matchedName = normalizePatientName(hit.full_name); }
+      }
+      if (!patientId) {
         const { data: newPt, error: insPtErr } = await supabase
           .from('patients')
-          .insert({ clinic_id: cid, full_name: name, phone, status: 'active', source: 'booking247' })
+          .insert({ clinic_id: cid, full_name: name || 'ΑΓΝΩΣΤΟ ΟΝΟΜΑ', phone, status: 'active', source: 'booking247' })
           .select('id').single();
         if (insPtErr) return { messageId: row.messageId, ok: false, reason: insPtErr.message };
         patientId = newPt?.id || null;
+        matchedName = name;
       }
       if (!patientId) return { messageId: row.messageId, ok: false, reason: 'no_patient' };
 
@@ -122,11 +157,21 @@ Deno.serve(async (req: Request) => {
       });
       if (existingAppt && existingAppt.length) return { messageId: row.messageId, ok: true, reason: 'duplicate' };
 
+      // Αν το όνομα της κράτησης διαφέρει από την καρτέλα που ταίριαξε (π.χ.
+      // κοινό κινητό οικογένειας), κράτα το στο ραντεβού ώστε στο Πρόγραμμα να
+      // φαίνεται τι κλείστηκε πραγματικά — σε δική του γραμμή, για να μην
+      // μπερδεύεται με το "Προσωπικό: ..." που διαβάζουν ημερολόγιο/στατιστικά.
+      const nameDiffers = name && matchedName && normalizePatientName(name) !== matchedName &&
+        !name.split(/\s+/).some((w) => w.length >= 3 && matchedName.includes(w));
+      const noteLines = [
+        row.staff ? `Προσωπικό: ${row.staff}` : '',
+        nameDiffers ? `Όνομα κράτησης: ${name}` : '',
+      ].filter(Boolean);
       const { error: insApptErr } = await supabase.from('appointments').insert({
         clinic_id: cid, patient_id: patientId,
         service_name: row.service || '', start_time: localTs,
         duration_minutes: row.duration || 60, status: 'confirmed',
-        notes: row.staff ? `Προσωπικό: ${row.staff}` : '',
+        notes: noteLines.join('\n'),
       });
       if (insApptErr) return { messageId: row.messageId, ok: false, reason: insApptErr.message };
       return { messageId: row.messageId, ok: true, reason: 'created' };
