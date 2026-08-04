@@ -95,9 +95,13 @@ button,.nav-item,.btn{-webkit-tap-highlight-color:transparent;touch-action:manip
 /* Mobile search: πλήρες πλάτος dropdown, επαρκές input, απόκρυψη ημερομηνίας */
 .search-dropdown-box{position:absolute;top:calc(100% + 4px);left:0;right:0;z-index:300}
 @media(max-width:768px){
-  #global-search-wrap{min-width:80px;margin:0 8px;position:static}
-  .topbar{gap:8px}
-  .topbar-title{flex:0 1 auto}
+  /* Η αναζήτηση παίρνει όλο το διαθέσιμο πλάτος ώστε να φαίνεται ό,τι πληκτρολογείς·
+     ο τίτλος σελίδας κρύβεται (υπάρχει ήδη μέσα στη σελίδα ως page-title).
+     Τα !important νικούν τα inline styles του wrap (max-width:320px, margin:0 16px). */
+  #global-search-wrap{flex:1 1 auto!important;min-width:0;max-width:none!important;margin:0!important;position:static}
+  #global-search-wrap>div{padding:9px 12px!important}
+  .topbar{gap:8px!important;padding-left:calc(10px + env(safe-area-inset-left))!important;padding-right:calc(10px + env(safe-area-inset-right))!important}
+  .topbar-title{display:none}
   .search-dropdown-box{position:fixed!important;top:60px;left:8px;right:8px;max-height:65vh;overflow-y:auto;border-radius:12px;box-shadow:var(--shadow-lg);z-index:300}
   .topbar-date{display:none}
 }
@@ -1195,7 +1199,7 @@ function renderShell(content) {
     ${S.voiceActive||S.voiceResult?`
     <div style="background:var(--navy);color:#fff;padding:12px 20px;display:flex;align-items:center;gap:12px;font-size:13px">
       <div style="width:8px;height:8px;border-radius:50%;background:${S.voiceActive?'#ef4444':'#10b981'};${S.voiceActive?'animation:pulse 1s infinite':''}"></div>
-      <span style="flex:1">${S.voiceActive?'🎤 Μιλάτε... (πείτε: "βρες Μαρία", "νέο ραντεβού", "άνοιξε dashboard")':esc(S.voiceResult||'')}</span>
+      <span style="flex:1">${S.voiceActive?'🎤 Μιλάτε ελεύθερα — π.χ. "βρες Μαρία", "νέο ραντεβού", "πήγαινε στις αναφορές" (με AI βοήθεια)':esc(S.voiceResult||'')}</span>
       ${S.voiceResult?`<button onclick="S.voiceResult='';render()" style="background:none;border:none;color:rgba(255,255,255,0.5);cursor:pointer;font-size:16px">×</button>`:''}
     </div>`:''}
     ${panicActive()&&isSuperAdmin()?`
@@ -1846,8 +1850,9 @@ function renderPatientDetail() {
           </div>
         </div>
       </div>
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn btn-ghost btn-sm" data-modal="new-appt">+ Ραντεβού</button>
+        <button class="btn btn-ghost btn-sm" onclick="openPackageModal()">📦 + Πακέτο</button>
         <button class="btn btn-primary btn-sm" data-modal="new-laser">+ Laser Form</button>
       </div>
     </div>
@@ -2904,6 +2909,7 @@ function renderLaserDetail() {
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn btn-ghost btn-sm" data-page="laser" style="background:rgba(255,255,255,0.15);color:#fff;border-color:rgba(255,255,255,0.3)">← Πίσω</button>
         <button class="btn btn-ghost btn-sm" onclick="window.print()" style="background:rgba(255,255,255,0.15);color:#fff;border-color:rgba(255,255,255,0.3)">🖨 Εκτύπωση</button>
+        <button class="btn btn-ghost btn-sm" onclick="openPackageModalFromLaser()" style="background:rgba(255,255,255,0.15);color:#fff;border-color:rgba(255,255,255,0.3)">📦 + Πακέτο</button>
         <button class="btn btn-sm" id="save-laser-form" style="background:#fff;color:#C4618A;font-weight:600">💾 Αποθήκευση</button>
       </div>
     </div>
@@ -3731,15 +3737,27 @@ function packageFormSessions(pkg) {
   return {form, rows};
 }
 
-function openPackageModal() {
-  const p = S.patientDetail; if (!p) return;
-  const laserSvcs = (S.ssvServices||[]).filter(s=>/laser|alexandrite/i.test(s.name));
+// Άνοιγμα από την Καρτέλα Laser: το πακέτο δημιουργείται για τον ασθενή της
+// φόρμας και συνδέεται αυτόματα με αυτή τη φόρμα.
+function openPackageModalFromLaser() {
+  const f = S.laserFormDetail; if (!f) return;
+  openPackageModal({
+    patient: {id: f.patient_id, full_name: (f.patients&&f.patients.full_name)||''},
+    forms: [f],
+    laserFormId: f.id,
+  });
+}
+
+function openPackageModal(opts) {
+  opts = opts || {};
+  const p = opts.patient || S.patientDetail; if (!p) return;
+  const forms = opts.forms || S.laserForms || [];
   const old = document.getElementById('pkg-overlay'); if (old) old.remove();
   const ov = document.createElement('div');
   ov.id = 'pkg-overlay';
-  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9000;display:flex;align-items:center;justify-content:center;padding:12px';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9000;display:flex;align-items:flex-start;justify-content:center;padding:12px;overflow-y:auto';
   ov.innerHTML = `
-    <div style="background:var(--white);border-radius:16px;max-width:440px;width:100%;padding:20px">
+    <div style="background:var(--white);border-radius:16px;max-width:440px;width:100%;padding:20px;margin:auto 0">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
         <div style="font-size:15px;font-weight:700">Νέο Πακέτο — ${esc(p.full_name)}</div>
         <button onclick="document.getElementById('pkg-overlay').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-2)">×</button>
@@ -3756,20 +3774,45 @@ function openPackageModal() {
         <div class="form-group"><label class="form-label">Τιμή πακέτου (€)</label><input class="form-control" type="number" id="pkg-price" placeholder="προαιρετικό"/></div>
       </div>
       <div class="form-group"><label class="form-label">Ημ/νία αγοράς</label><input class="form-control" type="date" id="pkg-date" value="${new Date().toISOString().slice(0,10)}"/></div>
-      ${(S.laserForms&&S.laserForms.length)?`
+      ${(forms&&forms.length)?`
       <div class="form-group"><label class="form-label">Σύνδεση με Φόρμα Laser</label>
         <select class="form-control" id="pkg-laser-form">
           <option value="">— Χωρίς σύνδεση —</option>
-          ${S.laserForms.map(lf=>`<option value="${lf.id}">${new Date(lf.created_at).toLocaleDateString('el-GR')} · ${esc((lf.body_parts||[]).slice(0,3).join(', ')||'χωρίς περιοχές')}</option>`).join('')}
+          ${forms.map(lf=>`<option value="${lf.id}" ${opts.laserFormId===lf.id?'selected':''}>${new Date(lf.created_at).toLocaleDateString('el-GR')} · ${esc((lf.body_parts||[]).slice(0,3).join(', ')||'χωρίς περιοχές')}</option>`).join('')}
         </select>
         <div style="font-size:11px;color:var(--text-2);margin-top:4px">Το πακέτο θα δείχνει τις συνεδρίες της φόρμας (ημερομηνίες, μέρη σώματος, ρυθμίσεις μηχανήματος).</div>
       </div>`:''}
+      <div id="pkg-convert-wrap" style="display:none" class="form-group">
+        <label class="form-label">Μετατροπή υπαρχουσών συνεδριών σε πακέτο</label>
+        <div style="font-size:11px;color:var(--text-2);margin-bottom:6px">Ραντεβού του πελάτη χωρίς πακέτο — τσέκαρε όσα θες να μετρήσουν ως συνεδρίες αυτού του πακέτου (οι τιμές τους δεν αλλάζουν).</div>
+        <div id="pkg-convert-list" style="max-height:180px;overflow-y:auto;border:1px solid var(--border-2);border-radius:10px;padding:8px 10px;display:flex;flex-direction:column;gap:6px"></div>
+      </div>
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
         <button class="btn btn-ghost" onclick="document.getElementById('pkg-overlay').remove()">Ακύρωση</button>
         <button class="btn btn-primary" onclick="savePackage('${p.id}')">Αποθήκευση</button>
       </div>
     </div>`;
   document.body.appendChild(ov);
+  // Υπάρχουσες συνεδρίες χωρίς πακέτο: για το σενάριο "έκανε 1-2 μεμονωμένες
+  // και θέλει να τις μετατρέψει σε πακέτο". Φορτώνονται από τη βάση ώστε το
+  // modal να δουλεύει το ίδιο από την καρτέλα ασθενή και από τη Φόρμα Laser.
+  sb.from('appointments').select('id,starts_at,service_name,price,status')
+    .eq('patient_id', p.id).is('package_id', null).neq('status','cancelled')
+    .order('starts_at',{ascending:false}).limit(30)
+    .then(({data}) => {
+      const wrap = document.getElementById('pkg-convert-wrap');
+      const list = document.getElementById('pkg-convert-list');
+      if (!wrap || !list || !data || !data.length) return;
+      list.innerHTML = data.map(a=>`
+        <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer">
+          <input type="checkbox" class="pkg-conv" value="${a.id}" data-svc="${esc(a.service_name||'')}"/>
+          <span style="white-space:nowrap">${new Date(a.starts_at).toLocaleDateString('el-GR')}</span>
+          <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis">${esc(a.service_name||'—')}</span>
+          ${a.price?`<span style="color:var(--text-2);white-space:nowrap">${euro(a.price)}</span>`:''}
+        </label>`).join('');
+      wrap.style.display = '';
+      _pkgAutoCheckConversions();
+    });
   // Λίστα υπηρεσιών για το dropdown: αν δεν είναι ήδη φορτωμένη (η σελίδα
   // Προσωπικό & Υπηρεσίες τη φορτώνει), φέρε την τώρα.
   if (!(S.ssvServices&&S.ssvServices.length)) {
@@ -3787,18 +3830,33 @@ function openPackageModal() {
     const totalEl = document.getElementById('pkg-total');
     if (svcSel.value && !nameEl.dataset.userEdited) nameEl.value = svcSel.value + ' x' + (totalEl.value||6);
     const lfSel = document.getElementById('pkg-laser-form');
-    if (lfSel && !lfSel.value && /laser|alexandrite/i.test(svcSel.value) && (S.laserForms||[]).length) {
-      lfSel.value = S.laserForms[0].id;
+    if (lfSel && !lfSel.value && /laser|alexandrite/i.test(svcSel.value) && forms.length) {
+      lfSel.value = forms[0].id;
     }
+    _pkgAutoCheckConversions();
   });
   document.getElementById('pkg-name').addEventListener('input', function(){ this.dataset.userEdited='1'; });
 }
+
+// Όταν επιλεγεί υπηρεσία στο modal πακέτου, προ-τσεκάρονται αυτόματα τα
+// υπάρχοντα ραντεβού με την ίδια υπηρεσία (ο χρήστης μπορεί να τα ξε-τσεκάρει).
+function _pkgAutoCheckConversions() {
+  const svc = (document.getElementById('pkg-service')||{}).value;
+  if (!svc) return;
+  const key = normalizeGreek(svc);
+  document.querySelectorAll('.pkg-conv').forEach(cb => {
+    if (!cb.dataset.touched && normalizeGreek(cb.dataset.svc||'') === key) cb.checked = true;
+  });
+}
+document.addEventListener('change', e => {
+  if (e.target && e.target.classList && e.target.classList.contains('pkg-conv')) e.target.dataset.touched = '1';
+});
 
 async function savePackage(patientId) {
   const name = document.getElementById('pkg-name').value.trim();
   if (!name) { alert('Γράψε όνομα πακέτου.'); return; }
   const lfSel = document.getElementById('pkg-laser-form');
-  const {error} = await sb.from('patient_packages').insert({
+  const {data:newPkg, error} = await sb.from('patient_packages').insert({
     clinic_id: clinicId(), patient_id: patientId,
     name,
     service_name: document.getElementById('pkg-service').value||null,
@@ -3806,11 +3864,22 @@ async function savePackage(patientId) {
     price: parseFloat(document.getElementById('pkg-price').value)||null,
     purchased_at: document.getElementById('pkg-date').value||new Date().toISOString().slice(0,10),
     laser_form_id: lfSel && lfSel.value ? lfSel.value : null,
-  });
+  }).select('id').single();
   if (error) { alert('Σφάλμα: '+error.message); return; }
+  // Μετατροπή: τα τσεκαρισμένα υπάρχοντα ραντεβού συνδέονται με το νέο πακέτο
+  // ώστε να μετρήσουν ως συνεδρίες του. Οι τιμές τους μένουν ως έχουν.
+  const convIds = Array.from(document.querySelectorAll('.pkg-conv:checked')).map(cb=>cb.value);
+  if (convIds.length && newPkg) {
+    const {error:e2} = await sb.from('appointments').update({package_id: newPkg.id}).in('id', convIds);
+    if (e2) alert('Το πακέτο δημιουργήθηκε, αλλά η σύνδεση των ραντεβού απέτυχε: '+e2.message);
+  }
   const ov = document.getElementById('pkg-overlay'); if (ov) ov.remove();
+  if (S.page==='laser-detail') { await loadPageData(); render(); return; }
   const {data:pkgs} = await sb.from('patient_packages').select('*').eq('patient_id',patientId).order('purchased_at',{ascending:false});
   S.patientPackages = pkgs||[];
+  if (newPkg && S.patientDetail && S.patientDetail.appointments) {
+    S.patientDetail.appointments.forEach(a=>{ if (convIds.includes(a.id)) a.package_id = newPkg.id; });
+  }
   render();
 }
 
@@ -5015,6 +5084,9 @@ function modalNewLaser() {
       </div>
       <div class="form-group"><label class="form-label">Παρατηρήσεις</label>
         <textarea class="form-control" id="lf-notes" rows="3"></textarea></div>
+      <div style="font-size:11.5px;color:var(--text-2);background:var(--surface);border-radius:8px;padding:8px 12px">
+        📦 Για πακέτο συνεδριών (π.χ. x6): αφού ανοίξει η φόρμα, πάτησε «📦 + Πακέτο» στην κορυφή της — ή από την καρτέλα του πελάτη.
+      </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Ακύρωση</button>
@@ -9125,9 +9197,57 @@ async function processVoiceCommand(text) {
     render(); return;
   }
 
-  // Fallback
+  // Fallback: AI βοήθεια — το Claude (edge function ai-voice-assist) μετατρέπει
+  // την ελεύθερη φράση σε περιορισμένη ενέργεια (navigate/open_modal/search/answer).
+  S.voiceResult = '🤖 Μια στιγμή, ρωτάω τον βοηθό...';
+  render();
+  try {
+    const {data, error} = await sb.functions.invoke('ai-voice-assist', {
+      body: { transcript: text, context: { page: S.page } }
+    });
+    if (error) throw error;
+    if (data && data.action && await execVoiceAction(data.action)) return;
+  } catch (e) { /* πέφτουμε στο γενικό μήνυμα βοήθειας */ }
   S.voiceResult='❓ Δεν κατάλαβα "' + text + '". Πες: "βρες [όνομα]", "νέο ραντεβού", "άνοιξε ασθενείς"';
   render();
+}
+
+// Εκτελεί ΜΟΝΟ επιτρεπτές ενέργειες που επιστρέφει το ai-voice-assist.
+// Επιστρέφει true αν εκτελέστηκε κάτι (οπότε το voiceResult έχει ήδη οριστεί).
+async function execVoiceAction(act) {
+  const say = (typeof act.say === 'string' && act.say) ? act.say : '';
+  if (act.action === 'navigate' && ['dashboard','patients','appointments','calendar','sms','laser','consultations','consents','reports','staff-services','settings','clinics'].includes(act.page)) {
+    S.page = act.page;
+    S.voiceResult = '✓ ' + (say || 'Πήγα στη σελίδα');
+    await loadPageData(); render(); return true;
+  }
+  if (act.action === 'open_modal' && ['new-appt','new-patient','new-laser'].includes(act.modal)) {
+    S.modal = act.modal;
+    S.voiceResult = '✓ ' + (say || 'Άνοιξα τη φόρμα');
+    render(); return true;
+  }
+  if (act.action === 'search' && typeof act.query === 'string' && act.query.trim()) {
+    const query = act.query.trim();
+    S.voiceResult = '🔍 Αναζητώ "' + query + '"...';
+    render();
+    S.globalSearch = query;
+    await globalSearch(query);
+    if (S.globalResults && S.globalResults.length===1 && S.globalResults[0].type==='patient') {
+      await loadPatientDetail(S.globalResults[0].id);
+      S.voiceResult = '✓ Βρήκα και άνοιξα: ' + S.globalResults[0].title;
+      S.globalSearch=''; S.globalResults=[];
+    } else if (S.globalResults && S.globalResults.length>0) {
+      S.voiceResult = '✓ Βρήκα ' + S.globalResults.length + ' αποτελέσματα για "' + query + '"';
+    } else {
+      S.voiceResult = '❌ Δεν βρέθηκε "' + query + '"';
+    }
+    render(); return true;
+  }
+  if (act.action === 'answer' && say) {
+    S.voiceResult = '🤖 ' + say;
+    render(); return true;
+  }
+  return false;
 }
 
 // ── BOOT ──
