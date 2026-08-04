@@ -3743,17 +3743,19 @@ function renderReports() {
 // body_parts του πακέτου, αλλιώς από το όνομά του (π.χ. "bikini" → περιοχή
 // Bikini). Αν τίποτα δεν ταιριάζει, μετράει όλη η φόρμα (πακέτα πριν από
 // αυτή τη δυνατότητα).
-function packageMatchesRegion(pkg, bodyPart) {
-  if (!bodyPart) return false;
-  const k = normalizeGreek(bodyPart);
-  const explicit = (pkg.body_parts && pkg.body_parts.length) ? pkg.body_parts.map(normalizeGreek) : null;
-  if (explicit) return explicit.includes(k);
-  return normalizeGreek(pkg.name||'').includes(k);
-}
 function packageRegions(pkg, machineSettings) {
   const regions = ((machineSettings&&machineSettings.regions)||[]).filter(r=>r.body_part);
-  const matched = regions.filter(r=>packageMatchesRegion(pkg, r.body_part));
-  return matched.length ? matched : regions;
+  // 1. Ρητά μέρη σώματος του πακέτου (chips) → ΜΟΝΟ αυτές οι περιοχές,
+  //    ακόμα κι αν καμία δεν έχει ανοίξει ακόμα στη φόρμα (τότε 0 συνεδρίες).
+  const explicit = (pkg.body_parts && pkg.body_parts.length) ? pkg.body_parts.map(normalizeGreek) : null;
+  if (explicit) return regions.filter(r=>explicit.includes(normalizeGreek(r.body_part)));
+  // 2. Το ΟΝΟΜΑ αναφέρει γνωστά μέρη σώματος (π.χ. "Laser Πρόσωπο x6") →
+  //    μόνο οι αντίστοιχες περιοχές — 0 αν δεν έχουν καταγραφεί ακόμα.
+  const nameKey = normalizeGreek(pkg.name||'');
+  const namedParts = BODY_PARTS.map(normalizeGreek).filter(p=>nameKey.includes(p));
+  if (namedParts.length) return regions.filter(r=>namedParts.includes(normalizeGreek(r.body_part)));
+  // 3. Γενικό όνομα χωρίς αναφορά σε μέρος σώματος → μετράει όλη η φόρμα.
+  return regions;
 }
 // Μοναδικές ημερομηνίες συνεδριών στις περιοχές του πακέτου: 1 ημερομηνία =
 // 1 συνεδρία (επίσκεψη που δούλεψε 2 περιοχές του ΙΔΙΟΥ πακέτου μετράει μία).
