@@ -142,9 +142,13 @@ Deno.serve(async (req: Request) => {
         if (hit) { patientId = hit.id; matchedName = normalizePatientName(hit.full_name); }
       }
       if (!patientId) {
+        // Η στήλη phone είναι NOT NULL + UNIQUE ανά κλινική — δύο καρτέλες με ''
+        // δεν επιτρέπονται, οπότε χωρίς τηλέφωνο μπαίνει μοναδικό placeholder
+        // (δεν ταιριάζει ποτέ με πραγματικό νούμερο στο ακριβές ταίριασμα).
+        const phoneValue = phone || ('χωρίς-' + crypto.randomUUID().slice(0, 8));
         const { data: newPt, error: insPtErr } = await supabase
           .from('patients')
-          .insert({ clinic_id: cid, full_name: name || 'ΑΓΝΩΣΤΟ ΟΝΟΜΑ', phone, status: 'active', source: 'booking247' })
+          .insert({ clinic_id: cid, full_name: name || 'ΑΓΝΩΣΤΟ ΟΝΟΜΑ', phone: phoneValue, status: 'active', source: 'booking247' })
           .select('id').single();
         if (insPtErr) return { messageId: row.messageId, ok: false, reason: insPtErr.message };
         patientId = newPt?.id || null;
