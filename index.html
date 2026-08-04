@@ -92,6 +92,9 @@ html[data-theme="dark"] .page-header{background:var(--surface)}
   .modal-overlay{align-items:flex-end;padding:0}
 }
 button,.nav-item,.btn{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+/* Κάρτες ραντεβού στο Πρόγραμμα: χωρίς iOS long-press menu/επιλογή κειμένου,
+   ώστε το παρατεταμένο πάτημα να ξεκινά τη μεταφορά (drag & drop). */
+[data-drag-appt]{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
 /* Mobile search: πλήρες πλάτος dropdown, επαρκές input, απόκρυψη ημερομηνίας */
 .search-dropdown-box{position:absolute;top:calc(100% + 4px);left:0;right:0;z-index:300}
 @media(max-width:768px){
@@ -2673,7 +2676,7 @@ function renderCalendar() {
             </div>
           </div>
           <!-- Hour grid -->
-          <div style="position:relative;height:${hours.length*HOUR_H}px">
+          <div style="position:relative;height:${hours.length*HOUR_H}px" data-hour-grid="${startHour}" data-ppm="${PX_PER_MIN}" data-total-min="${hours.length*60}">
             ${hours.map(h=>`
               <div style="position:absolute;left:0;right:0;top:${(h-startHour)*HOUR_H}px;height:${HOUR_H}px;border-bottom:1px solid var(--border-2)">
                 <div style="position:absolute;left:0;right:0;top:50%;height:1px;background:rgba(0,0,0,0.03)"></div>
@@ -5527,37 +5530,140 @@ function bindEvents() {
       S._calScrollKey = null; // αλλαγή μέρας: επιτρέπεται νέο auto-scroll όταν επιστρέψει στο σήμερα
     }
   }
-  // Drag & drop ραντεβού μεταξύ θεραπευτών (Ημέρα, προβολή Θεραπευτές)
+  // Drag & drop ραντεβού (Ημέρα, προβολή Θεραπευτές): η στήλη απόθεσης αλλάζει
+  // τον θεραπευτή ΚΑΙ η κάθετη θέση την ώρα έναρξης, με βήμα 15 λεπτών. Σε
+  // κινητό (χωρίς HTML5 drag) η μεταφορά ξεκινά με παρατεταμένο πάτημα.
+  const _calDropMin = (grid, clientY, dur) => {
+    const rect = grid.getBoundingClientRect();
+    const raw = clientY - rect.top;
+    if (raw < 0 || raw > rect.height) return null; // εκτός πλέγματος (π.χ. header) → κράτα την ώρα
+    const ppm = parseFloat(grid.dataset.ppm)||1.2;
+    const total = parseInt(grid.dataset.totalMin)||720;
+    const min = Math.round(((raw - (window._calDragOffsetY||0))/ppm)/15)*15;
+    return Math.max(0, Math.min(min, total - dur));
+  };
+  const _calHideDropHint = () => { const h=document.getElementById('cal-drop-hint'); if(h) h.remove(); };
+  const _calDraggedDur = () => { const a=(S.appointments||[]).find(x=>String(x.id)===String(window._calDragId)); return (a&&a.duration_minutes)||60; };
+  const _calShowDropHint = (colEl, clientY) => {
+    const grid = colEl.querySelector('[data-hour-grid]'); if (!grid) return;
+    const dur = _calDraggedDur();
+    const min = _calDropMin(grid, clientY, dur);
+    if (min==null) { _calHideDropHint(); return; }
+    const ppm = parseFloat(grid.dataset.ppm)||1.2;
+    const startHour = parseInt(grid.dataset.hourGrid)||8;
+    let hint = document.getElementById('cal-drop-hint');
+    if (!hint) {
+      hint = document.createElement('div');
+      hint.id = 'cal-drop-hint';
+      hint.style.cssText = 'position:absolute;left:2px;right:2px;z-index:9;pointer-events:none;border:2px dashed var(--blue);border-radius:6px;background:rgba(43,59,240,0.07);font-size:10px;font-weight:700;color:var(--blue);padding:1px 5px';
+    }
+    if (hint.parentElement !== grid) grid.appendChild(hint);
+    hint.style.top = (min*ppm)+'px';
+    hint.style.height = Math.max(dur*ppm,20)+'px';
+    hint.textContent = String(startHour+Math.floor(min/60)).padStart(2,'0')+':'+String(min%60).padStart(2,'0');
+  };
+  const handleCalDrop = async (aid, colEl, clientY) => {
+    _calHideDropHint();
+    const newTherapist = colEl.dataset.dropCol;
+    if (!aid || !newTherapist) return;
+    const appt = (S.appointments||[]).find(x=>String(x.id)===String(aid));
+    if (!appt) return;
+    const upd = {};
+    // Νέα ώρα από την κάθετη θέση απόθεσης
+    const grid = colEl.querySelector('[data-hour-grid]');
+    if (grid && clientY!=null) {
+      const min = _calDropMin(grid, clientY, appt.duration_minutes||60);
+      if (min!=null) {
+        const startHour = parseInt(grid.dataset.hourGrid)||8;
+        const nd = new Date(appt.start_time);
+        nd.setHours(startHour + Math.floor(min/60), min%60, 0, 0);
+        if (nd.getTime() !== new Date(appt.start_time).getTime()) upd.start_time = nd.toISOString();
+      }
+    }
+    // Νέος θεραπευτής: notes ΚΑΙ therapist_id — το apptTherapist προτιμά το id,
+    // οπότε αν έμενε το παλιό η κάρτα θα επέστρεφε στην προηγούμενη στήλη.
+    const notes = appt.notes||'';
+    upd.notes = /Προσωπικό:\s*[^\n·|]+/.test(notes)
+      ? notes.replace(/Προσωπικό:\s*[^\n·|]+/, 'Προσωπικό: '+newTherapist)
+      : (notes ? notes+'\n' : '') + 'Προσωπικό: '+newTherapist;
+    const stMatch = (S.staff||[]).find(s=>sameStaffName(s.full_name, newTherapist));
+    upd.therapist_id = stMatch?stMatch.id:null;
+    const {error} = await sb.from('appointments').update(upd).eq('id', aid);
+    if (error) { alert('Σφάλμα μεταφοράς: '+error.message); return; }
+    Object.assign(appt, upd);
+    render();
+  };
   document.querySelectorAll('[data-drag-appt]').forEach(card => {
     card.addEventListener('dragstart', (e) => {
       e.dataTransfer.setData('text/plain', card.dataset.dragAppt);
       e.dataTransfer.effectAllowed = 'move';
+      window._calDragId = card.dataset.dragAppt;
+      window._calDragOffsetY = e.clientY - card.getBoundingClientRect().top;
       card.style.opacity = '0.4';
     });
-    card.addEventListener('dragend', () => { card.style.opacity = ''; });
+    card.addEventListener('dragend', () => { card.style.opacity = ''; _calHideDropHint(); });
+    // Κινητό: παρατεταμένο πάτημα (350ms) ξεκινά τη μεταφορά με "φάντασμα"·
+    // γρήγορη κίνηση πριν συμπληρωθεί = απλό scroll και ακυρώνεται.
+    let tTimer=null, tDragging=false, tGhost=null, tStartX=0, tStartY=0, tRect=null;
+    const tCleanup = () => {
+      if (tTimer) { clearTimeout(tTimer); tTimer=null; }
+      if (tGhost) { tGhost.remove(); tGhost=null; }
+      tDragging = false;
+      card.style.opacity = '';
+      _calHideDropHint();
+      document.querySelectorAll('[data-drop-col]').forEach(c=>c.style.background='');
+    };
+    card.addEventListener('touchstart', (e) => {
+      if (e.touches.length!==1) return;
+      const t = e.touches[0]; tStartX=t.clientX; tStartY=t.clientY;
+      tRect = card.getBoundingClientRect();
+      tTimer = setTimeout(() => {
+        tTimer=null; tDragging=true;
+        window._calDragId = card.dataset.dragAppt;
+        window._calDragOffsetY = tStartY - tRect.top;
+        tGhost = card.cloneNode(true);
+        tGhost.style.cssText += ';position:fixed;left:'+tRect.left+'px;top:'+tRect.top+'px;width:'+tRect.width+'px;height:'+tRect.height+'px;opacity:0.8;z-index:9999;pointer-events:none;box-shadow:var(--shadow-lg);margin:0';
+        document.body.appendChild(tGhost);
+        card.style.opacity='0.35';
+        if (navigator.vibrate) navigator.vibrate(30);
+      }, 350);
+    }, {passive:true});
+    card.addEventListener('touchmove', (e) => {
+      const t = e.touches[0];
+      if (!tDragging) {
+        // κίνηση πριν το long-press = πρόθεση για scroll
+        if (tTimer && (Math.abs(t.clientX-tStartX)>8 || Math.abs(t.clientY-tStartY)>8)) { clearTimeout(tTimer); tTimer=null; }
+        return;
+      }
+      e.preventDefault();
+      if (tGhost) {
+        tGhost.style.left = (tRect.left + t.clientX - tStartX)+'px';
+        tGhost.style.top = (tRect.top + t.clientY - tStartY)+'px';
+      }
+      const under = document.elementFromPoint(t.clientX, t.clientY);
+      const colEl = under && under.closest('[data-drop-col]');
+      document.querySelectorAll('[data-drop-col]').forEach(c=>c.style.background = c===colEl?'var(--blue-soft)':'');
+      if (colEl) _calShowDropHint(colEl, t.clientY); else _calHideDropHint();
+    }, {passive:false});
+    card.addEventListener('touchend', (e) => {
+      if (tTimer) { clearTimeout(tTimer); tTimer=null; }
+      if (!tDragging) return;
+      e.preventDefault(); // να μην ακολουθήσει click που ανοίγει το panel
+      const t = e.changedTouches[0];
+      const under = document.elementFromPoint(t.clientX, t.clientY);
+      const colEl = under && under.closest('[data-drop-col]');
+      const y = t.clientY;
+      tCleanup();
+      if (colEl) handleCalDrop(card.dataset.dragAppt, colEl, y);
+    });
+    card.addEventListener('touchcancel', tCleanup);
   });
   document.querySelectorAll('[data-drop-col]').forEach(colEl => {
-    colEl.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect='move'; colEl.style.background='var(--blue-soft)'; });
+    colEl.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect='move'; colEl.style.background='var(--blue-soft)'; _calShowDropHint(colEl, e.clientY); });
     colEl.addEventListener('dragleave', () => { colEl.style.background=''; });
-    colEl.addEventListener('drop', async (e) => {
+    colEl.addEventListener('drop', (e) => {
       e.preventDefault(); colEl.style.background='';
-      const aid = e.dataTransfer.getData('text/plain');
-      const newTherapist = colEl.dataset.dropCol;
-      if (!aid || !newTherapist) return;
-      const appt = (S.appointments||[]).find(x=>String(x.id)===String(aid));
-      if (!appt) return;
-      const notes = appt.notes||'';
-      const newNotes = /Προσωπικό:\s*[^\n·|]+/.test(notes)
-        ? notes.replace(/Προσωπικό:\s*[^\n·|]+/, 'Προσωπικό: '+newTherapist)
-        : (notes ? notes+'\n' : '') + 'Προσωπικό: '+newTherapist;
-      // Ενημέρωση ΚΑΙ του therapist_id — το apptTherapist το προτιμά από τα notes,
-      // οπότε αν έμενε το παλιό id η κάρτα θα επέστρεφε στην προηγούμενη στήλη.
-      const stMatch = (S.staff||[]).find(s=>sameStaffName(s.full_name, newTherapist));
-      const {error} = await sb.from('appointments').update({notes:newNotes, therapist_id: stMatch?stMatch.id:null}).eq('id', aid);
-      if (error) { alert('Σφάλμα μεταφοράς: '+error.message); return; }
-      appt.notes = newNotes;
-      appt.therapist_id = stMatch?stMatch.id:null;
-      render();
+      handleCalDrop(e.dataTransfer.getData('text/plain'), colEl, e.clientY);
     });
   });
   const calNeedsReload = (d) => S.calRangeFrom && (d.getTime() < S.calRangeFrom + 7*86400000 || d.getTime() > S.calRangeTo - 7*86400000);
