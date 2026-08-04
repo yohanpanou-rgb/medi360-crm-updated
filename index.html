@@ -9056,11 +9056,18 @@ async function saveGroupConsent(groupKey) {
   if (!_svcHasInk) { alert('Χρειάζεται υπογραφή του ασθενή στο πλαίσιο.'); return; }
   const cv = document.getElementById('svc-canvas');
   const photo = document.getElementById('svc-photo');
+  // Πλήρες κείμενο της συναίνεσης όπως το είδε/υπέγραψε ο ασθενής (χωρίς HTML) —
+  // η στήλη consent_text είναι NOT NULL, και σωστά: πρέπει να ξέρουμε τι ακριβώς
+  // υπογράφηκε, ακόμα κι αν το κείμενο αλλάξει σε επόμενη έκδοση.
+  const _ctDiv = document.createElement('div');
+  _ctDiv.innerHTML = g.text(p.full_name||'');
+  const consentPlainText = (_ctDiv.textContent||'').replace(/\s*\n\s*/g,'\n').trim();
   const {data, error} = await sb.from('service_consents').insert({
     clinic_id: clinicId(),
     patient_id: p.id,
     consent_group: g.dbKey,
     service_name: g.title,
+    consent_text: consentPlainText,
     signed_at: new Date().toISOString(),
     signature_data: cv.toDataURL('image/png'),
     photo_consent: photo ? photo.checked : false,
