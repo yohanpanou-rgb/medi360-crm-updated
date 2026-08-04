@@ -1304,11 +1304,15 @@ function renderDashboard() {
   if (dashSourcePeriod === 'week') {
     curFrom = thisWeekStart;
     prevFrom = new Date(thisWeekStart); prevFrom.setDate(prevFrom.getDate()-7);
-    prevTo = thisWeekStart;
   } else if (dashSourcePeriod === 'month') {
     curFrom = new Date(now.getFullYear(), now.getMonth(), 1);
-    prevTo = curFrom;
     prevFrom = new Date(now.getFullYear(), now.getMonth()-1, 1);
+  }
+  // ΙΣΟΧΡΟΝΗ σύγκριση: ο τρέχων μήνας/εβδομάδα έχει τρέξει μόνο μερικές μέρες,
+  // οπότε συγκρίνουμε με τις ΙΔΙΕΣ πρώτες μέρες της προηγούμενης περιόδου — όχι
+  // με ολόκληρη (στις 4 του μήνα, "4 μέρες vs 31" έδειχνε πάντα ▼100% κόκκινα).
+  if (curFrom && prevFrom) {
+    prevTo = new Date(Math.min(prevFrom.getTime() + (now.getTime() - curFrom.getTime()), curFrom.getTime()));
   }
   const curSourceData = sourceCountsInRange(curFrom, curTo);
   const prevSourceData = dashSourcePeriod!=='all' ? sourceCountsInRange(prevFrom, prevTo) : null;
@@ -1540,8 +1544,8 @@ function renderDashboard() {
           <span class="card-title">📍 Από πού μας βρήκαν</span>
           <select onchange="S.dashSourcePeriod=this.value;render()" style="font-size:11px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--white);cursor:pointer;font-family:var(--font)">
             <option value="all" ${dashSourcePeriod==='all'?'selected':''}>Συνολικά</option>
-            <option value="week" ${dashSourcePeriod==='week'?'selected':''}>Αυτή την εβδομάδα vs προηγούμενη</option>
-            <option value="month" ${dashSourcePeriod==='month'?'selected':''}>Αυτόν τον μήνα vs προηγούμενο</option>
+            <option value="week" ${dashSourcePeriod==='week'?'selected':''}>Αυτή την εβδομάδα vs ίδιες μέρες προηγούμενης</option>
+            <option value="month" ${dashSourcePeriod==='month'?'selected':''}>Αυτόν τον μήνα vs ίδιες μέρες προηγούμενου</option>
           </select>
         </div>
         <div style="padding:14px 16px">
@@ -1567,6 +1571,7 @@ function renderDashboard() {
             </div>`;
           }).join(''):`<div style="text-align:center;color:var(--text-2);padding:20px;font-size:12px">Δεν υπάρχουν δεδομένα πηγής ${dashSourcePeriod==='all'?'ακόμα':'σε αυτή την περίοδο'}</div>`}
           ${noSourceCount?`<div style="font-size:10px;color:var(--text-3);margin-top:6px;padding-top:8px;border-top:1px solid var(--border-2)">${noSourceCount} πελάτες χωρίς καταγεγραμμένη πηγή</div>`:''}
+          ${dashSourcePeriod!=='all'?`<div style="font-size:10px;color:var(--text-3);margin-top:6px">Μετράει νέους πελάτες με βάση την ημερομηνία <b>εγγραφής</b> τους — η σύγκριση γίνεται με τις ίδιες πρώτες μέρες της προηγούμενης περιόδου.</div>`:''}
         </div>
       </div>
     </div>
@@ -3577,6 +3582,22 @@ function computeReportStats() {
     completedCount, cancelledCount, pendingCount };
 }
 
+// Όταν ένα ραντεβού μαρκάρεται "Ολοκληρωμένο" ΧΩΡΙΣ τιμή (π.χ. ήρθε από το
+// booking247, που δεν στέλνει τιμές), ρωτάμε πόσο πληρώθηκε — αλλιώς τζίρος,
+// LTV και στατιστικά ανά υπηρεσία/θεραπευτή μετράνε 0€ για πραγματική δουλειά.
+// Ραντεβού ΠΑΚΕΤΟΥ εξαιρούνται: η τιμή τους είναι σκόπιμα 0 (πληρωμένο πακέτο).
+function apptStatusUpdatePayload(appt, newStatus) {
+  const upd = {status: newStatus};
+  if (newStatus==='completed' && appt && !appt.package_id && !(parseFloat(appt.price)>0)) {
+    const answer = prompt('Το ραντεβού δεν έχει καταχωρημένη τιμή.\nΠόσο πληρώθηκε; (€)\n\n(Άφησέ το κενό αν ήταν δωρεάν/0€)');
+    if (answer!==null && String(answer).trim()!=='') {
+      const v = parseFloat(String(answer).replace(',','.'));
+      if (!isNaN(v) && v>=0) upd.price = v;
+    }
+  }
+  return upd;
+}
+
 // Ίδια σύμβαση εμφάνισης delta με το widget "Από πού μας βρήκαν" του Dashboard
 function reportDeltaLabel(diff, pct) {
   const color = diff>0?'#0F6E56':diff<0?'var(--red)':'var(--text-3)';
@@ -5203,8 +5224,11 @@ function bindEvents() {
     const prevValue = el.value;
     el.onchange = async () => {
       const newValue = el.value;
-      const {error} = await sb.from('appointments').update({status:newValue}).eq('id',el.dataset.apptStatus);
+      const appt = (S.appointments||[]).find(x=>String(x.id)===String(el.dataset.apptStatus));
+      const upd = apptStatusUpdatePayload(appt, newValue);
+      const {error} = await sb.from('appointments').update(upd).eq('id',el.dataset.apptStatus);
       if (error) { alert('✗ Η αλλαγή κατάστασης απέτυχε: '+error.message); el.value = prevValue; return; }
+      if (appt) Object.assign(appt, upd);
       loadPageData();
     };
   });
@@ -5746,8 +5770,10 @@ function bindEvents() {
       });
       const _cs=content.querySelector('[data-appt-status]');if(_cs)_cs.addEventListener('change', async (ev) => {
         const prevValue = a.status;
-        const {error} = await sb.from('appointments').update({status:ev.target.value}).eq('id',a.id);
+        const upd = apptStatusUpdatePayload(a, ev.target.value);
+        const {error} = await sb.from('appointments').update(upd).eq('id',a.id);
         if (error) { alert('✗ Η αλλαγή κατάστασης απέτυχε: '+error.message); ev.target.value = prevValue; return; }
+        Object.assign(a, upd);
         await loadPageData();
       });
     };
