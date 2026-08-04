@@ -3791,7 +3791,7 @@ function openPackageModal(opts) {
       <div class="form-group"><label class="form-label">Υπηρεσία (για αυτόματη πρόταση στο ραντεβού)</label>
         <select class="form-control" id="pkg-service">
           <option value="">— Χωρίς συγκεκριμένη υπηρεσία —</option>
-          ${((S.ssvServices&&S.ssvServices.length)?S.ssvServices:[]).map(s=>`<option value="${esc(s.name)}">${esc(s.name)}</option>`).join('')}
+          ${((S.ssvServices&&S.ssvServices.length)?S.ssvServices:[]).filter(s=>/laser|alexandrite/i.test(s.name)).map(s=>`<option value="${esc(s.name)}">${esc(s.name)}</option>`).join('')}
         </select></div>
       <div class="form-row">
         <div class="form-group"><label class="form-label">Συνεδρίες</label><input class="form-control" type="number" id="pkg-total" value="6" min="1"/></div>
@@ -3838,28 +3838,43 @@ function openPackageModal(opts) {
       _pkgAutoCheckConversions();
     });
   // Λίστα υπηρεσιών για το dropdown: αν δεν είναι ήδη φορτωμένη (η σελίδα
-  // Προσωπικό & Υπηρεσίες τη φορτώνει), φέρε την τώρα.
+  // Προσωπικό & Υπηρεσίες τη φορτώνει), φέρε την τώρα. Τα πακέτα αφορούν laser,
+  // οπότε εμφανίζονται ΜΟΝΟ οι υπηρεσίες laser/alexandrite του καταλόγου.
   if (!(S.ssvServices&&S.ssvServices.length)) {
     sb.from('services').select('id,name').eq('clinic_id',clinicId()).eq('active',true).order('name').then(({data}) => {
       const sel = document.getElementById('pkg-service');
-      if (sel && data) sel.innerHTML = '<option value="">— Χωρίς συγκεκριμένη υπηρεσία —</option>' + data.map(s=>`<option value="${esc(s.name)}">${esc(s.name)}</option>`).join('');
+      if (sel && data) sel.innerHTML = '<option value="">— Χωρίς συγκεκριμένη υπηρεσία —</option>' + data.filter(s=>/laser|alexandrite/i.test(s.name)).map(s=>`<option value="${esc(s.name)}">${esc(s.name)}</option>`).join('');
     });
   }
-  // Αυτόματο όνομα από την υπηρεσία, αν ο χρήστης δεν έχει γράψει δικό του —
-  // και αυτόματη πρόταση σύνδεσης με την πιο πρόσφατη Φόρμα Laser όταν η
-  // υπηρεσία είναι laser (η λίστα S.laserForms είναι ήδη ταξινομημένη desc).
+  // Αυτόματη ονομασία πακέτου: προτεραιότητα στα ΜΕΡΗ ΣΩΜΑΤΟΣ της συνδεδεμένης
+  // Φόρμας Laser ("Laser Μασχάλες, Πόδια x6"), αλλιώς από την υπηρεσία. Δεν
+  // πειράζει ποτέ όνομα που έγραψε ο χρήστης με το χέρι.
   const svcSel = document.getElementById('pkg-service');
-  svcSel.addEventListener('change', () => {
+  const _pkgAutoName = () => {
     const nameEl = document.getElementById('pkg-name');
-    const totalEl = document.getElementById('pkg-total');
-    if (svcSel.value && !nameEl.dataset.userEdited) nameEl.value = svcSel.value + ' x' + (totalEl.value||6);
+    if (nameEl.dataset.userEdited) return;
+    const total = document.getElementById('pkg-total').value || 6;
+    const lfSel = document.getElementById('pkg-laser-form');
+    const lf = (lfSel && lfSel.value) ? forms.find(f=>f.id===lfSel.value) : null;
+    const parts = (lf && lf.body_parts && lf.body_parts.length) ? lf.body_parts.join(', ') : '';
+    if (parts) nameEl.value = 'Laser ' + parts + ' x' + total;
+    else if (svcSel.value) nameEl.value = svcSel.value + ' x' + total;
+  };
+  svcSel.addEventListener('change', () => {
+    // αυτόματη πρόταση σύνδεσης με την πιο πρόσφατη Φόρμα Laser (λίστα ήδη desc)
     const lfSel = document.getElementById('pkg-laser-form');
     if (lfSel && !lfSel.value && /laser|alexandrite/i.test(svcSel.value) && forms.length) {
       lfSel.value = forms[0].id;
     }
+    _pkgAutoName();
     _pkgAutoCheckConversions();
   });
+  const lfSelEl = document.getElementById('pkg-laser-form');
+  if (lfSelEl) lfSelEl.addEventListener('change', _pkgAutoName);
+  document.getElementById('pkg-total').addEventListener('input', _pkgAutoName);
   document.getElementById('pkg-name').addEventListener('input', function(){ this.dataset.userEdited='1'; });
+  // Άνοιγμα από Φόρμα Laser: η φόρμα είναι ήδη προεπιλεγμένη — βάλε όνομα αμέσως
+  if (opts.laserFormId) _pkgAutoName();
 }
 
 // Όταν επιλεγεί υπηρεσία στο modal πακέτου, προ-τσεκάρονται αυτόματα τα
