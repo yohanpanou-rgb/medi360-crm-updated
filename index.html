@@ -700,6 +700,23 @@ async function loadPageData() {
     const trendTo = new Date(); trendTo.setHours(23,59,59,999);
     const {data: trendApts} = await sb.from('appointments').select('start_time,status').eq('clinic_id',cid)
       .gte('start_time', trendFrom.toISOString()).lte('start_time', trendTo.toISOString());
+
+    // Πακέτα προς ανανέωση: υπολογισμός υπολοίπου με την ίδια λογική με την
+    // καρτέλα (φόρμα → μοναδικές ημερομηνίες περιοχών πακέτου, αλλιώς ραντεβού)
+    const {data:allPkgs} = await sb.from('patient_packages').select('*, patients(full_name)').eq('clinic_id',cid);
+    S.dashPackages = allPkgs||[];
+    S.dashPkgForms = {};
+    const pkgFormIds = (allPkgs||[]).map(p=>p.laser_form_id).filter(Boolean);
+    if (pkgFormIds.length) {
+      const {data:pf} = await sb.from('laser_forms').select('id,machine_settings').in('id',pkgFormIds);
+      (pf||[]).forEach(f=>{ S.dashPkgForms[f.id]=f.machine_settings; });
+    }
+    S.dashPkgApptCounts = {};
+    const pkgIds = (allPkgs||[]).map(p=>p.id);
+    if (pkgIds.length) {
+      const {data:pa} = await sb.from('appointments').select('package_id,status').in('package_id',pkgIds);
+      (pa||[]).forEach(r=>{ if(r.status!=='cancelled') S.dashPkgApptCounts[r.package_id]=(S.dashPkgApptCounts[r.package_id]||0)+1; });
+    }
     S.dashStatusTrend = trendApts||[];
   }
   if (S.page==='patients') {
@@ -1377,6 +1394,31 @@ function renderDashboard() {
       </div>
     </div>`;
 
+  // Σημερινό πρόγραμμα (κατά ώρα, χωρίς ακυρωμένα)
+  const todaySchedule = [...todayApts].filter(a=>a.status!=='cancelled').sort((a,b)=>new Date(a.start_time)-new Date(b.start_time));
+
+  // 🎂 Γενέθλια επόμενων 7 ημερών (από το πεδίο dob των πελατών)
+  const todayMid = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const birthdays = pts.filter(p=>p.dob && p.status!=='inactive').map(p=>{
+    const d = new Date(p.dob);
+    if (isNaN(d.getTime())) return null;
+    const next = new Date(now.getFullYear(), d.getMonth(), d.getDate());
+    if (next < todayMid) next.setFullYear(next.getFullYear()+1);
+    const inDays = Math.round((next-todayMid)/86400000);
+    return {p, next, inDays};
+  }).filter(x=>x && x.inDays<=7).sort((a,b)=>a.inDays-b.inDays);
+
+  // 📦 Πακέτα προς ανανέωση: στην τελευταία συνεδρία ή μόλις ολοκληρωμένα
+  // (τελευταίο 6μηνο) — ίδια λογική υπολοίπου με την καρτέλα ασθενή.
+  const renewalPkgs = (S.dashPackages||[]).map(pkg=>{
+    const used = (pkg.laser_form_id && S.dashPkgForms && S.dashPkgForms[pkg.laser_form_id]!==undefined)
+      ? packageRegionDates(pkg, S.dashPkgForms[pkg.laser_form_id]).size
+      : ((S.dashPkgApptCounts||{})[pkg.id]||0);
+    const total = pkg.total_sessions||6;
+    return {...pkg, used, total};
+  }).filter(pk=>pk.used>=pk.total-1 && new Date(pk.purchased_at) > new Date(Date.now()-183*86400000))
+    .sort((a,b)=>(b.used/b.total)-(a.used/a.total));
+
   // Next appointment
   const nextApt = upcomingApts[0];
 
@@ -1405,6 +1447,57 @@ function renderDashboard() {
     ${renderInactiveWidget('vip-inactive','★','VIP χωρίς επίσκεψη 60+ ημ.',vipInactive,'#7C3AED','#5B21B6')}
     ${renderInactiveWidget('reengage-inactive','↻','Έτοιμοι για επανασύνδεση (90+ ημ.)',reengageInactive,'#D97706','#854F0B')}
     <style>.vip-hidden{display:none}</style>
+    ${renewalPkgs.length?`
+    <!-- Πακέτα προς ανανέωση: πρόταση την ώρα που ο πελάτης είναι στο ινστιτούτο -->
+    <div class="card" style="border-left:3px solid #0F6E56;margin-bottom:14px;max-width:520px">
+      <div style="padding:10px 14px;display:flex;align-items:center;gap:7px">
+        <span style="font-size:13px">📦</span>
+        <span style="font-size:12px;font-weight:700;color:#0F6E56">Πακέτα προς ανανέωση</span>
+        <span style="font-size:10px;font-weight:700;color:#fff;background:#0F6E56;padding:1px 7px;border-radius:9px">${renewalPkgs.length}</span>
+      </div>
+      <div style="padding:0 10px 10px">
+        ${renewalPkgs.slice(0,8).map(pk=>`
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;font-size:11.5px" data-patient="${pk.patient_id}" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background=''">
+          <div style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>${esc(pk.patients&&pk.patients.full_name||'—')}</b> · ${esc(pk.name)}</div>
+          ${pk.used>=pk.total
+            ?'<span style="font-size:10px;font-weight:700;color:#53586B;background:#E4E6ED;padding:2px 8px;border-radius:8px;flex-shrink:0">ΟΛΟΚΛΗΡΩΘΗΚΕ — πρόταση νέου</span>'
+            :'<span style="font-size:10px;font-weight:700;color:#854F0B;background:#FAEEDA;padding:2px 8px;border-radius:8px;flex-shrink:0">⚠ ΤΕΛΕΥΤΑΙΑ ΣΥΝΕΔΡΙΑ</span>'}
+          <span style="font-weight:700;color:#0F6E56;flex-shrink:0">${pk.used}/${pk.total}</span>
+        </div>`).join('')}
+      </div>
+    </div>`:''}
+    <!-- Σημερινό Πρόγραμμα + Γενέθλια -->
+    <div class="dash-grid" style="display:grid;grid-template-columns:2fr 1fr;gap:14px;margin-bottom:16px">
+      <div class="card">
+        <div class="card-header"><span class="card-title">📅 Σημερινό Πρόγραμμα</span>
+          <button class="btn btn-ghost btn-sm" data-page="calendar">Άνοιγμα →</button>
+        </div>
+        <div style="max-height:290px;overflow-y:auto">
+          ${todaySchedule.length?todaySchedule.map(a=>{
+            const st = new Date(a.start_time);
+            const ther = apptStaffName(a, S.staff||[]) || '';
+            return `<div style="display:flex;align-items:center;gap:10px;padding:8px 16px;border-bottom:1px solid var(--border-2);cursor:pointer;font-size:12px" onclick="gotoCalendarDay('${a.start_time}')" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background=''">
+              <span style="font-family:var(--mono);font-weight:700;color:var(--blue);flex-shrink:0">${st.toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'})}</span>
+              <span style="font-weight:600;flex-shrink:0;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.patients&&a.patients.full_name||'—')}</span>
+              <span style="color:var(--text-2);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.service_name||'')}</span>
+              ${ther?`<span style="font-size:10.5px;color:var(--text-2);background:var(--surface-2);padding:2px 8px;border-radius:8px;flex-shrink:0">${esc(ther)}</span>`:''}
+              ${apptBadge(a.status)}
+            </div>`;
+          }).join(''):`<div style="padding:24px;text-align:center;color:var(--text-2);font-size:12px">Κανένα ραντεβού σήμερα</div>`}
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">🎂 Γενέθλια (7 ημέρες)</span></div>
+        <div style="max-height:290px;overflow-y:auto">
+          ${birthdays.length?birthdays.map(b=>`
+          <div style="display:flex;align-items:center;gap:8px;padding:8px 16px;border-bottom:1px solid var(--border-2);cursor:pointer;font-size:12px" data-patient="${b.p.id}" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background=''">
+            <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500">${esc(b.p.full_name)}</span>
+            ${phoneActionsHtml(b.p.phone, 12)}
+            <span style="font-size:11px;font-weight:700;color:${b.inDays===0?'#C4618A':'var(--text-2)'};flex-shrink:0">${b.inDays===0?'🎉 Σήμερα!':b.inDays===1?'αύριο':b.next.toLocaleDateString('el-GR',{weekday:'short',day:'numeric',month:'numeric'})}</span>
+          </div>`).join(''):`<div style="padding:24px;text-align:center;color:var(--text-2);font-size:12px">Κανένα γενέθλια αυτή την εβδομάδα</div>`}
+        </div>
+      </div>
+    </div>
     <div class="stats-grid" style="margin-bottom:16px">
       <div class="stat-card">
         <div class="stat-icon" style="background:#eef0fe;color:var(--blue)">◎</div>
@@ -1684,7 +1777,7 @@ function renderPatients() {
               </div>
             </div>
           </div></td>
-          <td class="hide-mobile" style="font-family:var(--mono);font-size:12px;color:var(--text-2)">${esc(p.phone||'—')}</td>
+          <td class="hide-mobile" style="font-family:var(--mono);font-size:12px;color:var(--text-2)"><span style="display:inline-flex;align-items:center;gap:6px">${esc(p.phone||'—')} ${phoneActionsHtml(p.phone, 12)}</span></td>
           <td>${patBadge(p.status)}</td>
           <td class="hide-mobile">${p.gdpr_signed?'✅':'❌'}</td>
           <td class="hide-mobile">${hasMedicalHistoryData(p)?'<span style="color:#0F6E56;font-weight:600" title="Έχει συμπληρώσει ιατρικό ιστορικό">✓</span>':'<span style="color:var(--text-3)">—</span>'}</td>
@@ -1846,6 +1939,7 @@ function renderPatientDetail() {
           <div style="display:flex;gap:8px;align-items:center;margin-top:4px;flex-wrap:wrap">
             ${patBadge(p.status)}
             <span style="font-size:12px;color:var(--text-2)">${esc(p.phone||'')}</span>
+            ${phoneActionsHtml(p.phone, 13)}
             ${p.gdpr_signed?'<span style="font-size:11px;color:#0F6E56">✓ GDPR</span>':'<span style="font-size:11px;color:var(--red)">⚠ Χωρίς GDPR</span>'}
             ${p.source?`<span style="font-size:11px;color:var(--text-2);background:var(--surface-2);padding:2px 9px;border-radius:9px">📍 ${esc(p.source)}</span>`:''}
             ${S.serviceConsentCleansing
@@ -3993,6 +4087,20 @@ async function deletePackage(id) {
   render();
 }
 
+// Κλικαμπλ τηλέφωνα: ☎ κλήση (tel:) + Viber συνομιλία, παντού όπου φαίνεται
+// νούμερο. Το Viber θέλει διεθνή μορφή (+30...).
+function phoneIntl(p) {
+  const d = normalizePhone(p);
+  if (!d || d.length < 9) return '';
+  return d.length === 10 && d.startsWith('6') ? '+30' + d : (d.length === 10 && d.startsWith('2') ? '+30' + d : '+' + d);
+}
+function phoneActionsHtml(p, size) {
+  const intl = phoneIntl(p);
+  if (!intl) return '';
+  const fs = size || 13;
+  return `<a href="tel:${intl}" onclick="event.stopPropagation()" title="Κλήση" style="text-decoration:none;font-size:${fs}px;flex-shrink:0">☎️</a><a href="viber://chat?number=${encodeURIComponent(intl)}" onclick="event.stopPropagation()" title="Μήνυμα στο Viber" style="text-decoration:none;font-size:${fs}px;flex-shrink:0">💬</a>`;
+}
+
 // Μετάβαση στο Πρόγραμμα, στην ημέρα ενός ραντεβού (κλικ από Ιστορικό Ραντεβού)
 function gotoCalendarDay(startTime) {
   S.calDate = new Date(startTime).toISOString();
@@ -5335,6 +5443,17 @@ function bindEvents() {
         S._apptRefsLoaded = true;
       }
       S.modal=modal; S.modalData = el.dataset.clinicId ? {clinicId: el.dataset.clinicId} : {}; render();
+      // Άνοιγμα "Νέο Ραντεβού" μέσα από καρτέλα ασθενή: ο ασθενής έρχεται
+      // προσυμπληρωμένος — όχι δεύτερη αναζήτηση του ίδιου ονόματος.
+      if (modal==='new-appt' && S.page==='patient-detail' && S.patientDetail && S.patientDetail.id) {
+        const ps = document.getElementById('a-patient-search');
+        const pid = document.getElementById('a-patient-id');
+        if (ps && pid) {
+          ps.value = S.patientDetail.full_name || '';
+          pid.value = S.patientDetail.id;
+          if (window._apptLoadPatientPackages) window._apptLoadPatientPackages(S.patientDetail.id);
+        }
+      }
     };
   });
 
@@ -5833,7 +5952,7 @@ function bindEvents() {
           <div style="width:36px;height:36px;border-radius:50%;background:${c.bg};display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:${c.text}">${initials(a.patients&&a.patients.full_name)}</div>
           <div>
             <div style="font-size:14px;font-weight:500">${esc(a.patients&&a.patients.full_name||'—')}</div>
-            <div style="font-size:12px;color:var(--text-2)">${esc(a.patients&&a.patients.phone||'')}</div>
+            <div style="font-size:12px;color:var(--text-2);display:flex;align-items:center;gap:6px">${esc(a.patients&&a.patients.phone||'')} ${phoneActionsHtml(a.patients&&a.patients.phone, 13)}</div>
           </div>
         </div>
         ${[
