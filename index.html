@@ -674,6 +674,13 @@ async function loadPageData() {
     const {data} = await sb.from('patients').select('*').eq('clinic_id',cid).order('created_at',{ascending:false});
     S.patients = data||[];
   }
+  if (S.page==='patients') {
+    // Επόμενο προγραμματισμένο ραντεβού ανά ασθενή — μικρή ένδειξη στη λίστα
+    const {data:nextAppts} = await sb.from('appointments').select('patient_id,start_time').eq('clinic_id',cid)
+      .gte('start_time', new Date().toISOString()).neq('status','cancelled').order('start_time',{ascending:true});
+    S.nextApptByPatient = {};
+    (nextAppts||[]).forEach(a=>{ if (a.patient_id && !S.nextApptByPatient[a.patient_id]) S.nextApptByPatient[a.patient_id]=a.start_time; });
+  }
   if (S.page==='dashboard') {
     // Τελευταία επίσκεψη για VIP + ενεργούς πελάτες — ειδικό, ακριβές query (όχι από το
     // περικομμένο S.appointments των 200 πιο πρόσφατων, που κρύβει παλαιότερες επισκέψεις).
@@ -1771,6 +1778,7 @@ function renderPatients() {
           <td><div style="display:flex;align-items:center;gap:9px">
             <div style="width:28px;height:28px;border-radius:50%;background:#E6F1FB;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;color:#185FA5;flex-shrink:0">${initials(p.full_name)}</div>
             <div><div style="font-weight:500;font-size:13px">${esc(p.full_name)}</div>${p.email?`<div style="font-size:11px;color:var(--text-2)">${esc(p.email)}</div>`:''}
+              ${(S.nextApptByPatient||{})[p.id]?`<div style="font-size:10.5px;color:var(--blue);font-weight:600" title="Επόμενο ραντεβού">→ ${new Date(S.nextApptByPatient[p.id]).toLocaleDateString('el-GR',{day:'numeric',month:'numeric'})}, ${new Date(S.nextApptByPatient[p.id]).toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'})}</div>`:''}
               <div class="mobile-pt-indicators">
                 <span style="font-size:10px;padding:1px 6px;border-radius:6px;background:${p.gdpr_signed?'#E1F5EE':'#FCEBEB'};color:${p.gdpr_signed?'#0F6E56':'#A32D2D'}">${p.gdpr_signed?'✅ GDPR':'❌ GDPR'}</span>
                 <span style="font-size:10px;padding:1px 6px;border-radius:6px;background:var(--surface);color:#0F6E56;font-weight:500">LTV ${euro(p.ltv)}</span>
@@ -2903,6 +2911,7 @@ function renderCalendar() {
       }</span>
       <button class="btn btn-ghost btn-sm" data-cal-nav="1">›</button>
       <button class="btn btn-ghost btn-sm" data-cal-today>Σήμερα</button>
+      ${calView==='day'?`<button class="btn btn-ghost btn-sm" onclick="printDaySchedule()" title="Εκτύπωση ημερήσιου προγράμματος">🖨</button>`:''}
 
       <div style="flex:1"></div>
 
@@ -4107,6 +4116,57 @@ function gotoCalendarDay(startTime) {
   S.calView = 'day';
   S.page = 'calendar';
   loadPageData().then(render);
+}
+
+// Νέο Ραντεβού με προσυμπληρωμένη ώρα/θεραπευτή — από κλικ σε κενή ώρα του
+// Προγράμματος. Φορτώνει πρώτα κατάλογο υπηρεσιών/προσωπικού αν χρειάζεται.
+async function openNewApptAt(datetimeLocal, therapistName) {
+  if (!S._apptRefsLoaded) {
+    const cid = clinicId();
+    const [{data:svc},{data:staffRows},{data:ss}] = await Promise.all([
+      sb.from('services').select('*').eq('clinic_id',cid).eq('active',true).order('category').order('name'),
+      sb.from('profiles').select('*').eq('clinic_id',cid).in('role',['therapist','clinic_admin']).order('full_name'),
+      sb.from('staff_services').select('*').eq('clinic_id',cid),
+    ]);
+    S.apptServicesCatalog = svc||[]; S.apptStaffList = staffRows||[]; S.apptStaffServices = ss||[];
+    S._apptRefsLoaded = true;
+  }
+  S.modal = 'new-appt'; S.modalData = {}; render();
+  const t = document.getElementById('a-time'); if (t && datetimeLocal) t.value = datetimeLocal;
+  if (therapistName) {
+    const sel = document.getElementById('a-therapist');
+    const match = (S.apptStaffList||[]).find(s=>sameStaffName(s.full_name, therapistName));
+    if (sel && match) { sel.value = match.id; sel.dispatchEvent(new Event('change')); }
+  }
+}
+
+// 🖨 Καθαρό τυπώσιμο ημερήσιο πρόγραμμα ανά θεραπεύτρια (για τη ρεσεψιόν)
+function printDaySchedule() {
+  const base = S.calDate ? new Date(S.calDate) : new Date();
+  const dayStr = base.toDateString();
+  const appts = (S.appointments||[]).filter(a=>new Date(a.start_time).toDateString()===dayStr && a.status!=='cancelled')
+    .sort((a,b)=>new Date(a.start_time)-new Date(b.start_time));
+  const FIXED = ['Λίνα','Χριστιάνα','Αθανασία','Νάνσυ'];
+  const canon = t => FIXED.find(f=>sameStaffName(f,t)) || t || 'Μη ανατεθειμένα';
+  const groups = {};
+  appts.forEach(a=>{ const k = canon(apptStaffName(a, S.staff||[])); (groups[k]=groups[k]||[]).push(a); });
+  const order = [...FIXED.filter(f=>groups[f]), ...Object.keys(groups).filter(k=>!FIXED.includes(k))];
+  const w = window.open('', '_blank');
+  if (!w) { alert('Επίτρεψε τα αναδυόμενα παράθυρα για την εκτύπωση.'); return; }
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8">
+    <title>Πρόγραμμα ${base.toLocaleDateString('el-GR')}</title>
+    <style>body{font-family:Arial,sans-serif;padding:24px;color:#111}h1{font-size:18px;margin:0 0 4px}
+    .sub{font-size:12px;color:#666;margin-bottom:14px}h2{font-size:14px;border-bottom:2px solid #333;padding-bottom:4px;margin:18px 0 6px}
+    table{width:100%;border-collapse:collapse}td,th{padding:6px 8px;border-bottom:1px solid #ddd;font-size:12px;text-align:left}
+    th{background:#f3f3f3}</style></head><body>
+    <h1>Beauty Line by Lina Panou — Ημερήσιο Πρόγραμμα</h1>
+    <div class="sub">${base.toLocaleDateString('el-GR',{weekday:'long',day:'numeric',month:'long',year:'numeric'})} · ${appts.length} ραντεβού</div>
+    ${order.length?order.map(k=>`<h2>${esc(k)} (${groups[k].length})</h2>
+    <table><tr><th style="width:60px">Ώρα</th><th>Πελάτης</th><th style="width:110px">Τηλέφωνο</th><th>Υπηρεσία</th><th style="width:60px">Διάρκεια</th></tr>
+      ${groups[k].map(a=>`<tr><td><b>${new Date(a.start_time).toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'})}</b></td><td>${esc(a.patients&&a.patients.full_name||'—')}</td><td>${esc(a.patients&&a.patients.phone||'')}</td><td>${esc(a.service_name||'')}</td><td>${a.duration_minutes||60}'</td></tr>`).join('')}
+    </table>`).join(''):'<p>Κανένα ραντεβού.</p>'}
+    <scr`+`ipt>window.print()<\/scr`+`ipt></body></html>`);
+  w.document.close();
 }
 
 // ── ΠΡΟΣΩΠΙΚΟ & ΥΠΗΡΕΣΙΕΣ ──
@@ -5901,6 +5961,23 @@ function bindEvents() {
       handleCalDrop(e.dataTransfer.getData('text/plain'), colEl, e.clientY);
     });
   });
+  // Κλικ σε ΚΕΝΗ ώρα του πλέγματος → Νέο Ραντεβού με έτοιμη ώρα (βήμα 15') και
+  // θεραπευτή της στήλης — η πιο συχνή κίνηση της ημέρας με 1 κλικ.
+  document.querySelectorAll('[data-hour-grid]').forEach(grid => {
+    grid.addEventListener('click', (e) => {
+      if (e.target.closest('[data-appt-cal]')) return; // κλικ σε κάρτα ραντεβού, όχι σε κενό
+      const rect = grid.getBoundingClientRect();
+      const ppm = parseFloat(grid.dataset.ppm)||1.2;
+      const startHour = parseInt(grid.dataset.hourGrid)||8;
+      const min = Math.max(0, Math.floor(((e.clientY-rect.top)/ppm)/15)*15);
+      const base = S.calDate ? new Date(S.calDate) : new Date();
+      const dateStr = base.toLocaleDateString('sv-SE');
+      const hh = String(startHour + Math.floor(min/60)).padStart(2,'0');
+      const mm = String(min%60).padStart(2,'0');
+      const colEl = grid.closest('[data-drop-col]');
+      openNewApptAt(`${dateStr}T${hh}:${mm}`, colEl ? colEl.dataset.dropCol : '');
+    });
+  });
   const calNeedsReload = (d) => S.calRangeFrom && (d.getTime() < S.calRangeFrom + 7*86400000 || d.getTime() > S.calRangeTo - 7*86400000);
   document.querySelectorAll('[data-cal-nav]').forEach(el => {
     el.onclick = () => {
@@ -7132,6 +7209,24 @@ function bindModalEvents() {
     const svcSel = document.getElementById('a-service');
     const serviceName = svcSel.value==='__custom__' ? document.getElementById('a-service-custom').value.trim() : svcSel.value;
     const therapistSel = document.getElementById('a-therapist');
+    // Προειδοποίηση διπλοκράτησης ΘΕΡΑΠΕΥΤΗ: αν το νέο ραντεβού επικαλύπτεται
+    // χρονικά με άλλο του ίδιου ατόμου, ρωτάμε — δεν μπλοκάρουμε (όπως και με
+    // τη διπλοκράτηση Laser, η τελική απόφαση είναι του χρήστη).
+    const newTherId = therapistSel ? (therapistSel.value||null) : null;
+    if (newTherId) {
+      const newStart = new Date(time).getTime();
+      const newEnd = newStart + (parseInt(document.getElementById('a-duration').value)||60)*60000;
+      const clash = (S.appointments||[]).find(a => {
+        if (a.status==='cancelled' || a.therapist_id!==newTherId) return false;
+        const s = new Date(a.start_time).getTime(), e = s + (a.duration_minutes||60)*60000;
+        return newStart < e && s < newEnd;
+      });
+      if (clash) {
+        const therName = ((S.apptStaffList||[]).find(s=>s.id===newTherId)||{}).full_name || 'Ο θεραπευτής';
+        const when = new Date(clash.start_time).toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'});
+        if (!confirm(`⚠ ${therName} έχει ήδη ραντεβού στις ${when} (${clash.patients&&clash.patients.full_name||'—'} · ${clash.service_name||''}).\n\nΝα κλειστεί παρόλα αυτά;`)) return;
+      }
+    }
     const btn = document.getElementById('save-appt');
     btn.textContent='Αποθήκευση...'; btn.disabled=true;
     const pkgSel = document.getElementById('a-package');
