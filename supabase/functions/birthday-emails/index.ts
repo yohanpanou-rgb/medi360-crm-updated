@@ -66,7 +66,7 @@ function firstName(full: string): string {
 function birthdayEmailHtml(name: string, expiresStr: string): string {
   // Solid hex χρώματα + -webkit-text-fill-color: ίδιο pattern με το consultation
   // email για σωστή εμφάνιση στο iPhone Gmail dark mode.
-  return `<!doctype html><html><body style="margin:0;padding:0;background-color:#FAF3F6;">
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="margin:0;padding:0;background-color:#FAF3F6;">
   <div style="display:none!important;white-space:nowrap;font-size:0;line-height:0;">${'.'.repeat(200)}</div>
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#FAF3F6;padding:24px 0;">
     <tr><td align="center">
