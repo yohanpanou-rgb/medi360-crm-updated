@@ -724,6 +724,14 @@ async function loadPageData() {
       const {data:pa} = await sb.from('appointments').select('package_id,status').in('package_id',pkgIds);
       (pa||[]).forEach(r=>{ if(r.status!=='cancelled') S.dashPkgApptCounts[r.package_id]=(S.dashPkgApptCounts[r.package_id]||0)+1; });
     }
+
+    // 🎁 Δώρα γενεθλίων φετινής χρονιάς — badges στο widget Γενεθλίων
+    // (✉ εστάλη email / 📞 κάλεσε για το δώρο)
+    S.dashBirthdayGifts = {};
+    try {
+      const {data:bgifts} = await sb.from('birthday_gifts').select('patient_id,channel,redeemed_at').eq('clinic_id',cid).eq('year', new Date().getFullYear());
+      (bgifts||[]).forEach(g=>{ S.dashBirthdayGifts[g.patient_id]=g; });
+    } catch(e) {}
     S.dashStatusTrend = trendApts||[];
   }
   if (S.page==='patients') {
@@ -994,6 +1002,13 @@ async function loadPatientDetail(id, tab) {
     // (μη ακυρωμένα με package_id), όχι από χειροκίνητο μετρητή.
     const {data:pkgs} = await sb.from('patient_packages').select('*').eq('patient_id',id).order('purchased_at',{ascending:false});
     S.patientPackages = pkgs||[];
+
+    // 🎁 Δώρο γενεθλίων: το πιο πρόσφατο, για banner στην καρτέλα
+    S.patientBirthdayGift = null;
+    try {
+      const {data:bg} = await sb.from('birthday_gifts').select('*').eq('patient_id',id).order('sent_at',{ascending:false}).limit(1);
+      S.patientBirthdayGift = (bg&&bg[0])||null;
+    } catch(e) {}
 
     // Φωτογραφίες ασθενή — μεταδεδομένα + signed URLs (private bucket)
     S.patientPhotos = [];
@@ -1496,12 +1511,20 @@ function renderDashboard() {
       <div class="card">
         <div class="card-header"><span class="card-title">🎂 Γενέθλια (7 ημέρες)</span></div>
         <div style="max-height:290px;overflow-y:auto">
-          ${birthdays.length?birthdays.map(b=>`
+          ${birthdays.length?birthdays.map(b=>{
+            const gift = (S.dashBirthdayGifts||{})[b.p.id];
+            const giftBadge = gift
+              ? (gift.redeemed_at ? '<span style="font-size:9.5px;font-weight:700;color:#53586B;background:#E4E6ED;padding:1px 7px;border-radius:8px;flex-shrink:0">🎁 εξαργυρώθηκε</span>'
+                : gift.channel==='email' ? '<span style="font-size:9.5px;font-weight:700;color:#0F6E56;background:#E1F5EE;padding:1px 7px;border-radius:8px;flex-shrink:0">✉ εστάλη δώρο</span>'
+                : '<span style="font-size:9.5px;font-weight:700;color:#A32D2D;background:#FCEBEB;padding:1px 7px;border-radius:8px;flex-shrink:0">📞 κάλεσε για το δώρο!</span>')
+              : '';
+            return `
           <div style="display:flex;align-items:center;gap:8px;padding:8px 16px;border-bottom:1px solid var(--border-2);cursor:pointer;font-size:12px" data-patient="${b.p.id}" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background=''">
             <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500">${esc(b.p.full_name)}</span>
+            ${giftBadge}
             ${phoneActionsHtml(b.p.phone, 12)}
             <span style="font-size:11px;font-weight:700;color:${b.inDays===0?'#C4618A':'var(--text-2)'};flex-shrink:0">${b.inDays===0?'🎉 Σήμερα!':b.inDays===1?'αύριο':b.next.toLocaleDateString('el-GR',{weekday:'short',day:'numeric',month:'numeric'})}</span>
-          </div>`).join(''):`<div style="padding:24px;text-align:center;color:var(--text-2);font-size:12px">Κανένα γενέθλια αυτή την εβδομάδα</div>`}
+          </div>`;}).join(''):`<div style="padding:24px;text-align:center;color:var(--text-2);font-size:12px">Κανένα γενέθλια αυτή την εβδομάδα</div>`}
         </div>
       </div>
     </div>
@@ -1970,6 +1993,26 @@ function renderPatientDetail() {
         <button class="btn btn-ghost btn-sm" onclick="openPackageModal()">📦 + Πακέτο</button>
         <button class="btn btn-primary btn-sm" data-modal="new-laser">+ Laser Form</button>
       </div>
+    </div>
+    ${(()=>{
+      // 🎁 Banner δώρου γενεθλίων: ενεργό (με κουμπί εξαργύρωσης) ή πρόσφατα εξαργυρωμένο
+      const g = S.patientBirthdayGift;
+      if (!g) return '';
+      const todayStr = new Date().toISOString().slice(0,10);
+      if (!g.redeemed_at && g.expires_at >= todayStr) {
+        return `<div style="background:#FDF0F5;border:1.5px solid #C4618A;border-radius:12px;padding:10px 16px;margin-bottom:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span style="font-size:18px">🎁</span>
+          <div style="flex:1;min-width:200px;font-size:12.5px;color:#8A3B5E"><b>Δώρο γενεθλίων ενεργό έως ${new Date(g.expires_at+'T00:00:00').toLocaleDateString('el-GR')}</b> — 1 δωρεάν θεραπεία προσώπου (αξίας έως 80€) + 10% έκπτωση στα καλλυντικά${g.channel==='call'?' · <span style="color:#A32D2D;font-weight:700">δεν έχει email — ενημέρωσέ τον τηλεφωνικά!</span>':''}</div>
+          <button class="btn btn-sm" onclick="redeemBirthdayGift('${g.id}')" style="background:#C4618A;color:#fff;font-weight:700">✓ Εξαργύρωση</button>
+        </div>`;
+      }
+      if (g.redeemed_at && (Date.now()-new Date(g.redeemed_at).getTime()) < 60*86400000) {
+        return `<div style="background:#E1F5EE;border-radius:12px;padding:8px 16px;margin-bottom:14px;font-size:12px;color:#0F6E56">🎁 Το δώρο γενεθλίων εξαργυρώθηκε στις ${new Date(g.redeemed_at).toLocaleDateString('el-GR')} ✓</div>`;
+      }
+      return '';
+    })()}
+    <!-- κενό κρυφό div: καταναλώνει το κλείσιμο του παλιού header container -->
+    <div style="display:none">>
     </div>
 
     <!-- Tabs -->
@@ -3691,6 +3734,28 @@ function computeReportStats() {
     newPatientsDelta, newPatientsPct, consultations, prevConsultCount, consultDelta, consultPct,
     utilizationRate, utilizationIsReal, recommendedTotal, recommendedDone, missedRecommendations,
     completedCount, cancelledCount, pendingCount };
+}
+
+// 🎁 Δώρο γενεθλίων — εξαργύρωση
+async function redeemBirthdayGift(id) {
+  const {error} = await sb.from('birthday_gifts').update({redeemed_at: new Date().toISOString()}).eq('id', id);
+  if (error) { alert('Σφάλμα: '+error.message); return; }
+  if (S.patientBirthdayGift && S.patientBirthdayGift.id===id) S.patientBirthdayGift.redeemed_at = new Date().toISOString();
+  render();
+}
+// Αυτόματη εξαργύρωση: όταν ολοκληρώνεται ραντεβού πελάτη με ενεργό δώρο
+// γενεθλίων (μέσα στην ισχύ του), το δώρο μαρκάρεται εξαργυρωμένο μόνο του.
+async function maybeRedeemBirthdayGift(appt) {
+  try {
+    if (!appt || !appt.patient_id) return;
+    const todayStr = new Date().toISOString().slice(0,10);
+    const {data:gifts} = await sb.from('birthday_gifts').select('id')
+      .eq('patient_id', appt.patient_id).is('redeemed_at', null).gte('expires_at', todayStr).limit(1);
+    if (gifts && gifts.length) {
+      await sb.from('birthday_gifts').update({redeemed_at: new Date().toISOString(), redeemed_appointment_id: appt.id}).eq('id', gifts[0].id);
+      if (S.patientBirthdayGift && S.patientBirthdayGift.id===gifts[0].id) S.patientBirthdayGift.redeemed_at = new Date().toISOString();
+    }
+  } catch(e) { /* σιωπηλά — δεν μπλοκάρει την αλλαγή κατάστασης */ }
 }
 
 // Όταν ένα ραντεβού μαρκάρεται "Ολοκληρωμένο" ΧΩΡΙΣ τιμή (π.χ. ήρθε από το
@@ -5483,6 +5548,7 @@ function bindEvents() {
       const {error} = await sb.from('appointments').update(upd).eq('id',el.dataset.apptStatus);
       if (error) { alert('✗ Η αλλαγή κατάστασης απέτυχε: '+error.message); el.value = prevValue; return; }
       if (appt) Object.assign(appt, upd);
+      if (newValue==='completed' && appt) await maybeRedeemBirthdayGift(appt);
       loadPageData();
     };
   });
@@ -6081,6 +6147,7 @@ function bindEvents() {
         const {error} = await sb.from('appointments').update(upd).eq('id',a.id);
         if (error) { alert('✗ Η αλλαγή κατάστασης απέτυχε: '+error.message); ev.target.value = prevValue; return; }
         Object.assign(a, upd);
+        if (ev.target.value==='completed') await maybeRedeemBirthdayGift(a);
         await loadPageData();
       });
       // Αλλαγή θεραπευτή από το popup — ίδια ενημέρωση με το drag & drop
