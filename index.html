@@ -1792,7 +1792,7 @@ function renderPatients() {
           <th class="hide-mobile" data-sort="gdpr_signed" style="cursor:pointer;user-select:none">GDPR${sortArrow('gdpr_signed')}</th>
           <th class="hide-mobile" data-sort="medical_history" style="cursor:pointer;user-select:none">Ιατρ. Ιστ.${sortArrow('medical_history')}</th>
           <th class="hide-mobile" data-sort="consult" style="cursor:pointer;user-select:none">Consultation${sortArrow('consult')}</th>
-          <th class="hide-mobile" data-sort="ltv" style="cursor:pointer;user-select:none">LTV${sortArrow('ltv')}</th>
+          ${canSee(['super_admin','clinic_admin'])?`<th class="hide-mobile" data-sort="ltv" style="cursor:pointer;user-select:none">LTV${sortArrow('ltv')}</th>`:''}
           <th></th>
         </tr></thead>
         <tbody>${filtered.length?filtered.map(p=>{
@@ -1804,7 +1804,7 @@ function renderPatients() {
               ${(S.nextApptByPatient||{})[p.id]?`<div style="font-size:10.5px;color:var(--blue);font-weight:600" title="Επόμενο ραντεβού">→ ${new Date(S.nextApptByPatient[p.id]).toLocaleDateString('el-GR',{day:'numeric',month:'numeric'})}, ${new Date(S.nextApptByPatient[p.id]).toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'})}</div>`:''}
               <div class="mobile-pt-indicators">
                 <span style="font-size:10px;padding:1px 6px;border-radius:6px;background:${p.gdpr_signed?'#E1F5EE':'#FCEBEB'};color:${p.gdpr_signed?'#0F6E56':'#A32D2D'}">${p.gdpr_signed?'✅ GDPR':'❌ GDPR'}</span>
-                <span style="font-size:10px;padding:1px 6px;border-radius:6px;background:var(--surface);color:#0F6E56;font-weight:500">LTV ${euro(p.ltv)}</span>
+                ${canSee(['super_admin','clinic_admin'])?`<span style="font-size:10px;padding:1px 6px;border-radius:6px;background:var(--surface);color:#0F6E56;font-weight:500">LTV ${euro(p.ltv)}</span>`:''}
               </div>
             </div>
           </div></td>
@@ -1813,7 +1813,7 @@ function renderPatients() {
           <td class="hide-mobile">${p.gdpr_signed?'✅':'❌'}</td>
           <td class="hide-mobile">${hasMedicalHistoryData(p)?'<span style="color:#0F6E56;font-weight:600" title="Έχει συμπληρώσει ιατρικό ιστορικό">✓</span>':'<span style="color:var(--text-3)">—</span>'}</td>
           <td class="hide-mobile">${consultDate?`<span style="color:#185FA5;font-weight:500;font-size:12px">${new Date(consultDate).toLocaleDateString('el-GR',{day:'2-digit',month:'2-digit',year:'numeric'})}</span>`:'<span style="color:var(--text-3)">—</span>'}</td>
-          <td class="hide-mobile" style="font-weight:500;color:#0F6E56">${euro(p.ltv)}</td>
+          ${canSee(['super_admin','clinic_admin'])?`<td class="hide-mobile" style="font-weight:500;color:#0F6E56">${euro(p.ltv)}</td>`:''}
           <td><button class="btn btn-ghost btn-xs" data-patient="${p.id}">Άνοιγμα</button></td>
         </tr>`;
         }).join(''):`<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">◎</div><div>Δεν βρέθηκαν ασθενείς</div></div></td></tr>`}
@@ -2162,7 +2162,7 @@ function renderPatientDetail() {
               <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
                 <div style="min-width:0">
                   <span style="font-weight:600;font-size:13px">${esc(pkg.name)}</span>
-                  ${pkg.price?`<span style="font-size:11px;color:var(--text-2)"> · ${euro(pkg.price)}</span>`:''}
+                  ${canSeeFinancials&&pkg.price?`<span style="font-size:11px;color:var(--text-2)"> · ${euro(pkg.price)}</span>`:''}
                   <span style="font-size:11px;color:var(--text-2)"> · αγορά ${new Date(pkg.purchased_at).toLocaleDateString('el-GR')}</span>
                 </div>
                 <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
@@ -2559,7 +2559,7 @@ function renderAppointments() {
             }</div>`:''}
           </div>
           <div style="font-size:12px;color:var(--text-2);white-space:nowrap;flex-shrink:0">${fmtDt(a.start_time)}</div>
-          ${a.price?`<div style="font-size:13px;font-weight:500;color:#0F6E56;flex-shrink:0">${euro(a.price)}</div>`:''}
+          ${canSee(['super_admin','clinic_admin'])&&a.price?`<div style="font-size:13px;font-weight:500;color:#0F6E56;flex-shrink:0">${euro(a.price)}</div>`:''}
           ${apptBadge(a.status)}
           <select data-appt-status="${a.id}" style="font-size:11px;padding:3px 6px;border-radius:6px;border:1px solid var(--border);background:transparent;cursor:pointer;font-family:var(--font)">
             ${Object.entries(STATUS_APPT).map(([k,v])=>`<option value="${k}" ${a.status===k?'selected':''}>${v.l}</option>`).join('')}
@@ -3764,7 +3764,9 @@ async function maybeRedeemBirthdayGift(appt) {
 // Ραντεβού ΠΑΚΕΤΟΥ εξαιρούνται: η τιμή τους είναι σκόπιμα 0 (πληρωμένο πακέτο).
 function apptStatusUpdatePayload(appt, newStatus) {
   const upd = {status: newStatus};
-  if (newStatus==='completed' && appt && !appt.package_id && !(parseFloat(appt.price)>0)) {
+  // Η ερώτηση τιμής εμφανίζεται ΜΟΝΟ σε clinic manager/admin — αισθητικοί και
+  // γραμματεία δεν βλέπουν ποτέ τιμές (ο admin συμπληρώνει/διορθώνει μετά).
+  if (newStatus==='completed' && appt && canSee(['super_admin','clinic_admin']) && !appt.package_id && !(parseFloat(appt.price)>0)) {
     const answer = prompt('Το ραντεβού δεν έχει καταχωρημένη τιμή.\nΠόσο πληρώθηκε; (€)\n\n(Άφησέ το κενό αν ήταν δωρεάν/0€)');
     if (answer!==null && String(answer).trim()!=='') {
       const v = parseFloat(String(answer).replace(',','.'));
@@ -3782,6 +3784,9 @@ function reportDeltaLabel(diff, pct) {
 }
 
 function renderReports() {
+  // Οικονομικά στοιχεία: ΜΟΝΟ clinic manager & admin — ακόμα κι αν κάποιος
+  // φτάσει εδώ με πλοήγηση εκτός μενού (π.χ. φωνητική εντολή).
+  if (!canSee(['super_admin','clinic_admin'])) return `<div class="page"><div class="empty-state"><div class="empty-icon">🔒</div><div>Δεν έχεις πρόσβαση στις Αναφορές</div></div></div>`;
   const cid = clinicId();
   if (!cid && isSuperAdmin()) return `<div class="page"><div class="empty-state"><div class="empty-icon">⊞</div><div style="font-size:14px;font-weight:500;margin-bottom:8px">Επίλεξε κλινική</div><div>Χρησιμοποίησε τον επιλογέα στα αριστερά</div></div></div>`;
   const canFin = canSee(['super_admin','clinic_admin']);
@@ -4003,7 +4008,7 @@ function openPackageModal(opts) {
         </select></div>
       <div class="form-row">
         <div class="form-group"><label class="form-label">Συνεδρίες</label><input class="form-control" type="number" id="pkg-total" value="6" min="1"/></div>
-        <div class="form-group"><label class="form-label">Τιμή πακέτου (€)</label><input class="form-control" type="number" id="pkg-price" placeholder="προαιρετικό"/></div>
+        <div class="form-group" ${canSee(['super_admin','clinic_admin'])?'':'style="display:none"'}><label class="form-label">Τιμή πακέτου (€)</label><input class="form-control" type="number" id="pkg-price" placeholder="προαιρετικό"/></div>
       </div>
       <div class="form-group"><label class="form-label">Ημ/νία αγοράς</label><input class="form-control" type="date" id="pkg-date" value="${new Date().toISOString().slice(0,10)}"/></div>
       ${(forms&&forms.length)?`
@@ -4049,7 +4054,7 @@ function openPackageModal(opts) {
           <input type="checkbox" class="pkg-conv" value="${a.id}" data-svc="${esc(a.service_name||'')}"/>
           <span style="white-space:nowrap">${new Date(a.starts_at).toLocaleDateString('el-GR')}</span>
           <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis">${esc(a.service_name||'—')}</span>
-          ${a.price?`<span style="color:var(--text-2);white-space:nowrap">${euro(a.price)}</span>`:''}
+          ${canSee(['super_admin','clinic_admin'])&&a.price?`<span style="color:var(--text-2);white-space:nowrap">${euro(a.price)}</span>`:''}
         </label>`).join('');
       wrap.style.display = '';
       _pkgAutoCheckConversions();
@@ -4238,6 +4243,8 @@ function printDaySchedule() {
 function goToUsersSettings() { S.page='settings'; S.settingsTab='users'; loadPageData(); render(); }
 
 function renderStaffServices() {
+  // Τιμοκατάλογος, τζίρος & στατιστικά: ΜΟΝΟ clinic manager & admin.
+  if (!canSee(['super_admin','clinic_admin'])) return `<div class="page"><div class="empty-state"><div class="empty-icon">🔒</div><div>Δεν έχεις πρόσβαση σε αυτή τη σελίδα</div></div></div>`;
   const cid = clinicId();
   if (!cid && isSuperAdmin()) return `<div class="page"><div class="empty-state"><div class="empty-icon">🗂</div><div style="font-size:14px;font-weight:500;margin-bottom:8px">Επίλεξε κλινική</div><div>Χρησιμοποίησε τον επιλογέα στα αριστερά</div></div></div>`;
   const tab = S.ssvTab||'services';
@@ -5291,7 +5298,9 @@ function modalNewAppt() {
       </div>
       <div class="form-row">
         <div class="form-group"><label class="form-label">Διάρκεια (λεπτά)</label><input class="form-control" id="a-duration" type="number" value="60"/></div>
-        <div class="form-group"><label class="form-label">Τιμή (€)</label><input class="form-control" id="a-price" type="number" placeholder="0"/></div>
+        <!-- Τιμή: ορατή ΜΟΝΟ σε clinic manager/admin. Το input μένει στο DOM
+             (κρυφό) ώστε η τιμή καταλόγου να αποθηκεύεται κανονικά στο ταμείο. -->
+        <div class="form-group" ${canSee(['super_admin','clinic_admin'])?'':'style="display:none"'}><label class="form-label">Τιμή (€)</label><input class="form-control" id="a-price" type="number" placeholder="0"/></div>
       </div>
       <div class="form-group"><label class="form-label">Σημειώσεις</label><textarea class="form-control" id="a-notes" rows="2"></textarea></div>
     </div>
@@ -7236,9 +7245,10 @@ function bindModalEvents() {
       document.getElementById('a-price').value = 0;
       const after = pkg.used + 1;
       const lastNote = after >= (pkg.total_sessions||6) ? ' — ΤΕΛΕΥΤΑΙΑ του πακέτου!' : '';
+      const priceNote = canSee(['super_admin','clinic_admin']) ? ' · Τιμή ραντεβού: 0€ (προπληρωμένο).' : ' (προπληρωμένο πακέτο).';
       hint.textContent = pkg.laser_form_id
-        ? `Συνεδρία ${after}/${pkg.total_sessions||6}${lastNote} · Τιμή ραντεβού: 0€ (προπληρωμένο). Το υπόλοιπο ενημερώνεται όταν καταγραφεί η συνεδρία στη Φόρμα Laser.`
-        : `Θα καταναλωθεί η συνεδρία ${after}/${pkg.total_sessions||6}${lastNote} · Τιμή ραντεβού: 0€ (προπληρωμένο).`;
+        ? `Συνεδρία ${after}/${pkg.total_sessions||6}${lastNote}${priceNote} Το υπόλοιπο ενημερώνεται όταν καταγραφεί η συνεδρία στη Φόρμα Laser.`
+        : `Θα καταναλωθεί η συνεδρία ${after}/${pkg.total_sessions||6}${lastNote}${priceNote}`;
     } else if (hint) hint.textContent = '';
   });
 
@@ -7580,7 +7590,7 @@ function openMergeDuplicatesModal() {
         <div style="flex:1">
           <div style="font-weight:500;font-size:13px">${esc(p.full_name||'—')} ${p.id===primary.id?'<span style="font-size:10px;color:var(--green);font-weight:700">ΠΡΟΤΕΙΝΟΜΕΝΟ ΚΥΡΙΟ</span>':''}</div>
           <div style="font-size:11px;color:var(--text-2);font-family:var(--mono)">${esc(p.phone||'—')}${p.email?' · '+esc(p.email):''}</div>
-          <div style="font-size:11px;color:var(--text-2)">${p.city?esc(p.city)+' · ':''}${p.gdpr_signed?'✅ GDPR':'❌ GDPR'} · LTV ${euro(p.ltv)} · από ${fmt(p.created_at)}</div>
+          <div style="font-size:11px;color:var(--text-2)">${p.city?esc(p.city)+' · ':''}${p.gdpr_signed?'✅ GDPR':'❌ GDPR'}${canSee(['super_admin','clinic_admin'])?' · LTV '+euro(p.ltv):''} · από ${fmt(p.created_at)}</div>
         </div>
       </label>`).join('')}
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px">
