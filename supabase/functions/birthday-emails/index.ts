@@ -63,7 +63,7 @@ function firstName(full: string): string {
   return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
 }
 
-function birthdayEmailHtml(name: string, expiresStr: string): string {
+function birthdayEmailHtml(name: string, expiresStr: string, bookingLink?: string): string {
   // Solid hex χρώματα + -webkit-text-fill-color: ίδιο pattern με το consultation
   // email για σωστή εμφάνιση στο iPhone Gmail dark mode.
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="margin:0;padding:0;background-color:#FAF3F6;">
@@ -90,9 +90,12 @@ function birthdayEmailHtml(name: string, expiresStr: string): string {
               <div style="font-size:12.5px;color:#8A6070;-webkit-text-fill-color:#8A6070;margin-top:14px;">Ισχύει έως <b>${esc(expiresStr)}</b> — κλείστε το ραντεβού σας εγκαίρως!</div>
             </td></tr>
           </table>
-          <p style="font-size:14px;line-height:1.7;color:#333333;-webkit-text-fill-color:#333333;margin:20px 0 0;">
-            Για να κλείσετε τη δωρεάν θεραπεία σας, απαντήστε σε αυτό το email ή τηλεφωνήστε μας —
-            θα χαρούμε πολύ να σας δούμε! ✨
+          ${bookingLink ? `
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:22px 0 4px;">
+            <a href="${esc(bookingLink)}" style="display:inline-block;background-color:#C4618A;color:#FFFFFF;-webkit-text-fill-color:#FFFFFF;font-size:15px;font-weight:bold;text-decoration:none;padding:14px 34px;border-radius:30px;">📅 Κλείστε το ραντεβού σας online</a>
+          </td></tr></table>` : ''}
+          <p style="font-size:14px;line-height:1.7;color:#333333;-webkit-text-fill-color:#333333;margin:${bookingLink ? '14px' : '20px'} 0 0;text-align:${bookingLink ? 'center' : 'left'};">
+            ${bookingLink ? 'Ή απαντήστε σε αυτό το email / τηλεφωνήστε μας — θα χαρούμε πολύ να σας δούμε! ✨' : 'Για να κλείσετε τη δωρεάν θεραπεία σας, απαντήστε σε αυτό το email ή τηλεφωνήστε μας — θα χαρούμε πολύ να σας δούμε! ✨'}
           </p>
           <p style="font-size:13px;color:#8A6070;-webkit-text-fill-color:#8A6070;margin:22px 0 0;">
             Με αγάπη,<br/><b>Η ομάδα του Beauty Line by Lina Panou</b>
@@ -120,9 +123,10 @@ Deno.serve(async (req: Request) => {
     );
 
     const { data: clinic } = await supabase
-      .from('clinics').select('id,name').ilike('name', '%Beauty Line%').limit(1).single();
+      .from('clinics').select('id,name,booking_link').ilike('name', '%Beauty Line%').limit(1).single();
     if (!clinic) return json({ error: 'Clinic not found' }, 500);
     const cid = clinic.id as string;
+    const bookingLink = (clinic as { booking_link?: string }).booking_link || '';
 
     // Σημερινή ημερομηνία ΩΡΑΣ ΕΛΛΑΔΑΣ (το function τρέχει σε UTC)
     const nowAthens = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Athens' }));
@@ -163,7 +167,7 @@ Deno.serve(async (req: Request) => {
         try {
           if (!token) token = await getGmailAccessToken();
           const subject = `🎂 Χρόνια Πολλά, ${firstName(p.full_name)}! Ένα δώρο σας περιμένει 🎁`;
-          const html = birthdayEmailHtml(firstName(p.full_name), expiresStr);
+          const html = birthdayEmailHtml(firstName(p.full_name), expiresStr, bookingLink);
           const headerLines = [
             `From: Beauty Line by Lina Panou <yourbeautyline@gmail.com>`,
             `To: ${p.email}`,
