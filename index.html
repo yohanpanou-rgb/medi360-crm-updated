@@ -5845,9 +5845,24 @@ function bindEvents() {
           ['GDPR', a.patients&&a.patients.gdpr_signed ? '✅ Υπογεγραμμένο' : '❌ Χωρίς GDPR'],
           ...(canFin && a.price ? [['Τιμή', euro(a.price)]] : []),
         ].map(([k,v])=>`<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border-2);font-size:12px"><span style="color:var(--text-2)">${k}</span><span style="font-weight:500;text-align:right;max-width:180px">${esc(v||'—')}</span></div>`).join('')}
+        ${(()=>{
+          // Θεραπευτής: δικό του πεδίο — η αλλαγή εδώ ισοδυναμεί με drag & drop
+          // (ενημερώνει therapist_id + notes και μετακινεί την κάρτα στη στήλη του).
+          const FIXED = ['Λίνα','Χριστιάνα','Αθανασία','Νάνσυ'];
+          const extras = (S.staff||[]).map(s=>s.full_name).filter(n=>n && !FIXED.some(f=>sameStaffName(f,n)));
+          const opts = [...FIXED, ...extras];
+          const curName = apptStaffName(a, S.staff||[]) || '';
+          return `<div style="margin-top:10px">
+            <div style="font-size:11px;color:var(--text-2);margin-bottom:4px">Θεραπευτής</div>
+            <select id="appt-therapist-edit" style="width:100%;font-size:12px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-family:var(--font)">
+              <option value="">— Χωρίς ανάθεση —</option>
+              ${opts.map(n=>`<option value="${esc(n)}" ${curName && sameStaffName(n,curName)?'selected':''}>${esc(n)}</option>`).join('')}
+            </select>
+          </div>`;
+        })()}
         <div style="margin-top:10px">
-          <div style="font-size:11px;color:var(--text-2);margin-bottom:4px">Σημειώσεις <span style="color:var(--text-3)">(η γραμμή «Προσωπικό: …» ορίζει τη στήλη στο Πρόγραμμα)</span></div>
-          <textarea id="appt-notes-edit" rows="3" style="width:100%;font-size:12px;resize:vertical">${esc(a.notes||'')}</textarea>
+          <div style="font-size:11px;color:var(--text-2);margin-bottom:4px">Σημειώσεις</div>
+          <textarea id="appt-notes-edit" rows="3" style="width:100%;font-size:12px;resize:vertical" placeholder="π.χ. προτιμήσεις, ευαισθησίες, παρατηρήσεις...">${esc((a.notes||'').replace(/Προσωπικό:\s*[^\n·|]+\n?/i,'').trim())}</textarea>
           <button class="btn btn-ghost btn-sm" id="appt-notes-save" style="margin-top:4px;width:100%;justify-content:center">💾 Αποθήκευση σημειώσεων</button>
         </div>
         ${missingThisConsent?`
@@ -5872,18 +5887,40 @@ function bindEvents() {
         Object.assign(a, upd);
         await loadPageData();
       });
-      // Επεξεργασία σημειώσεων ραντεβού μέσα από το popup
+      // Αλλαγή θεραπευτή από το popup — ίδια ενημέρωση με το drag & drop
+      // (therapist_id + γραμμή «Προσωπικό:» στα notes), η κάρτα μετακινείται.
+      const _te=content.querySelector('#appt-therapist-edit');if(_te)_te.addEventListener('change', async () => {
+        const newTherapist = _te.value;
+        const notes = a.notes||'';
+        const upd = {};
+        if (newTherapist) {
+          upd.notes = /Προσωπικό:\s*[^\n·|]+/i.test(notes)
+            ? notes.replace(/Προσωπικό:\s*[^\n·|]+/i, 'Προσωπικό: '+newTherapist)
+            : (notes ? notes+'\n' : '') + 'Προσωπικό: '+newTherapist;
+          const stMatch = (S.staff||[]).find(s=>sameStaffName(s.full_name, newTherapist));
+          upd.therapist_id = stMatch ? stMatch.id : null;
+        } else {
+          upd.notes = notes.replace(/Προσωπικό:\s*[^\n·|]+\n?/i,'').trim();
+          upd.therapist_id = null;
+        }
+        const {error} = await sb.from('appointments').update(upd).eq('id',a.id);
+        if (error) { alert('✗ Η αλλαγή θεραπευτή απέτυχε: '+error.message); return; }
+        Object.assign(a, upd);
+        render(); // η κάρτα πάει στη στήλη του νέου θεραπευτή
+        const p2 = document.getElementById('appt-detail-panel'); if (p2) p2.style.display='block';
+      });
+      // Επεξεργασία σημειώσεων ραντεβού μέσα από το popup — η γραμμή
+      // «Προσωπικό: …» διατηρείται αυτόματα (διαχειρίζεται από το πεδίο Θεραπευτής).
       const _ns=content.querySelector('#appt-notes-save');if(_ns)_ns.addEventListener('click', async () => {
         const ta = content.querySelector('#appt-notes-edit'); if (!ta) return;
-        const newNotes = ta.value;
+        const therLine = ((a.notes||'').match(/Προσωπικό:\s*[^\n·|]+/i)||[])[0] || '';
+        const newNotes = [therLine, ta.value.trim()].filter(Boolean).join('\n');
         _ns.textContent = 'Αποθήκευση...'; _ns.disabled = true;
         const {error} = await sb.from('appointments').update({notes:newNotes}).eq('id',a.id);
         if (error) { alert('✗ Αποτυχία: '+error.message); _ns.textContent='💾 Αποθήκευση σημειώσεων'; _ns.disabled=false; return; }
         a.notes = newNotes;
         _ns.textContent = '✓ Αποθηκεύτηκαν'; _ns.disabled = false;
         setTimeout(()=>{ _ns.textContent='💾 Αποθήκευση σημειώσεων'; }, 1500);
-        render(); // αν άλλαξε το «Προσωπικό: …», ενημερώνεται και η στήλη
-        const p2 = document.getElementById('appt-detail-panel'); if (p2) p2.style.display='block';
       });
     };
   });
