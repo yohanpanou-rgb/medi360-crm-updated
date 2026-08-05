@@ -130,7 +130,7 @@ do $$
 declare
   t text;
 begin
-  foreach t in array array['profiles','clinics','patients','appointments','laser_forms','pipeline_deals','sms_log','service_consent_templates','gdpr_consents','laser_consents','service_consents','unmatched_consultations','patient_photos','medical_history_consents','patient_relationships','services','staff_services','staff_schedules','staff_schedule_overrides','staff_time_off','patient_packages']
+  foreach t in array array['profiles','clinics','patients','appointments','laser_forms','pipeline_deals','sms_log','service_consent_templates','gdpr_consents','laser_consents','service_consents','unmatched_consultations','patient_photos','medical_history_consents','patient_relationships','services','staff_services','staff_schedules','staff_schedule_overrides','staff_time_off','patient_packages','birthday_gifts']
   loop
     if to_regclass('public.' || t) is null then
       raise notice 'SKIPPED (table does not exist): %', t;
@@ -239,7 +239,7 @@ do $$
 declare
   t text;
 begin
-  foreach t in array array['patients','appointments','laser_forms','pipeline_deals','sms_log','service_consent_templates','gdpr_consents','laser_consents','service_consents','unmatched_consultations','patient_photos','medical_history_consents','patient_relationships','services','staff_services','staff_schedules','staff_schedule_overrides','staff_time_off','patient_packages']
+  foreach t in array array['patients','appointments','laser_forms','pipeline_deals','sms_log','service_consent_templates','gdpr_consents','laser_consents','service_consents','unmatched_consultations','patient_photos','medical_history_consents','patient_relationships','services','staff_services','staff_schedules','staff_schedule_overrides','staff_time_off','patient_packages','birthday_gifts']
   loop
     if to_regclass('public.' || t) is null then
       raise notice 'SKIPPED (table does not exist): %', t;
