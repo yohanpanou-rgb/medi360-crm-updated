@@ -122,11 +122,14 @@ Deno.serve(async (req: Request) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     );
 
-    const { data: clinic } = await supabase
-      .from('clinics').select('id,name,booking_link').ilike('name', '%Beauty Line%').limit(1).single();
-    if (!clinic) return json({ error: 'Clinic not found' }, 500);
+    // select('*') αντί για ρητές στήλες: αν το booking_link δεν υπάρχει ως
+    // στήλη (ή μπει αργότερα), το function δεν πρέπει να σκάει ολόκληρο.
+    const { data: clinic, error: clinicErr } = await supabase
+      .from('clinics').select('*').ilike('name', '%Beauty Line%').limit(1).single();
+    if (clinicErr || !clinic) return json({ error: 'Clinic not found: ' + (clinicErr ? clinicErr.message : '') }, 500);
     const cid = clinic.id as string;
-    const bookingLink = (clinic as { booking_link?: string }).booking_link || '';
+    const c = clinic as { booking_link?: string; settings?: { booking_link?: string } };
+    const bookingLink = c.booking_link || (c.settings && c.settings.booking_link) || '';
 
     // Σημερινή ημερομηνία ΩΡΑΣ ΕΛΛΑΔΑΣ (το function τρέχει σε UTC)
     const nowAthens = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Athens' }));
