@@ -66,11 +66,15 @@ function parseBooking247Email_(text) {
   if (durMatch && (durMatch[1] || durMatch[2])) {
     duration = (parseInt(durMatch[1], 10) || 0) * 60 + (parseInt(durMatch[2], 10) || 0);
   }
+  // Τιμή ραντεβού (τα emails online κρατήσεων την περιέχουν, π.χ. "38.00€") —
+  // περνάει στο CRM ώστε το ραντεβού να καταχωρείται με σωστό ποσό.
+  const priceMatch = clean.match(/Τιμή\s*ραντεβού\s*:\s*([\d.,]+)/i);
+  const price = priceMatch ? parseFloat(priceMatch[1].replace(',', '.')) : null;
   // Το τηλέφωνο είναι πλέον ΠΡΟΑΙΡΕΤΙΚΟ: κράτηση χωρίς τηλέφωνο περνάει στο
   // CRM με ταίριασμα ονόματος (το booking247-ingest το χειρίζεται) αντί να
   // χάνεται σιωπηλά.
   if (!name || !date) return null;
-  return { name: name.trim(), phone: phone.trim(), date, time, service: service.trim(), staff: staff.trim(), duration };
+  return { name: name.trim(), phone: phone.trim(), date, time, service: service.trim(), staff: staff.trim(), duration, price };
 }
 
 // ── Παρακολούθηση ΑΝΑ EMAIL (όχι ανά συζήτηση) ──
@@ -95,7 +99,10 @@ function syncBooking247Emails() {
   const processedSet = new Set(processedIds);
   const firstRun = processedIds.length === 0; // μετάβαση από το παλιό σύστημα (μόνο labels)
 
-  const threads = GmailApp.search('from:appointments@booking247.gr newer_than:7d', 0, 100);
+  // Ολόκληρο το domain booking247.gr — τα emails online κρατήσεων πελατών
+  // ("Νέα κράτηση από πελάτη") έρχονται από διαφορετικό αποστολέα απ' ό,τι οι
+  // ειδοποιήσεις προσωπικού, και με το παλιό from:appointments@ χάνονταν.
+  const threads = GmailApp.search('from:booking247.gr newer_than:7d', 0, 100);
   if (!threads.length) return;
 
   const rows = [];

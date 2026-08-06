@@ -65,6 +65,7 @@ interface IngestRow {
   service: string;
   staff?: string;
   duration?: number;
+  price?: number | null; // από το "Τιμή ραντεβού : 38.00€" των online κρατήσεων
 }
 
 Deno.serve(async (req: Request) => {
@@ -175,6 +176,7 @@ Deno.serve(async (req: Request) => {
         clinic_id: cid, patient_id: patientId,
         service_name: row.service || '', start_time: localTs,
         duration_minutes: row.duration || 60, status: 'confirmed',
+        price: (typeof row.price === 'number' && row.price > 0) ? row.price : null,
         notes: noteLines.join('\n'),
       });
       if (insApptErr) return { messageId: row.messageId, ok: false, reason: insApptErr.message };
