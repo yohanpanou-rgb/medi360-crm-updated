@@ -2,7 +2,7 @@
 // Τρέχει καθημερινά (pg_cron, βλ. supabase/create_birthday_gifts.sql):
 //  - Βρίσκει τους πελάτες που έχουν ΣΗΜΕΡΑ γενέθλια (ώρα Ελλάδας).
 //  - Όσοι έχουν email + υπογεγραμμένο GDPR → εορταστικό email με το δώρο:
-//    1 δωρεάν θεραπεία προσώπου (αξίας έως GIFT_VALUE€) + 10% έκπτωση στα
+//    δωροεπιταγή GIFT_VALUE€ για θεραπεία προσώπου + 10% έκπτωση στα
 //    καλλυντικά, με ισχύ 1 μήνα. Η αξία αποθηκεύεται ΑΝΑ δώρο (gift_value),
 //    ώστε αλλαγή του ποσού να μην επηρεάζει ήδη δοσμένα δώρα. Αποστολή μέσω
 //    Gmail API (ίδιος μηχανισμός με send-consultation-email, από
@@ -91,8 +91,8 @@ function birthdayEmailHtml(name: string, expiresStr: string, bookingLink?: strin
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#FDF0F5;border-radius:14px;">
             <tr><td style="padding:22px 24px;text-align:center;">
               <div style="font-size:15px;font-weight:bold;color:#C4618A;-webkit-text-fill-color:#C4618A;">🎁 ΤΟ ΔΩΡΟ ΤΩΝ ΓΕΝΕΘΛΙΩΝ ΣΑΣ</div>
-              <div style="font-size:17px;font-weight:bold;color:#333333;-webkit-text-fill-color:#333333;margin-top:12px;">Μία ΔΩΡΕΑΝ θεραπεία προσώπου της επιλογής σας</div>
-              <div style="font-size:12px;color:#8A6070;-webkit-text-fill-color:#8A6070;margin-top:3px;">(αξίας έως ${GIFT_VALUE}€)</div>
+              <div style="font-size:26px;font-weight:bold;color:#333333;-webkit-text-fill-color:#333333;margin-top:12px;">Δωροεπιταγή ${GIFT_VALUE}€</div>
+              <div style="font-size:14px;color:#8A6070;-webkit-text-fill-color:#8A6070;margin-top:4px;">για τη θεραπεία προσώπου της επιλογής σας</div>
               <div style="font-size:15px;font-weight:bold;color:#333333;-webkit-text-fill-color:#333333;margin-top:12px;">+ 10% έκπτωση στα καλλυντικά μας</div>
               <div style="font-size:12.5px;color:#8A6070;-webkit-text-fill-color:#8A6070;margin-top:14px;">Ισχύει έως <b>${esc(expiresStr)}</b> — κλείστε το ραντεβού σας εγκαίρως!</div>
             </td></tr>
