@@ -102,6 +102,16 @@ function apptStaffName(a: Appt, staffList: { id: string; full_name: string }[]):
 
 const FIXED = ['Λίνα', 'Χριστιάνα', 'Αθανασία', 'Νάνσυ'];
 
+// Τα start_time είναι αποθηκευμένα σε UTC (timestamptz) — το πρόγραμμα στο
+// browser τα δείχνει σε ώρα Ελλάδας, οπότε και το email κάνει την ΙΔΙΑ
+// μετατροπή, αλλιώς οι ώρες βγαίνουν 2-3 ώρες πίσω (χειμώνας/καλοκαίρι).
+function athensDay(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'Europe/Athens' });
+}
+function athensTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString('el-GR', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Europe/Athens' });
+}
+
 function scheduleEmailHtml(dayLabel: string, appts: Appt[], staffList: { id: string; full_name: string }[]): string {
   const canon = (t: string | null) => FIXED.find((f) => sameStaffName(f, t || '')) || t || 'Μη ανατεθειμένα';
   const groups: Record<string, Appt[]> = {};
@@ -114,7 +124,7 @@ function scheduleEmailHtml(dayLabel: string, appts: Appt[], staffList: { id: str
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
         ${groups[k].map((a) => `
         <tr>
-          <td style="padding:8px 8px 8px 0;border-bottom:1px solid #F0E2E9;font-size:13px;font-weight:bold;color:#333333;-webkit-text-fill-color:#333333;white-space:nowrap;vertical-align:top;width:48px;">${esc((a.start_time || '').slice(11, 16))}</td>
+          <td style="padding:8px 8px 8px 0;border-bottom:1px solid #F0E2E9;font-size:13px;font-weight:bold;color:#333333;-webkit-text-fill-color:#333333;white-space:nowrap;vertical-align:top;width:48px;">${esc(athensTime(a.start_time))}</td>
           <td style="padding:8px 8px;border-bottom:1px solid #F0E2E9;font-size:13px;color:#333333;-webkit-text-fill-color:#333333;vertical-align:top;">
             <b>${esc(a.patients?.full_name || '—')}</b>
             ${a.patients?.phone ? `<br/><span style="font-size:12px;color:#8A6070;-webkit-text-fill-color:#8A6070;">${esc(a.patients.phone)}</span>` : ''}
@@ -165,25 +175,33 @@ Deno.serve(async (req: Request) => {
     if (clinicErr || !clinic) return json({ error: 'Clinic not found: ' + (clinicErr ? clinicErr.message : '') }, 500);
     const cid = clinic.id as string;
 
-    // Σημερινή ημερομηνία ώρας Ελλάδας — τα start_time είναι αποθηκευμένα ως
-    // «τοπική ώρα Ελλάδας», οπότε η σύγκριση γίνεται με σκέτα strings
-    // ημερομηνιών (καμία μετατροπή ζώνης ώρας πάνω στα ραντεβού).
+    // Ένα ερώτημα για όλο το 8ήμερο παράθυρο· η κατανομή σε ημέρες γίνεται
+    // μετά, με βάση την ημερομηνία ΩΡΑΣ ΕΛΛΑΔΑΣ του κάθε ραντεβού (τα
+    // start_time είναι UTC, οπότε τα όρια της ημέρας δεν συμπίπτουν με τα UTC).
     const nowAthens = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Athens' }));
     const dstr = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const winFrom = new Date(nowAthens); winFrom.setDate(winFrom.getDate() - 1);
+    const winTo = new Date(nowAthens); winTo.setDate(winTo.getDate() + 9);
+
+    const { data: allAppts, error: apptErr } = await supabase
+      .from('appointments')
+      .select('start_time, status, service_name, duration_minutes, therapist_id, notes, patients(full_name, phone)')
+      .eq('clinic_id', cid)
+      .gte('start_time', dstr(winFrom) + 'T00:00:00')
+      .lt('start_time', dstr(winTo) + 'T00:00:00')
+      .neq('status', 'cancelled')
+      .order('start_time');
+    if (apptErr) return json({ error: 'Appointments: ' + apptErr.message }, 500);
+    const byDay: Record<string, Appt[]> = {};
+    ((allAppts || []) as unknown as Appt[]).forEach((a) => {
+      const k = athensDay(a.start_time);
+      (byDay[k] = byDay[k] || []).push(a);
+    });
 
     // Ψάξε την πρώτη ημέρα με ραντεβού, από αύριο έως +7
     for (let ahead = 1; ahead <= 7; ahead++) {
       const day = new Date(nowAthens); day.setDate(day.getDate() + ahead);
-      const next = new Date(day); next.setDate(next.getDate() + 1);
-      const { data: appts, error: apptErr } = await supabase
-        .from('appointments')
-        .select('start_time, status, service_name, duration_minutes, therapist_id, notes, patients(full_name, phone)')
-        .eq('clinic_id', cid)
-        .gte('start_time', dstr(day) + 'T00:00:00')
-        .lt('start_time', dstr(next) + 'T00:00:00')
-        .neq('status', 'cancelled')
-        .order('start_time');
-      if (apptErr) return json({ error: 'Appointments: ' + apptErr.message }, 500);
+      const appts = byDay[dstr(day)];
       if (!appts || !appts.length) continue;
 
       const { data: staff } = await supabase
@@ -193,7 +211,7 @@ Deno.serve(async (req: Request) => {
       const dayNoon = new Date(dstr(day) + 'T12:00:00Z');
       const dayLabel = dayNoon.toLocaleDateString('el-GR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
 
-      const html = scheduleEmailHtml(dayLabel, appts as unknown as Appt[], staff || []);
+      const html = scheduleEmailHtml(dayLabel, appts, staff || []);
       const subject = `📋 Πρόγραμμα — ${dayLabel} · ${appts.length} ραντεβού`;
 
       const token = await getGmailAccessToken();
