@@ -3777,10 +3777,12 @@ async function apptStatusUpdatePayload(appt, newStatus) {
     //    έμεναν χωρίς τιμή και τα Έσοδα των Αναφορών έβγαιναν λειψά.
     if (appt.service_name) {
       try {
-        const {data:svcMatch} = await sb.from('services').select('price')
-          .eq('clinic_id', clinicId()).ilike('name', appt.service_name).limit(1);
-        const p = svcMatch && svcMatch[0] ? parseFloat(svcMatch[0].price) : NaN;
-        if (p > 0) { upd.price = p; return upd; }
+        // Ταίριασμα χωρίς τόνους/κεφαλαία (normalizeGreek): «Μεσοθεραπεια με
+        // Dermapen» πρέπει να βρίσκει το «Μεσοθεραπεία με Dermapen» του καταλόγου.
+        const {data:svcAll} = await sb.from('services').select('name,price').eq('clinic_id', clinicId());
+        const want = normalizeGreek(appt.service_name);
+        const hit = (svcAll||[]).find(s=>normalizeGreek(s.name)===want && parseFloat(s.price)>0);
+        if (hit) { upd.price = parseFloat(hit.price); return upd; }
       } catch(e) {}
     }
     // 2) Δεν βρέθηκε η υπηρεσία στον κατάλογο → ερώτηση, ΜΟΝΟ σε clinic
