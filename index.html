@@ -864,6 +864,10 @@ async function loadPageData() {
     S.reportNewPatients = newPts||[];
     const {data:allPts} = await sb.from('patients').select('id,status,gdpr_signed').eq('clinic_id',cid);
     S.reportAllPatients = allPts||[];
+    // Πακέτα που ΑΓΟΡΑΣΤΗΚΑΝ στην περίοδο — τα ραντεβού πακέτου δεν έχουν τιμή
+    // (πληρώθηκαν στην αγορά), οπότε ο τζίρος τους μετράει εδώ, ξεχωριστά.
+    const {data:rpkgs} = await sb.from('patient_packages').select('price,purchased_at').eq('clinic_id',cid).gte('purchased_at',fromISO).lte('purchased_at',toISO);
+    S.reportPackages = rpkgs||[];
 
     // Ισόχρονη προηγούμενη περίοδος (ίδιος αριθμός ημερών, αμέσως πριν) — για τα
     // deltas Νέων Πελατών & Consultations, ίδια λογική με το widget "Από πού μας βρήκαν".
@@ -3661,6 +3665,8 @@ function computeReportStats() {
   const allPatients = S.reportAllPatients||[];
   const completedApts = apts.filter(a=>a.status==='completed');
   const revenue = completedApts.reduce((s,a)=>s+(a.price||0),0);
+  const pkgRevenue = (S.reportPackages||[]).reduce((s,p)=>s+(parseFloat(p.price)||0),0);
+  const pkgCount = (S.reportPackages||[]).length;
   const noShows = apts.filter(a=>a.status==='no_show').length;
   const noShowRate = apts.length ? Math.round((noShows/apts.length)*100) : null;
   const completedCount = apts.filter(a=>a.status==='completed').length;
@@ -3730,7 +3736,7 @@ function computeReportStats() {
     });
   });
 
-  return { apts, newPatients, allPatients, revenue, noShowRate, noShows, gdprRate, gdprSigned, activeCount:activePatients.length, topServices,
+  return { apts, newPatients, allPatients, revenue, pkgRevenue, pkgCount, noShowRate, noShows, gdprRate, gdprSigned, activeCount:activePatients.length, topServices,
     newPatientsDelta, newPatientsPct, consultations, prevConsultCount, consultDelta, consultPct,
     utilizationRate, utilizationIsReal, recommendedTotal, recommendedDone, missedRecommendations,
     completedCount, cancelledCount, pendingCount };
@@ -3762,15 +3768,31 @@ async function maybeRedeemBirthdayGift(appt) {
 // booking247, που δεν στέλνει τιμές), ρωτάμε πόσο πληρώθηκε — αλλιώς τζίρος,
 // LTV και στατιστικά ανά υπηρεσία/θεραπευτή μετράνε 0€ για πραγματική δουλειά.
 // Ραντεβού ΠΑΚΕΤΟΥ εξαιρούνται: η τιμή τους είναι σκόπιμα 0 (πληρωμένο πακέτο).
-function apptStatusUpdatePayload(appt, newStatus) {
+async function apptStatusUpdatePayload(appt, newStatus) {
   const upd = {status: newStatus};
-  // Η ερώτηση τιμής εμφανίζεται ΜΟΝΟ σε clinic manager/admin — αισθητικοί και
-  // γραμματεία δεν βλέπουν ποτέ τιμές (ο admin συμπληρώνει/διορθώνει μετά).
-  if (newStatus==='completed' && appt && canSee(['super_admin','clinic_admin']) && !appt.package_id && !(parseFloat(appt.price)>0)) {
-    const answer = prompt('Το ραντεβού δεν έχει καταχωρημένη τιμή.\nΠόσο πληρώθηκε; (€)\n\n(Άφησέ το κενό αν ήταν δωρεάν/0€)');
-    if (answer!==null && String(answer).trim()!=='') {
-      const v = parseFloat(String(answer).replace(',','.'));
-      if (!isNaN(v) && v>=0) upd.price = v;
+  if (newStatus==='completed' && appt && !appt.package_id && !(parseFloat(appt.price)>0)) {
+    // 1) Σιωπηλή αυτόματη τιμή από τον κατάλογο υπηρεσιών — για ΟΛΟΥΣ τους
+    //    ρόλους, χωρίς να εμφανίζεται τίποτα στην οθόνη (αισθητικοί/γραμματεία
+    //    δεν βλέπουν ποτέ τιμές). Χωρίς αυτό, οι ολοκληρώσεις από μη-admin
+    //    έμεναν χωρίς τιμή και τα Έσοδα των Αναφορών έβγαιναν λειψά.
+    if (appt.service_name) {
+      try {
+        // Ταίριασμα χωρίς τόνους/κεφαλαία (normalizeGreek): «Μεσοθεραπεια με
+        // Dermapen» πρέπει να βρίσκει το «Μεσοθεραπεία με Dermapen» του καταλόγου.
+        const {data:svcAll} = await sb.from('services').select('name,price').eq('clinic_id', clinicId());
+        const want = normalizeGreek(appt.service_name);
+        const hit = (svcAll||[]).find(s=>normalizeGreek(s.name)===want && parseFloat(s.price)>0);
+        if (hit) { upd.price = parseFloat(hit.price); return upd; }
+      } catch(e) {}
+    }
+    // 2) Δεν βρέθηκε η υπηρεσία στον κατάλογο → ερώτηση, ΜΟΝΟ σε clinic
+    //    manager/admin (ο admin συμπληρώνει/διορθώνει μετά για τους άλλους).
+    if (canSee(['super_admin','clinic_admin'])) {
+      const answer = prompt('Το ραντεβού δεν έχει καταχωρημένη τιμή.\nΠόσο πληρώθηκε; (€)\n\n(Άφησέ το κενό αν ήταν δωρεάν/0€)');
+      if (answer!==null && String(answer).trim()!=='') {
+        const v = parseFloat(String(answer).replace(',','.'));
+        if (!isNaN(v) && v>=0) upd.price = v;
+      }
     }
   }
   return upd;
@@ -3816,8 +3838,8 @@ function renderReports() {
       ${canFin?`<div class="stat-card">
         <div class="stat-icon" style="background:#FAEEDA;color:#854F0B">€</div>
         <div class="stat-label">Έσοδα</div>
-        <div class="stat-value" style="color:#854F0B">${euro(s.revenue)}</div>
-        <div class="stat-change">πληρωμένα/ολοκληρωμένα ραντεβού</div>
+        <div class="stat-value" style="color:#854F0B">${euro(s.revenue + s.pkgRevenue)}</div>
+        <div class="stat-change">${euro(s.revenue)} ραντεβού${s.pkgCount?` + ${euro(s.pkgRevenue)} πακέτα (${s.pkgCount})`:''}</div>
       </div>`:''}
       <div class="stat-card">
         <div class="stat-icon" style="background:#eef0fe;color:var(--blue)">◎</div>
@@ -5553,7 +5575,7 @@ function bindEvents() {
     el.onchange = async () => {
       const newValue = el.value;
       const appt = (S.appointments||[]).find(x=>String(x.id)===String(el.dataset.apptStatus));
-      const upd = apptStatusUpdatePayload(appt, newValue);
+      const upd = await apptStatusUpdatePayload(appt, newValue);
       const {error} = await sb.from('appointments').update(upd).eq('id',el.dataset.apptStatus);
       if (error) { alert('✗ Η αλλαγή κατάστασης απέτυχε: '+error.message); el.value = prevValue; return; }
       if (appt) Object.assign(appt, upd);
@@ -6152,7 +6174,7 @@ function bindEvents() {
       });
       const _cs=content.querySelector('[data-appt-status]');if(_cs)_cs.addEventListener('change', async (ev) => {
         const prevValue = a.status;
-        const upd = apptStatusUpdatePayload(a, ev.target.value);
+        const upd = await apptStatusUpdatePayload(a, ev.target.value);
         const {error} = await sb.from('appointments').update(upd).eq('id',a.id);
         if (error) { alert('✗ Η αλλαγή κατάστασης απέτυχε: '+error.message); ev.target.value = prevValue; return; }
         Object.assign(a, upd);
