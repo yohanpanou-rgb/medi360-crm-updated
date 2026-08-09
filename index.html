@@ -3749,26 +3749,33 @@ function computeReportStats() {
   const apptsByPatient = {};
   (S.reportConsultAppointments||[]).forEach(a=>{ (apptsByPatient[a.patient_id]=apptsByPatient[a.patient_id]||[]).push(a); });
   let recommendedTotal = 0, recommendedDone = 0;
-  const missedRecommendations = [];
+  // Ομαδοποίηση ΑΝΑ ΠΕΛΑΤΗ (μία γραμμή ο καθένας με μετρητή done/total και τις
+  // εκκρεμείς προτάσεις του) — η παλιά λίστα «μία γραμμή ανά υπηρεσία» γινόταν
+  // ατελείωτη στο κινητό.
+  const consultByPatient = {};
   consultations.forEach(c=>{
     const steps = parseConsultInClinicSteps(c.consent_text);
+    if (!steps.length) return;
     const patientAppts = apptsByPatient[c.patient_id]||[];
+    const e = consultByPatient[c.patient_id] = consultByPatient[c.patient_id] || {
+      patientId: c.patient_id,
+      patientName: (c.patients&&c.patients.full_name)||'—',
+      patientPhone: (c.patients&&c.patients.phone)||'',
+      total: 0, done: 0, pending: [],
+    };
     steps.forEach(step=>{
-      recommendedTotal++;
-      if (findServiceMatch(patientAppts, c.signed_at, step)) recommendedDone++;
-      else missedRecommendations.push({
-        patientId: c.patient_id,
-        patientName: (c.patients&&c.patients.full_name)||'—',
-        patientPhone: (c.patients&&c.patients.phone)||'',
-        step, signedAt: c.signed_at,
-      });
+      recommendedTotal++; e.total++;
+      if (findServiceMatch(patientAppts, c.signed_at, step)) { recommendedDone++; e.done++; }
+      else e.pending.push(step);
     });
   });
+  const consultPatients = Object.values(consultByPatient)
+    .sort((a,b)=>(b.total-b.done)-(a.total-a.done) || b.total-a.total);
 
   return { apts, newPatients, allPatients, revenue, pkgRevenue, pkgCount, noShowRate, noShows, gdprRate, gdprSigned, activeCount:activePatients.length, topServices,
     npNever, npOne, npTwo, npMore, npAttended, npReturned, npFirstServices,
     newPatientsDelta, newPatientsPct, consultations, prevConsultCount, consultDelta, consultPct,
-    utilizationRate, utilizationIsReal, recommendedTotal, recommendedDone, missedRecommendations,
+    utilizationRate, utilizationIsReal, recommendedTotal, recommendedDone, consultPatients,
     completedCount, cancelledCount, pendingCount };
 }
 
@@ -3967,20 +3974,37 @@ function renderReports() {
         </div>
         <div style="font-size:13px;font-weight:600;color:var(--text-2)">${Math.round(s.recommendedDone/s.recommendedTotal*100)}%</div>
       </div>
-      ${s.missedRecommendations.length?`
+      ${(()=>{
+        const withPending = s.consultPatients.filter(p=>p.pending.length);
+        const allDone = s.consultPatients.length - withPending.length;
+        if (!s.consultPatients.length) return '';
+        const chip = (p)=>{
+          const c = p.done===0?'#A32D2D':p.done<p.total?'#D97706':'#0F6E56';
+          const bg = p.done===0?'#FCEBEB':p.done<p.total?'#FAEEDA':'#E1F5EE';
+          return `<span style="font-size:11px;font-weight:700;color:${c};background:${bg};border-radius:99px;padding:2px 8px;flex-shrink:0">${p.done}/${p.total}</span>`;
+        };
+        return `
       <div style="margin-top:14px;border-top:1px solid var(--border-2);padding-top:12px">
-        <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Δεν έχουν κλειστεί ακόμα (${s.missedRecommendations.length})</div>
-        <div style="display:flex;flex-direction:column;gap:6px">
-          ${s.missedRecommendations.map(m=>`
-          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;background:var(--surface-2);border-radius:8px;padding:8px 12px;flex-wrap:wrap">
-            <div style="min-width:0">
-              <span style="font-size:12px;font-weight:600;cursor:pointer" onclick="loadPatientDetail('${m.patientId}')">${esc(m.patientName)}</span>
-              <span style="font-size:12px;color:var(--text-2)"> — ${esc(m.step)}</span>
+        ${allDone?`<div style="font-size:12px;color:#0F6E56;margin-bottom:8px">✓ ${allDone} πελάτ${allDone===1?'ης ολοκλήρωσε':'ες ολοκλήρωσαν'} όλες τις προτάσεις</div>`:''}
+        ${withPending.length?`
+        <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Με εκκρεμείς προτάσεις (${withPending.length}) <span style="font-weight:400;text-transform:none;letter-spacing:0">· πάτα για ανάλυση</span></div>
+        <div style="display:flex;flex-direction:column;gap:6px;max-height:340px;overflow-y:auto">
+          ${withPending.map(p=>`
+          <details style="background:var(--surface-2);border-radius:8px">
+            <summary style="display:flex;align-items:center;gap:8px;list-style:none;cursor:pointer;padding:8px 12px">
+              <span style="font-size:12px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer" onclick="event.preventDefault();event.stopPropagation();loadPatientDetail('${p.patientId}')">${esc(p.patientName)}</span>
+              ${chip(p)}
+              <span style="flex:1"></span>
+              ${p.patientPhone?`<a href="tel:${esc(p.patientPhone)}" onclick="event.stopPropagation()" style="font-size:11px;color:var(--blue);text-decoration:none;flex-shrink:0">☎</a>`:''}
+              <span style="font-size:10px;color:var(--text-3)">▾</span>
+            </summary>
+            <div style="padding:0 12px 8px">
+              ${p.pending.map(st=>`<div style="font-size:11.5px;color:var(--text-2);padding:3px 0;border-top:1px solid var(--border-2)">• ${esc(st)}</div>`).join('')}
             </div>
-            ${m.patientPhone?`<a href="tel:${esc(m.patientPhone)}" style="font-size:11px;color:var(--blue);text-decoration:none;flex-shrink:0">☎ ${esc(m.patientPhone)}</a>`:''}
-          </div>`).join('')}
-        </div>
-      </div>`:''}`:(s.consultations.length
+          </details>`).join('')}
+        </div>`:''}
+      </div>`;
+      })()}`:(s.consultations.length
         ? `<div style="font-size:12px;color:var(--text-2)">Υπήρχαν ${s.consultations.length} consultation στο διάστημα, αλλά καμία δεν είχε καταγεγραμμένες προτάσεις IN-CLINIC (προαιρετικό πεδίο στη φόρμα).</div>`
         : `<div style="font-size:12px;color:var(--text-2)">Δεν υπήρχαν consultation (Skincare Plan) στο διάστημα.</div>`)}
     </div>
