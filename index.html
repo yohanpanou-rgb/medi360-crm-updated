@@ -862,6 +862,14 @@ async function loadPageData() {
     S.reportAppointments = apts||[];
     const {data:newPts} = await sb.from('patients').select('id,created_at').eq('clinic_id',cid).gte('created_at',fromISO).lte('created_at',toISO);
     S.reportNewPatients = newPts||[];
+    // Επιστροφή νέων πελατών: ΟΛΑ τα ραντεβού (έως σήμερα) όσων γράφτηκαν στην
+    // περίοδο — για τους κάδους «1 επίσκεψη / 2 / 3+» και την 1η υπηρεσία τους.
+    S.reportNewPtAppts = [];
+    const npIds = (newPts||[]).map(p=>p.id);
+    if (npIds.length) {
+      const {data:npAppts} = await sb.from('appointments').select('patient_id,service_name,start_time,status').eq('clinic_id',cid).in('patient_id', npIds);
+      S.reportNewPtAppts = npAppts||[];
+    }
     const {data:allPts} = await sb.from('patients').select('id,status,gdpr_signed').eq('clinic_id',cid);
     S.reportAllPatients = allPts||[];
     // Πακέτα που ΑΓΟΡΑΣΤΗΚΑΝ στην περίοδο — τα ραντεβού πακέτου δεν έχουν τιμή
@@ -3667,6 +3675,27 @@ function computeReportStats() {
   const revenue = completedApts.reduce((s,a)=>s+(a.price||0),0);
   const pkgRevenue = (S.reportPackages||[]).reduce((s,p)=>s+(parseFloat(p.price)||0),0);
   const pkgCount = (S.reportPackages||[]).length;
+
+  // Επιστροφή νέων πελατών της περιόδου (επισκέψεις μετρημένες έως σήμερα,
+  // χωρίς ακυρωμένα/no-show): κάδοι 0/1/2/3+ και πρώτη υπηρεσία καθενός.
+  const visitsByNp = {};
+  (S.reportNewPtAppts||[]).forEach(a=>{
+    if (a.status==='cancelled'||a.status==='no_show') return;
+    (visitsByNp[a.patient_id]=visitsByNp[a.patient_id]||[]).push(a);
+  });
+  let npNever=0, npOne=0, npTwo=0, npMore=0;
+  newPatients.forEach(p=>{
+    const v=(visitsByNp[p.id]||[]).length;
+    if(!v) npNever++; else if(v===1) npOne++; else if(v===2) npTwo++; else npMore++;
+  });
+  const npAttended = npOne+npTwo+npMore;
+  const npReturned = npTwo+npMore;
+  const npFirstSvcCounts = {};
+  Object.values(visitsByNp).forEach(list=>{
+    const first=list.slice().sort((a,b)=>new Date(a.start_time)-new Date(b.start_time))[0];
+    if(first&&first.service_name) npFirstSvcCounts[first.service_name]=(npFirstSvcCounts[first.service_name]||0)+1;
+  });
+  const npFirstServices = Object.entries(npFirstSvcCounts).sort((a,b)=>b[1]-a[1]).slice(0,8);
   const noShows = apts.filter(a=>a.status==='no_show').length;
   const noShowRate = apts.length ? Math.round((noShows/apts.length)*100) : null;
   const completedCount = apts.filter(a=>a.status==='completed').length;
@@ -3737,6 +3766,7 @@ function computeReportStats() {
   });
 
   return { apts, newPatients, allPatients, revenue, pkgRevenue, pkgCount, noShowRate, noShows, gdprRate, gdprSigned, activeCount:activePatients.length, topServices,
+    npNever, npOne, npTwo, npMore, npAttended, npReturned, npFirstServices,
     newPatientsDelta, newPatientsPct, consultations, prevConsultCount, consultDelta, consultPct,
     utilizationRate, utilizationIsReal, recommendedTotal, recommendedDone, missedRecommendations,
     completedCount, cancelledCount, pendingCount };
@@ -3880,6 +3910,36 @@ function renderReports() {
           <div style="font-size:11px;color:${x.c};opacity:0.85;margin-top:2px">${x.l}${s.apts.length?' ('+Math.round(x.v/s.apts.length*100)+'%)':''}</div>
         </div>`).join('')}
       </div>
+    </div>
+
+    <div class="card" style="padding:16px;margin-bottom:16px">
+      <div class="card-title" style="margin-bottom:4px">🆕 Νέοι Πελάτες & Επιστροφή</div>
+      <div style="font-size:11px;color:var(--text-2);margin-bottom:12px">Πελάτες που γράφτηκαν στην περίοδο · οι επισκέψεις τους μετρημένες έως σήμερα (χωρίς ακυρωμένα/no-show)</div>
+      ${s.newPatients.length?(()=>{
+        const total = s.newPatients.length;
+        const pctAll = v=> total? Math.round(v/total*100) : 0;
+        const pctAtt = v=> s.npAttended? Math.round(v/s.npAttended*100) : 0;
+        const row = (label,v,c,bg,pct) => `<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <div style="width:140px;font-size:12px;color:var(--text-2);flex-shrink:0">${label}</div>
+          <div style="flex:1;background:var(--border-2);border-radius:6px;height:18px;overflow:hidden"><div style="width:${pct}%;min-width:${v?'20px':'0'};height:100%;background:${bg};display:flex;align-items:center;justify-content:flex-end;padding-right:5px;font-size:10.5px;font-weight:700;color:${c}">${v||''}</div></div>
+          <div style="width:44px;text-align:right;font-size:12px;font-weight:600;color:${c}">${pct}%</div>
+        </div>`;
+        return `
+        <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:14px">
+          <div><span style="font-size:22px;font-weight:700;color:var(--navy)">${total}</span> <span style="font-size:12px;color:var(--text-2)">νέοι</span></div>
+          <div><span style="font-size:22px;font-weight:700;color:#0F6E56">${s.npAttended}</span> <span style="font-size:12px;color:var(--text-2)">ήρθαν</span></div>
+          <div><span style="font-size:22px;font-weight:700;color:${s.npAttended&&s.npReturned/s.npAttended>=0.4?'#0F6E56':'#D97706'}">${pctAtt(s.npReturned)}%</span> <span style="font-size:12px;color:var(--text-2)">ξαναγύρισαν (2η+ επίσκεψη)</span></div>
+        </div>
+        ${row('Δεν ήρθαν ποτέ', s.npNever, '#6B7280', '#D6D9E0', pctAll(s.npNever))}
+        ${row('1 επίσκεψη μόνο', s.npOne, '#A32D2D', '#F5C6C6', pctAtt(s.npOne))}
+        ${row('2 επισκέψεις', s.npTwo, '#185FA5', '#BFDBF3', pctAtt(s.npTwo))}
+        ${row('3+ επισκέψεις', s.npMore, '#0F6E56', '#A9E3CF', pctAtt(s.npMore))}
+        <div style="font-size:10.5px;color:var(--text-3);margin:2px 0 14px">Τα ποσοστά των επισκέψεων υπολογίζονται επί όσων ήρθαν (${s.npAttended})· το «δεν ήρθαν ποτέ» επί όλων.</div>
+        ${s.npFirstServices.length?`<div style="font-size:12px;font-weight:600;color:var(--navy);margin-bottom:6px">Με ποια υπηρεσία ήρθαν πρώτη φορά</div>
+        <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+          ${s.npFirstServices.map(([name,c])=>`<tr style="border-top:1px solid var(--border-2)"><td style="padding:6px 0">${esc(name)}</td><td style="padding:6px 0;text-align:right;font-weight:600">${c}</td></tr>`).join('')}
+        </table>`:''}`;
+      })():`<div class="empty-state"><div class="empty-icon">◎</div><div>Κανένας νέος πελάτης στο διάστημα</div></div>`}
     </div>
 
     <div class="card" style="padding:16px;margin-bottom:16px">
