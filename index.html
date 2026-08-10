@@ -8708,15 +8708,21 @@ function viewLaserConsent() {
 
 // Αποστολή της υπογεγραμμένης συναίνεσης στον πελάτη — αποστολέας: yourbeautyline@gmail.com
 async function sendLaserConsentEmail() {
-  const f = S.laserFormDetail, c = S.laserPatientConsent;
-  if (!f || !c) return;
-  const pname = (f.patients&&f.patients.full_name)||'';
-  let to = (f.patients&&f.patients.email)||'';
+  // _laserConsentCtx: δουλεύει ΚΑΙ από τη σελίδα Laser Form ΚΑΙ από την καρτέλα
+  // πελάτη (το παλιό `if (!S.laserFormDetail) return` έκανε το κουμπί να μην
+  // κάνει τίποτα σιωπηλά όταν η συναίνεση άνοιγε από το tab Συναινέσεις).
+  const ctx = _laserConsentCtx(), c = S.laserPatientConsent;
+  if (!ctx || !c) { alert('Δεν βρέθηκε υπογεγραμμένη συναίνεση laser.'); return; }
+  const pname = ctx.full_name||'';
+  const f = S.laserFormDetail;
+  let to = (f&&f.patients&&f.patients.email)
+        || (S.patientDetail&&S.patientDetail.id===ctx.patient_id&&S.patientDetail.email) || '';
   if (!to) {
     to = (prompt('Email πελάτη για αποστολή:')||'').trim();
     if (!/^\S+@\S+\.\S+$/.test(to)) { alert('Μη έγκυρο email — η αποστολή ακυρώθηκε.'); return; }
-    await sb.from('patients').update({email:to}).eq('id', f.patient_id);
-    if (f.patients) f.patients.email = to;
+    await sb.from('patients').update({email:to}).eq('id', ctx.patient_id);
+    if (f&&f.patients) f.patients.email = to;
+    if (S.patientDetail&&S.patientDetail.id===ctx.patient_id) S.patientDetail.email = to;
   }
   const signedDate = new Date(c.signed_at).toLocaleDateString('el-GR');
   // Table-based HTML email body — σύνοψη, το πλήρες κείμενο πάει στο επισυναπτόμενο PDF
@@ -8762,6 +8768,69 @@ async function sendLaserConsentEmail() {
     alert('✓ Η συναίνεση στάλθηκε στο ' + to);
   } catch(e) {
     alert('Σφάλμα αποστολής: ' + (e.message||e) + '\n\nΈλεγξε ότι η Edge Function send-consent-email είναι ενεργή.');
+  }
+}
+
+// Αποστολή υπογεγραμμένης συναίνεσης ΥΠΗΡΕΣΙΑΣ (καθαρισμοί/peelings/οξυγόνο)
+// στον πελάτη — PDF με το πλήρες κείμενο + υπογραφή, όπως στο laser.
+async function sendServiceConsentEmail(groupKey) {
+  const g = SERVICE_CONSENT_GROUPS[groupKey]; if (!g) return;
+  const c = groupKey==='cleansing' ? S.serviceConsentCleansing : groupKey==='peelings' ? S.serviceConsentPeelings : S.serviceConsentOxygen;
+  const p = S.patientDetail;
+  if (!c || !p) { alert('Δεν βρέθηκε υπογεγραμμένη συναίνεση.'); return; }
+  const pname = p.full_name||'';
+  let to = p.email||'';
+  if (!to) {
+    to = (prompt('Email πελάτη για αποστολή:')||'').trim();
+    if (!/^\S+@\S+\.\S+$/.test(to)) { alert('Μη έγκυρο email — η αποστολή ακυρώθηκε.'); return; }
+    await sb.from('patients').update({email:to}).eq('id', p.id);
+    p.email = to;
+  }
+  // Πλήρες κείμενο: αυτό που αποθηκεύτηκε τη στιγμή της υπογραφής· παλιότερες
+  // υπογραφές (πριν αποθηκεύεται) παίρνουν το ισχύον κείμενο της ομάδας.
+  let bodyText = c.consent_text || '';
+  if (!bodyText) { const d=document.createElement('div'); d.innerHTML=g.text(pname); bodyText=(d.innerText||d.textContent||'').trim(); }
+  const signedDate = new Date(c.signed_at).toLocaleDateString('el-GR');
+  const html = `
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#F7FAFD;padding:24px 0"><tr><td align="center">
+    <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;font-family:Arial,Helvetica,sans-serif">
+      <tr><td style="background:#0E2757;border-radius:12px 12px 0 0;padding:18px 24px;color:#ffffff;font-size:16px;font-weight:bold">Beauty Line — Συναίνεση: ${esc(g.title)}</td></tr>
+      <tr><td style="padding:24px;font-size:13px;line-height:1.7;color:#181C1E">
+        <p>Αγαπητή/έ <b>${esc(pname)}</b>,</p>
+        <p>Σας ευχαριστούμε. Στο επισυναπτόμενο αρχείο θα βρείτε το πλήρες κείμενο της συναίνεσης που υπογράψατε στις <b>${signedDate}</b> για την κατηγορία θεραπειών «${esc(g.title)}», μαζί με την υπογραφή σας.</p>
+        <p>• Η συναίνεση καλύπτει το σύνολο των μελλοντικών συνεδριών αυτής της κατηγορίας και παραμένει σε ισχύ έως έγγραφης ανάκλησής της.<br>
+        • Συναίνεση φωτογραφιών: ${c.photo_consent?'Ναι':'Όχι'}.</p>
+        <p>Για οποιαδήποτε ερώτηση, απαντήστε σε αυτό το email.</p>
+        <p style="margin-top:20px">Με εκτίμηση,<br><b>Beauty Line by Lina Panou</b></p>
+      </td></tr>
+      <tr><td style="padding:12px 24px;border-top:1px solid #E5E8EB;font-size:10px;color:#9FB0CC">Powered by medi360</td></tr>
+    </table>
+  </td></tr></table>`;
+  try {
+    const {data, error} = await sb.functions.invoke('send-consent-email', {
+      body: {
+        to,
+        subject: 'Beauty Line — Αντίγραφο Συναίνεσης: ' + g.title,
+        html,
+        consent_pdf: {
+          type: 'generic',
+          title: 'Συναίνεση: ' + g.title,
+          body_text: bodyText,
+          clinic_name: (S.clinic&&S.clinic.name)||'Beauty Line',
+          patient_name: pname,
+          signed_at: c.signed_at,
+          collected_by: c.collected_by||'',
+          photo_consent: !!c.photo_consent,
+          signature_data_url: c.signature_data||'',
+        },
+        attachment_name: `Synainesi_${groupKey}_${(pname||'pelatis').replace(/[^a-zA-Zα-ωΑ-Ωίϊΐόάέύϋΰήώ0-9]+/g,'_')}.pdf`
+      }
+    });
+    if (error) throw new Error(await extractInvokeErrorMessage(error));
+    if (data && data.error) throw new Error(data.error);
+    alert('✓ Η συναίνεση στάλθηκε στο ' + to);
+  } catch(e) {
+    alert('Σφάλμα αποστολής: ' + (e.message||e) + '\n\nΈλεγξε ότι η Edge Function send-consent-email είναι ενημερωμένη (θέλει redeploy για τα PDF υπηρεσιών).');
   }
 }
 
@@ -9698,6 +9767,9 @@ function viewGroupConsent(groupKey) {
         Υπεγράφη: <b>${new Date(c.signed_at).toLocaleString('el-GR')}</b> · Συλλογή: ${esc(c.collected_by||'—')} · Φωτογραφίες: ${c.photo_consent?'✓ Ναι':'✗ Όχι'}
       </div>
       <img src="${c.signature_data}" style="margin-top:8px;border:1px solid var(--border);border-radius:10px;max-width:100%;background:#fff"/>
+      <div style="margin-top:12px;text-align:right">
+        <button class="btn" onclick="sendServiceConsentEmail('${groupKey}')" style="background:#0344F2;color:#fff;font-weight:700">📧 Αποστολή στον πελάτη</button>
+      </div>
     </div>`;
   document.body.appendChild(ov);
   const ph = ov.querySelector('#svc-photo'); if (ph) { ph.checked = !!c.photo_consent; ph.disabled = true; }
