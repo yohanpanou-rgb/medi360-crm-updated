@@ -120,6 +120,20 @@ function laserConsentBlocks(patientName: string, photoConsent: boolean): Block[]
   ];
 }
 
+// Γενικά blocks από απλό κείμενο (συναινέσεις υπηρεσιών): γραμμές τύπου
+// «Α. ΕΝΗΜΕΡΩΣΗ...» γίνονται επικεφαλίδες, κενές γραμμές κενά, οι υπόλοιπες
+// παράγραφοι.
+function genericBlocksFromText(text: string): Block[] {
+  const blocks: Block[] = [];
+  for (const raw of (text || '').split('\n')) {
+    const line = raw.trim();
+    if (!line) { blocks.push({ type: 'spacer', h: 6 }); continue; }
+    if (/^[Α-ΩA-Z][.)]\s/.test(line)) blocks.push({ type: 'header', text: line });
+    else blocks.push({ type: 'para', runs: [{ text: line }] });
+  }
+  return blocks;
+}
+
 async function buildLaserConsentPdf(opts: {
   clinicName: string;
   patientName: string;
@@ -127,6 +141,8 @@ async function buildLaserConsentPdf(opts: {
   collectedBy: string;
   photoConsent: boolean;
   signaturePngBytes?: Uint8Array;
+  title?: string;    // προαιρετικός τίτλος (συναινέσεις υπηρεσιών)
+  bodyText?: string; // αν δοθεί, το PDF χτίζεται από αυτό αντί για τα laser blocks
 }): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
   doc.registerFontkit(fontkit);
@@ -217,10 +233,11 @@ async function buildLaserConsentPdf(opts: {
   // Τίτλος (navy band, ίδιο ύφος με τα emails)
   ensureSpace(34);
   page.drawRectangle({ x: 0, y: y - 6, width: pageWidth, height: 34, color: navy });
-  page.drawText(`${opts.clinicName} — Συναίνεση Laser Αποτρίχωσης`, { x: marginX, y: y + 4, size: 13, font: fontBold, color: rgb(1, 1, 1) });
+  page.drawText(`${opts.clinicName} — ${opts.title || 'Συναίνεση Laser Αποτρίχωσης'}`, { x: marginX, y: y + 4, size: 13, font: fontBold, color: rgb(1, 1, 1) });
   y -= 40;
 
-  for (const b of laserConsentBlocks(opts.patientName, opts.photoConsent)) {
+  const blocks = opts.bodyText ? genericBlocksFromText(opts.bodyText) : laserConsentBlocks(opts.patientName, opts.photoConsent);
+  for (const b of blocks) {
     if (b.type === 'header') writeHeader(b.text);
     else if (b.type === 'para') writeParagraph(b.runs);
     else if (b.type === 'spacer') writeSpacer(b.h);
@@ -289,7 +306,7 @@ Deno.serve(async (req: Request) => {
       b64utf8(html),
     ];
 
-    if (consent_pdf && consent_pdf.type === 'laser') {
+    if (consent_pdf && (consent_pdf.type === 'laser' || consent_pdf.type === 'generic')) {
       const pdfBytes = await buildLaserConsentPdf({
         clinicName: consent_pdf.clinic_name || 'Beauty Line',
         patientName: consent_pdf.patient_name || '',
@@ -297,6 +314,8 @@ Deno.serve(async (req: Request) => {
         collectedBy: consent_pdf.collected_by || '',
         photoConsent: !!consent_pdf.photo_consent,
         signaturePngBytes: consent_pdf.signature_data_url ? dataUrlToBytes(consent_pdf.signature_data_url) : undefined,
+        title: consent_pdf.type === 'generic' ? String(consent_pdf.title || 'Συναίνεση Υπηρεσίας') : undefined,
+        bodyText: consent_pdf.type === 'generic' ? String(consent_pdf.body_text || '') : undefined,
       });
       const fname = attachment_name || 'Synainesi.pdf';
       parts.push(
