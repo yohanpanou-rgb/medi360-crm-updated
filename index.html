@@ -860,12 +860,27 @@ async function loadPageData() {
     const toISO = S.reportRange.to+'T23:59:59';
     const {data:apts} = await sb.from('appointments').select('*, patients(full_name,phone)').eq('clinic_id',cid).gte('start_time',fromISO).lte('start_time',toISO).order('start_time',{ascending:false});
     S.reportAppointments = apts||[];
-    const {data:newPts} = await sb.from('patients').select('id,created_at').eq('clinic_id',cid).gte('created_at',fromISO).lte('created_at',toISO);
-    S.reportNewPatients = newPts||[];
-    // Επιστροφή νέων πελατών: ΟΛΑ τα ραντεβού (έως σήμερα) όσων γράφτηκαν στην
+    // «Νέοι πελάτες» = όσοι έκαναν το ΠΡΩΤΟ τους ραντεβού ever (μη ακυρωμένο/
+    // no-show) μέσα στο διάστημα — ΟΧΙ πότε ανοίχτηκε η καρτέλα τους. Έτσι οι
+    // παλιοί πελάτες που απλώς καταχωρήθηκαν αργά στο Medi δεν μετράνε ως νέοι.
+    // Χτίζουμε χάρτη «πρώτο ραντεβού ανά πελάτη» με σελιδοποίηση (όριο 1000/query).
+    const firstApptByPatient = {};
+    for (let off = 0; ; off += 1000) {
+      const {data:chunk} = await sb.from('appointments').select('patient_id,start_time,status')
+        .eq('clinic_id',cid).order('start_time',{ascending:true}).range(off, off+999);
+      (chunk||[]).forEach(a=>{
+        if (a.status==='cancelled'||a.status==='no_show'||!a.start_time) return;
+        if (!firstApptByPatient[a.patient_id] || a.start_time < firstApptByPatient[a.patient_id]) firstApptByPatient[a.patient_id] = a.start_time;
+      });
+      if (!chunk || chunk.length < 1000) break;
+    }
+    S.reportNewPatients = Object.entries(firstApptByPatient)
+      .filter(([,ts])=>ts>=fromISO && ts<=toISO).map(([id])=>({id}));
+    S._reportFirstApptMap = firstApptByPatient;
+    // Επιστροφή νέων πελατών: ΟΛΑ τα ραντεβού (έως σήμερα) όσων πρωτοήρθαν στην
     // περίοδο — για τους κάδους «1 επίσκεψη / 2 / 3+» και την 1η υπηρεσία τους.
     S.reportNewPtAppts = [];
-    const npIds = (newPts||[]).map(p=>p.id);
+    const npIds = S.reportNewPatients.map(p=>p.id);
     if (npIds.length) {
       const {data:npAppts} = await sb.from('appointments').select('patient_id,service_name,start_time,status').eq('clinic_id',cid).in('patient_id', npIds);
       S.reportNewPtAppts = npAppts||[];
@@ -883,8 +898,13 @@ async function loadPageData() {
     const rangeDays = Math.max(1, Math.round((toDate-fromDate)/86400000)+1);
     const prevTo = new Date(fromDate); prevTo.setDate(prevTo.getDate()-1); prevTo.setHours(23,59,59,999);
     const prevFrom = new Date(prevTo); prevFrom.setDate(prevFrom.getDate()-(rangeDays-1)); prevFrom.setHours(0,0,0,0);
-    const {data:prevNewPts} = await sb.from('patients').select('id').eq('clinic_id',cid).gte('created_at',prevFrom.toISOString()).lte('created_at',prevTo.toISOString());
-    S.reportPrevNewPatients = prevNewPts||[];
+    // Ίδιος ορισμός «νέου» και για την προηγούμενη περίοδο: πρώτο ραντεβού ever
+    // μέσα σε αυτήν (από τον ήδη χτισμένο χάρτη — κανένα επιπλέον query).
+    const pad2 = n=>String(n).padStart(2,'0');
+    const localISO = d=>`${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+    const prevFromISO = localISO(prevFrom), prevToISO = localISO(prevTo);
+    S.reportPrevNewPatients = Object.entries(firstApptByPatient)
+      .filter(([,ts])=>ts>=prevFromISO && ts<=prevToISO).map(([id])=>({id}));
 
     // Consultations — φέτος και ισόχρονη προηγούμενη περίοδος. Φέρνουμε ΟΛΕΣ τις συναινέσεις της
     // περιόδου (όχι μόνο όσες έχουν το literal "Skincare Plan |" πρόθεμα) και τις ταξινομούμε με το
@@ -3882,7 +3902,7 @@ function renderReports() {
         <div class="stat-icon" style="background:#eef0fe;color:var(--blue)">◎</div>
         <div class="stat-label">Νέοι Πελάτες</div>
         <div class="stat-value" style="color:var(--blue)">${s.newPatients.length}</div>
-        <div class="stat-change">${reportDeltaLabel(s.newPatientsDelta, s.newPatientsPct)}</div>
+        <div class="stat-change">1ο ραντεβού τους στο διάστημα · ${reportDeltaLabel(s.newPatientsDelta, s.newPatientsPct)}</div>
       </div>
       <div class="stat-card">
         <div class="stat-icon" style="background:#EEEDFE;color:#3C3489">✓</div>
@@ -3921,7 +3941,7 @@ function renderReports() {
 
     <div class="card" style="padding:16px;margin-bottom:16px">
       <div class="card-title" style="margin-bottom:4px">🆕 Νέοι Πελάτες & Επιστροφή</div>
-      <div style="font-size:11px;color:var(--text-2);margin-bottom:12px">Πελάτες που γράφτηκαν στην περίοδο · οι επισκέψεις τους μετρημένες έως σήμερα (χωρίς ακυρωμένα/no-show)</div>
+      <div style="font-size:11px;color:var(--text-2);margin-bottom:12px">Πελάτες που έκαναν το ΠΡΩΤΟ τους ραντεβού στην περίοδο · οι επισκέψεις τους μετρημένες έως σήμερα (χωρίς ακυρωμένα/no-show)</div>
       ${s.newPatients.length?(()=>{
         const total = s.newPatients.length;
         const pctAll = v=> total? Math.round(v/total*100) : 0;
@@ -3937,7 +3957,7 @@ function renderReports() {
           <div><span style="font-size:22px;font-weight:700;color:#0F6E56">${s.npAttended}</span> <span style="font-size:12px;color:var(--text-2)">ήρθαν</span></div>
           <div><span style="font-size:22px;font-weight:700;color:${s.npAttended&&s.npReturned/s.npAttended>=0.4?'#0F6E56':'#D97706'}">${pctAtt(s.npReturned)}%</span> <span style="font-size:12px;color:var(--text-2)">ξαναγύρισαν (2η+ επίσκεψη)</span></div>
         </div>
-        ${row('Δεν ήρθαν ποτέ', s.npNever, '#6B7280', '#D6D9E0', pctAll(s.npNever))}
+        ${s.npNever?row('Δεν ήρθαν ποτέ', s.npNever, '#6B7280', '#D6D9E0', pctAll(s.npNever)):''}
         ${row('1 επίσκεψη μόνο', s.npOne, '#A32D2D', '#F5C6C6', pctAtt(s.npOne))}
         ${row('2 επισκέψεις', s.npTwo, '#185FA5', '#BFDBF3', pctAtt(s.npTwo))}
         ${row('3+ επισκέψεις', s.npMore, '#0F6E56', '#A9E3CF', pctAtt(s.npMore))}
