@@ -652,6 +652,21 @@ async function createUserSecurely({ name, email, password, role, clinic_id }) {
 
 // ── DATA ──
 const loadData = loadPageData; // alias
+// Η Supabase επιστρέφει ΜΕΓΙΣΤΟ 1000 γραμμές ανά ερώτημα — ερωτήματα που
+// μπορεί να ξεπεράσουν το όριο (π.χ. ραντεβού 6 μηνών) πρέπει να σελιδοποιούνται,
+// αλλιώς τα δεδομένα κόβονται σιωπηλά (π.χ. «μηδενικός τζίρος Ιουλίου» ενώ τα
+// ραντεβού υπάρχουν). Το makeQuery πρέπει να επιστρέφει ΦΡΕΣΚΟ builder με
+// σταθερή ταξινόμηση (order) και χωρίς range.
+async function sbAll(makeQuery) {
+  const out = [];
+  for (let off = 0; ; off += 1000) {
+    const {data:chunk} = await makeQuery().range(off, off+999);
+    out.push(...(chunk||[]));
+    if (!chunk || chunk.length < 1000) break;
+  }
+  return out;
+}
+
 async function loadPageData() {
   const cid = clinicId();
   if (S.page==='clinics' && isSuperAdmin()) {
@@ -858,8 +873,7 @@ async function loadPageData() {
     }
     const fromISO = S.reportRange.from+'T00:00:00';
     const toISO = S.reportRange.to+'T23:59:59';
-    const {data:apts} = await sb.from('appointments').select('*, patients(full_name,phone)').eq('clinic_id',cid).gte('start_time',fromISO).lte('start_time',toISO).order('start_time',{ascending:false});
-    S.reportAppointments = apts||[];
+    S.reportAppointments = await sbAll(()=>sb.from('appointments').select('*, patients(full_name,phone)').eq('clinic_id',cid).gte('start_time',fromISO).lte('start_time',toISO).order('start_time',{ascending:false}));
     // «Νέοι πελάτες» = όσοι έκαναν το ΠΡΩΤΟ τους ραντεβού ever (μη ακυρωμένο/
     // no-show) μέσα στο διάστημα — ΟΧΙ πότε ανοίχτηκε η καρτέλα τους. Έτσι οι
     // παλιοί πελάτες που απλώς καταχωρήθηκαν αργά στο Medi δεν μετράνε ως νέοι.
@@ -882,8 +896,7 @@ async function loadPageData() {
     S.reportNewPtAppts = [];
     const npIds = S.reportNewPatients.map(p=>p.id);
     if (npIds.length) {
-      const {data:npAppts} = await sb.from('appointments').select('patient_id,service_name,start_time,status').eq('clinic_id',cid).in('patient_id', npIds);
-      S.reportNewPtAppts = npAppts||[];
+      S.reportNewPtAppts = await sbAll(()=>sb.from('appointments').select('patient_id,service_name,start_time,status').eq('clinic_id',cid).in('patient_id', npIds).order('start_time',{ascending:true}));
     }
     const {data:allPts} = await sb.from('patients').select('id,status,gdpr_signed').eq('clinic_id',cid);
     S.reportAllPatients = allPts||[];
@@ -970,13 +983,12 @@ async function loadPageData() {
       S.ssvStatsRange = { from: firstOfMonth.toISOString().slice(0,10), to: now.toISOString().slice(0,10) };
     }
     const sFrom = S.ssvStatsRange.from+'T00:00:00', sTo = S.ssvStatsRange.to+'T23:59:59';
-    const {data:statsApts} = await sb.from('appointments').select('therapist_id,service_name,price,duration_minutes,status,start_time,notes').eq('clinic_id',cid).gte('start_time',sFrom).lte('start_time',sTo);
-    S.ssvStatsAppointments = statsApts||[];
+    S.ssvStatsAppointments = await sbAll(()=>sb.from('appointments').select('therapist_id,service_name,price,duration_minutes,status,start_time,notes').eq('clinic_id',cid).gte('start_time',sFrom).lte('start_time',sTo).order('start_time',{ascending:true}));
     // Μηνιαία τάση: πάντα οι τελευταίοι 6 ημερολογιακοί μήνες, ανεξάρτητα από
-    // το επιλεγμένο διάστημα των στατιστικών πάνω.
+    // το επιλεγμένο διάστημα των στατιστικών πάνω. Σελιδοποιημένο (sbAll): 6 μήνες
+    // ραντεβού ξεπερνούν τις 1000 γραμμές και ο Ιούλιος/Αύγουστος έδειχναν €0.
     const trendFrom2 = new Date(); trendFrom2.setMonth(trendFrom2.getMonth()-5); trendFrom2.setDate(1); trendFrom2.setHours(0,0,0,0);
-    const {data:trendApts2} = await sb.from('appointments').select('therapist_id,service_name,price,status,start_time,notes').eq('clinic_id',cid).gte('start_time',trendFrom2.toISOString());
-    S.ssvTrendAppointments = trendApts2||[];
+    S.ssvTrendAppointments = await sbAll(()=>sb.from('appointments').select('therapist_id,service_name,price,status,start_time,notes').eq('clinic_id',cid).gte('start_time',trendFrom2.toISOString()).order('start_time',{ascending:true}));
     // Οι λίστες υπηρεσιών/προσωπικού άλλαξαν πιθανώς — ανανέωσε το cache του
     // modal "Νέο Ραντεβού" την επόμενη φορά που θα ανοίξει.
     S._apptRefsLoaded = false;
