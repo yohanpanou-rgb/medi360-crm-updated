@@ -4390,28 +4390,64 @@ function renderStaffServices() {
   </div>`;
 }
 
+// Κόστος αναλώσιμων μιας υπηρεσίας (άθροισμα λίστας)
+function serviceConsumablesCost(s) {
+  return (Array.isArray(s.consumables)?s.consumables:[]).reduce((t,c)=>t+(parseFloat(c.cost)||0),0);
+}
+// Μέσο κόστος εργατοώρας (opex) — ρύθμιση κλινικής
+function hourlyOpex() {
+  return parseFloat(S.clinic&&S.clinic.settings&&S.clinic.settings.hourly_opex)||0;
+}
+async function saveHourlyOpex() {
+  const v = parseFloat(document.getElementById('ssv-opex').value)||0;
+  const settings = {...((S.clinic&&S.clinic.settings)||{}), hourly_opex: v};
+  const {error} = await sb.from('clinics').update({settings}).eq('id', clinicId());
+  if (error) { alert('Σφάλμα: '+error.message); return; }
+  if (S.clinic) S.clinic.settings = settings;
+  render();
+}
+
 function renderSsvServicesTab() {
   const rows = S.ssvServices||[];
+  const opex = hourlyOpex();
+  // Συνολικό κόστος = αναλώσιμα + (διάρκεια/60) × εργατοώρα · Περιθώριο = τιμή − κόστος
+  const calc = (s)=>{
+    const cons = serviceConsumablesCost(s);
+    const labor = (s.duration_minutes||60)/60*opex;
+    const cost = cons+labor;
+    const margin = s.price!=null ? s.price-cost : null;
+    return {cons, labor, cost, margin, pct: (margin!=null&&s.price>0)?Math.round(margin/s.price*100):null};
+  };
   return `<div class="card">
-    <div class="card-header"><span class="card-title">Κατάλογος Υπηρεσιών (${rows.length})</span>
-      <button class="btn btn-primary btn-sm" onclick="openServiceFormModal()">+ Νέα Υπηρεσία</button>
+    <div class="card-header" style="flex-wrap:wrap;gap:10px"><span class="card-title">Κατάλογος Υπηρεσιών (${rows.length})</span>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <label style="font-size:12px;color:var(--text-2)" title="Μέσο ωριαίο λειτουργικό κόστος (μισθοί, ενοίκιο, ρεύμα κλπ.) — μπαίνει στο κόστος κάθε υπηρεσίας αναλογικά με τη διάρκειά της">Εργατοώρα/opex (€/ώρα)</label>
+        <input class="form-control" id="ssv-opex" type="number" step="0.5" min="0" value="${opex||''}" style="max-width:90px"/>
+        <button class="btn btn-sm btn-primary" onclick="saveHourlyOpex()">✓</button>
+        <button class="btn btn-primary btn-sm" onclick="openServiceFormModal()">+ Νέα Υπηρεσία</button>
+      </div>
     </div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Όνομα</th><th>Κατηγορία</th><th>Διάρκεια</th><th>Τιμή</th><th>Κατάσταση</th><th></th></tr></thead>
+      <thead><tr><th>Όνομα</th><th>Κατηγορία</th><th>Διάρκεια</th><th>Τιμή</th><th>Κόστος</th><th>Περιθώριο</th><th>Κατάσταση</th><th></th></tr></thead>
       <tbody>
-        ${rows.length?rows.map(s=>`<tr>
+        ${rows.length?rows.map(s=>{
+          const k = calc(s);
+          return `<tr>
           <td>${esc(s.name)}</td>
           <td style="color:var(--text-2)">${esc(s.category||'—')}</td>
           <td>${s.duration_minutes} λεπτά</td>
           <td>${s.price!=null?euro(s.price):'—'}</td>
+          <td title="Αναλώσιμα ${euro(k.cons)} + εργασία ${euro(Math.round(k.labor*100)/100)}">${(k.cons||opex)?euro(Math.round(k.cost*100)/100):'—'}</td>
+          <td>${k.margin!=null&&(k.cons||opex)?`<span style="font-weight:600;color:${k.margin>=0?'#0F6E56':'var(--red)'}">${euro(Math.round(k.margin*100)/100)}${k.pct!=null?' ('+k.pct+'%)':''}</span>`:'—'}</td>
           <td>${s.active?'<span style="color:#0F6E56">Ενεργή</span>':'<span style="color:var(--text-3)">Ανενεργή</span>'}</td>
           <td style="text-align:right;white-space:nowrap">
             <button class="btn btn-ghost btn-sm" onclick="openServiceFormModal('${s.id}')">✎</button>
             <button class="btn btn-ghost btn-sm" onclick="deleteService('${s.id}')" style="color:var(--red)">🗑</button>
           </td>
-        </tr>`).join(''):`<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text-2)">Δεν υπάρχουν υπηρεσίες ακόμα.</td></tr>`}
+        </tr>`;}).join(''):`<tr><td colspan="8" style="text-align:center;padding:20px;color:var(--text-2)">Δεν υπάρχουν υπηρεσίες ακόμα.</td></tr>`}
       </tbody>
     </table></div>
+    ${(rows.length&&!opex)?`<div style="font-size:11.5px;color:var(--text-2);padding:8px 4px 0">💡 Όρισε την εργατοώρα (πάνω δεξιά) για να μπει και το κόστος εργασίας στον υπολογισμό — τώρα φαίνονται μόνο τα αναλώσιμα.</div>`:''}
   </div>`;
 }
 
@@ -4778,17 +4814,42 @@ function openServiceFormModal(id) {
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="ssv-svc-active" ${!s||s.active?'checked':''}/> Ενεργή</label>
         </div>
       </div>
+      <div class="form-group">
+        <label class="form-label">Αναλώσιμα (υλικό + κόστος ανά συνεδρία)</label>
+        <div id="ssv-consumables"></div>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="addConsumableRow()" style="margin-top:4px">+ Αναλώσιμο</button>
+      </div>
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
         <button class="btn btn-ghost" onclick="document.getElementById('ssv-overlay').remove()">Ακύρωση</button>
         <button class="btn btn-primary" onclick="saveService(${s?`'${s.id}'`:'null'})">Αποθήκευση</button>
       </div>
     </div>`;
   document.body.appendChild(ov);
+  (Array.isArray(s&&s.consumables)?s.consumables:[]).forEach(c=>addConsumableRow(c.name, c.cost));
+}
+
+// Γραμμή αναλώσιμου στη φόρμα υπηρεσίας (όνομα + κόστος €)
+function addConsumableRow(name, cost) {
+  const wrap = document.getElementById('ssv-consumables'); if (!wrap) return;
+  const row = document.createElement('div');
+  row.className = 'ssv-cons-row';
+  row.style.cssText = 'display:flex;gap:6px;margin-bottom:6px;align-items:center';
+  row.innerHTML = `
+    <input class="form-control ssv-cons-name" placeholder="π.χ. Αμπούλα βιταμίνης" style="flex:1"/>
+    <input class="form-control ssv-cons-cost" type="number" step="0.01" min="0" placeholder="€" style="max-width:90px"/>
+    <button type="button" onclick="this.parentElement.remove()" style="background:none;border:none;cursor:pointer;color:var(--red);font-size:15px;flex-shrink:0">🗑</button>`;
+  row.querySelector('.ssv-cons-name').value = name||'';
+  row.querySelector('.ssv-cons-cost').value = (cost!=null&&cost!=='')?cost:'';
+  wrap.appendChild(row);
 }
 
 async function saveService(id) {
   const name = document.getElementById('ssv-svc-name').value.trim();
   if (!name) { alert('Το όνομα είναι υποχρεωτικό.'); return; }
+  const consumables = [...document.querySelectorAll('#ssv-consumables .ssv-cons-row')].map(r=>({
+    name: r.querySelector('.ssv-cons-name').value.trim(),
+    cost: parseFloat(r.querySelector('.ssv-cons-cost').value)||0,
+  })).filter(c=>c.name||c.cost>0);
   const payload = {
     clinic_id: clinicId(),
     name,
@@ -4796,6 +4857,7 @@ async function saveService(id) {
     duration_minutes: parseInt(document.getElementById('ssv-svc-duration').value)||60,
     price: parseFloat(document.getElementById('ssv-svc-price').value)||null,
     active: document.getElementById('ssv-svc-active').checked,
+    consumables,
   };
   const {error} = id ? await sb.from('services').update(payload).eq('id',id) : await sb.from('services').insert(payload);
   if (error) { alert('Σφάλμα: '+error.message); return; }
