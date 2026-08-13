@@ -398,7 +398,13 @@ const esc = s => (s===null||s===undefined?'':s).toString().replace(/&/g,'&amp;')
 // και στο Πρόγραμμα για τα warnings, και στην καρτέλα ασθενή για να δείχνει
 // μόνο τις σχετικές συναινέσεις, όχι όλες)
 function classifyConsentGroup(serviceName) {
-  const s = (serviceName||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  let s = (serviceName||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  // \u03a4\u03bf \u00abNanopeel\u00bb \u0394\u0395\u039d \u03b5\u03af\u03bd\u03b1\u03b9 peeling \u2014 \u03b5\u03af\u03bd\u03b1\u03b9 \u03ae\u03c0\u03b9\u03b1 \u03bc\u03b9\u03ba\u03c1\u03bf\u03b1\u03c0\u03bf\u03bb\u03ad\u03c0\u03b9\u03c3\u03b7 \u03bc\u03ad\u03c3\u03b1 \u03c3\u03b5
+  // \u03ba\u03b1\u03b8\u03b1\u03c1\u03b9\u03c3\u03bc\u03bf\u03cd\u03c2/\u03b5\u03bd\u03c5\u03b4\u03b1\u03c4\u03ce\u03c3\u03b5\u03b9\u03c2. \u0395\u03be\u03bf\u03c5\u03b4\u03b5\u03c4\u03b5\u03c1\u03ce\u03bd\u03b5\u03c4\u03b1\u03b9 \u03c0\u03c1\u03b9\u03bd \u03c4\u03bf\u03bd \u03ad\u03bb\u03b5\u03b3\u03c7\u03bf, \u03ce\u03c3\u03c4\u03b5 \u03bd\u03b1
+  // \u03b1\u03c0\u03bf\u03c6\u03b1\u03c3\u03af\u03c3\u03b5\u03b9 \u03c4\u03bf \u03c5\u03c0\u03cc\u03bb\u03bf\u03b9\u03c0\u03bf \u03cc\u03bd\u03bf\u03bc\u03b1 (\u00ab\u0395\u03bd\u03c5\u03b4\u03ac\u03c4\u03c9\u03c3\u03b7 \u2026 & Nanopeel\u00bb \u2192 oxygen,
+  // \u00ab\u0392\u03b1\u03b8\u03cd\u03c2 \u039a\u03b1\u03b8\u03b1\u03c1\u03b9\u03c3\u03bc\u03cc\u03c2 \u03bc\u03b5 Nanopeel\u00bb \u2192 cleansing) \u03b1\u03bd\u03c4\u03af \u03bd\u03b1 \u03c3\u03ba\u03ac\u03b5\u03b9 \u03bb\u03ac\u03b8\u03bf\u03c2
+  // \u03c0\u03c1\u03bf\u03b5\u03b9\u03b4\u03bf\u03c0\u03bf\u03af\u03b7\u03c3\u03b7 \u00ab\u03a7\u03c9\u03c1\u03af\u03c2 \u03a3\u03c5\u03bd\u03b1\u03af\u03bd\u03b5\u03c3\u03b7 Peeling\u00bb.
+  s = s.replace(/nano\s?-?peel\w*/g, ' ');
   if (/alexandrite|laser/.test(s)) return 'laser';
   if (/καθαρισμ|δερμοαποξ|pore ?over|eco ?peel/.test(s)) return 'cleansing';
   if (/peeling|peel|prx|dermapen|μικροβελον|microneedl|tca/.test(s)) return 'peelings';
