@@ -556,7 +556,7 @@ const euro = v => '€'+(v||0).toLocaleString('el-GR');
 
 const ROLES = {super_admin:'Super Admin',clinic_admin:'Διαχειριστής',therapist:'Θεραπευτής',receptionist:'Γραμματεία'};
 const STATUS_PAT = {active:{bg:'#E1F5EE',c:'#0F6E56',l:'Ενεργός'},vip:{bg:'#EEEDFE',c:'#3C3489',l:'VIP'},lead:{bg:'#E6F1FB',c:'#185FA5',l:'Lead'},inactive:{bg:'#FCEBEB',c:'#A32D2D',l:'Ανενεργός'}};
-const STATUS_APPT = {confirmed:{bg:'#E1F5EE',c:'#0F6E56',l:'Επιβεβαιωμένο'},in_progress:{bg:'#E6F1FB',c:'#185FA5',l:'Σε εξέλιξη'},completed:{bg:'#E1F5EE',c:'#0F6E56',l:'Ολοκληρώθηκε'},cancelled:{bg:'#FCEBEB',c:'#A32D2D',l:'Ακυρώθηκε'},no_show:{bg:'#FCEBEB',c:'#A32D2D',l:'No Show'}};
+const STATUS_APPT = {booked:{bg:'#FAEEDA',c:'#D97706',l:'Κλεισμένο'},confirmed:{bg:'#E1F5EE',c:'#0F6E56',l:'Επιβεβαιωμένο'},in_progress:{bg:'#E6F1FB',c:'#185FA5',l:'Σε εξέλιξη'},completed:{bg:'#E1F5EE',c:'#0F6E56',l:'Ολοκληρώθηκε'},cancelled:{bg:'#FCEBEB',c:'#A32D2D',l:'Ακυρώθηκε'},no_show:{bg:'#FCEBEB',c:'#A32D2D',l:'No Show'}};
 const PIPELINE_STAGES = ['new_lead','contacted','interested','offer_sent','won','lost'];
 const STAGE_LABELS = {new_lead:'Νέο Lead',contacted:'Επαφή',interested:'Ενδιαφέρον',offer_sent:'Προσφορά',won:'✓ Κλείσιμο',lost:'✗ Απώλεια'};
 
@@ -753,6 +753,16 @@ async function loadPageData() {
       const {data:bgifts} = await sb.from('birthday_gifts').select('patient_id,channel,redeemed_at').eq('clinic_id',cid).eq('year', new Date().getFullYear());
       (bgifts||[]).forEach(g=>{ S.dashBirthdayGifts[g.patient_id]=g; });
     } catch(e) {}
+    // ⏳ ΚΛΕΙΣΜΕΝΑ (ανεπιβεβαίωτα) ραντεβού επόμενου 48ωρου — για να τα
+    // επιβεβαιώνει τηλεφωνικά η γραμματεία όταν ο πελάτης δεν έχει email ή
+    // δεν πάτησε το κουμπί του email.
+    S.dashUnconfirmed = [];
+    try {
+      const in48 = new Date(Date.now()+48*3600*1000).toISOString();
+      const {data:unc} = await sb.from('appointments').select('id,start_time,service_name,status,patients(full_name,phone,email)')
+        .eq('clinic_id',cid).eq('status','booked').gte('start_time', new Date().toISOString()).lte('start_time', in48).order('start_time');
+      S.dashUnconfirmed = unc||[];
+    } catch(e) {}
     S.dashStatusTrend = trendApts||[];
   }
   if (S.page==='patients') {
@@ -854,6 +864,17 @@ async function loadPageData() {
     S.smsSettings = (clinicData&&clinicData.sms_settings) || null;
     const {data:log} = await sb.from('sms_log').select('*, patients(full_name)').eq('clinic_id',cid).order('sent_at',{ascending:false}).limit(50);
     S.smsLog = log||[];
+    // Σετ οδηγιών πριν/μετά τη θεραπεία + αντιστοίχιση με υπηρεσίες
+    try {
+      const [isRes, imRes, svRes] = await Promise.all([
+        sb.from('instruction_sets').select('*').eq('clinic_id',cid).order('name'),
+        sb.from('service_instruction_map').select('*').eq('clinic_id',cid),
+        sb.from('services').select('id,name,category').eq('clinic_id',cid).eq('active',true).order('category').order('name'),
+      ]);
+      S.instructionSets = isRes.data||[];
+      S.instructionMap = imRes.data||[];
+      S.instructionServices = svRes.data||[];
+    } catch(e) { S.instructionSets=[]; S.instructionMap=[]; S.instructionServices=[]; }
   }
   if (S.page==='consultations') {
     const {data} = await sb.from('gdpr_consents').select('*, patients(full_name,phone,status,gdpr_signed)').eq('clinic_id',cid).order('signed_at',{ascending:false}).limit(200);
@@ -1536,6 +1557,24 @@ function renderDashboard() {
             :'<span style="font-size:10px;font-weight:700;color:#854F0B;background:#FAEEDA;padding:2px 8px;border-radius:8px;flex-shrink:0">⚠ ΤΕΛΕΥΤΑΙΑ ΣΥΝΕΔΡΙΑ</span>'}
           <span style="font-weight:700;color:#0F6E56;flex-shrink:0">${pk.used}/${pk.total}</span>
         </div>`).join('')}
+      </div>
+    </div>`:''}
+    ${(S.dashUnconfirmed&&S.dashUnconfirmed.length)?`
+    <div class="card" style="margin-bottom:16px;border:1.5px solid #D97706">
+      <div class="card-header"><span class="card-title">⏳ Ανεπιβεβαίωτα ραντεβού (επόμενο 48ωρο) — ${S.dashUnconfirmed.length}</span></div>
+      <div style="max-height:220px;overflow-y:auto">
+        ${S.dashUnconfirmed.map(a=>{
+          const st=new Date(a.start_time);
+          const hasEmail = a.patients&&a.patients.email&&String(a.patients.email).includes('@');
+          return `<div style="display:flex;align-items:center;gap:10px;padding:8px 16px;border-bottom:1px solid var(--border-2);font-size:12px;flex-wrap:wrap">
+            <span style="font-family:var(--mono);font-weight:700;color:#D97706;flex-shrink:0">${st.toLocaleDateString('el-GR',{day:'2-digit',month:'2-digit'})} ${st.toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'})}</span>
+            <span style="font-weight:600">${esc(a.patients&&a.patients.full_name||'—')}</span>
+            <span style="color:var(--text-2);flex:1;min-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.service_name||'')}</span>
+            ${hasEmail?'<span style="font-size:10px;color:var(--text-2)">✉ εστάλη email</span>':'<span style="font-size:10px;color:#A32D2D;font-weight:700">χωρίς email — κάλεσε!</span>'}
+            ${a.patients&&a.patients.phone?phoneActionsHtml(a.patients.phone):''}
+            <button class="btn btn-sm" style="background:#0F6E56;color:#fff;font-weight:700;font-size:10.5px" onclick="manualConfirmAppt('${a.id}')">✓ Επιβεβαίωση</button>
+          </div>`;
+        }).join('')}
       </div>
     </div>`:''}
     <!-- Σημερινό Πρόγραμμα + Γενέθλια -->
@@ -3030,7 +3069,7 @@ function renderCalendar() {
 
     <!-- Legend -->
     <div style="display:flex;gap:10px;flex-wrap:wrap;flex-shrink:0;font-size:11px">
-      ${[['#1D9E75','#E1F5EE','Ολοκληρώθηκε'],['#2B3BF0','#E6F1FB','Επιβεβαιωμένο'],['#7C3AED','#EDE9FE','Σε εξέλιξη'],['#DC2626','#FEE2E2','Ακυρώθηκε/No Show']].map(([c,bg,l])=>`
+      ${[['#D97706','#FAEEDA','Κλεισμένο'],['#1D9E75','#E1F5EE','Ολοκληρώθηκε'],['#2B3BF0','#E6F1FB','Επιβεβαιωμένο'],['#7C3AED','#EDE9FE','Σε εξέλιξη'],['#DC2626','#FEE2E2','Ακυρώθηκε/No Show']].map(([c,bg,l])=>`
       <div style="display:flex;align-items:center;gap:4px">
         <div style="width:10px;height:10px;border-radius:2px;background:${bg};border-left:3px solid ${c}"></div>
         <span style="color:var(--text-2)">${l}</span>
@@ -3337,9 +3376,9 @@ function renderSms() {
   return `<div class="page">
     <div class="page-header"><h1 class="page-title">SMS & Αυτοματισμοί</h1></div>
     <div style="display:flex;gap:0;border-bottom:1px solid var(--border-2);margin-bottom:20px;overflow-x:auto">
-      ${['automations','log'].map(t=>`<button class="btn" style="border-radius:0;border-bottom:2px solid ${smsTab===t?'var(--blue)':'transparent'};color:${smsTab===t?'var(--blue)':'var(--text-2)'};background:transparent;padding:8px 16px;font-size:12px" data-sms-tab="${t}">${t==='automations'?'Αυτοματισμοί':'SMS Log'}</button>`).join('')}
+      ${['automations','instructions','log'].map(t=>`<button class="btn" style="border-radius:0;border-bottom:2px solid ${smsTab===t?'var(--blue)':'transparent'};color:${smsTab===t?'var(--blue)':'var(--text-2)'};background:transparent;padding:8px 16px;font-size:12px" data-sms-tab="${t}">${t==='automations'?'Αυτοματισμοί':t==='instructions'?'📋 Οδηγίες Ραντεβού':'SMS Log'}</button>`).join('')}
     </div>
-    ${smsTab==='automations'?`
+    ${smsTab==='instructions'?renderInstructionSetsTab():smsTab==='automations'?`
     <div style="display:flex;flex-direction:column;gap:12px">
       ${SMS_AUTOMATIONS.map(a=>`<div class="card" style="padding:16px">
         <div style="display:flex;align-items:center;gap:12px">
@@ -3372,6 +3411,145 @@ function renderSms() {
       </table></div>
     </div>`}
   </div>`;
+}
+
+// ── ΟΔΗΓΙΕΣ ΡΑΝΤΕΒΟΥ (Instruction Sets) ──
+// Σετ οδηγιών ΠΡΙΝ/ΜΕΤΑ τη θεραπεία, αντιστοιχισμένα σε υπηρεσίες. Στέλνονται
+// αυτόματα με email όταν ένα ραντεβού γίνεται ΕΠΙΒΕΒΑΙΩΜΕΝΟ (edge function
+// appointment-automations). Τα κείμενα τα γράφει η διαχείριση εδώ.
+function renderInstructionSetsTab() {
+  const sets = S.instructionSets||[];
+  const map = S.instructionMap||[];
+  const svcCount = (setId)=>map.filter(m=>m.instruction_set_id===setId).length;
+  return `
+    <div class="card" style="padding:16px;margin-bottom:12px;background:#FDF0F5;border:1px solid #C4618A">
+      <div style="font-size:12.5px;color:#8A3B5E;line-height:1.6">
+        <b>Πώς δουλεύει:</b> Νέο ραντεβού >48 ώρες μπροστά = <b>Κλεισμένο</b> → 48 ώρες πριν φεύγει email «Επιβεβαιώστε το ραντεβού σας» → ο πελάτης πατάει το κουμπί → <b>Επιβεβαιωμένο</b> → φεύγει αυτόματα email με τις οδηγίες της υπηρεσίας (πριν + μετά). Ραντεβού εντός 48 ωρών επιβεβαιώνονται αυτόματα και παίρνουν οδηγίες αμέσως. Υπηρεσία χωρίς σετ = δεν στέλνεται τίποτα.
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><span class="card-title">Σετ Οδηγιών (${sets.length})</span>
+        <button class="btn btn-primary btn-sm" onclick="openInstructionSetModal()">+ Νέο Σετ</button>
+      </div>
+      ${sets.length?`<div style="display:flex;flex-direction:column">
+        ${sets.map(s=>`<div style="display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border-2);flex-wrap:wrap">
+          <div style="flex:1;min-width:180px">
+            <div style="font-size:13px;font-weight:600">${esc(s.name)} ${s.active?'':'<span style="font-size:10px;color:var(--text-3)">(ανενεργό)</span>'}</div>
+            <div style="font-size:11px;color:var(--text-2)">${esc(s.description||'')}${s.description?' · ':''}${svcCount(s.id)} υπηρεσίες</div>
+          </div>
+          <button class="btn btn-ghost btn-sm" onclick="openInstructionSetModal('${s.id}')">✎</button>
+          <button class="btn btn-ghost btn-sm" title="Αντιγραφή" onclick="duplicateInstructionSet('${s.id}')">⧉</button>
+          <button class="btn btn-ghost btn-sm" onclick="toggleInstructionSet('${s.id}', ${s.active?'false':'true'})">${s.active?'⏸':'▶'}</button>
+          <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="deleteInstructionSet('${s.id}')">🗑</button>
+        </div>`).join('')}
+      </div>`:`<div class="empty-state"><div class="empty-icon">📋</div><div style="max-width:380px;margin:0 auto">Δεν υπάρχουν σετ οδηγιών ακόμα. Φτιάξε π.χ. «Οδηγίες Laser Αποτρίχωσης», «Οδηγίες Καθαρισμού/Facial» και αντιστοίχισέ τα με τις υπηρεσίες σου.</div></div>`}
+    </div>`;
+}
+
+function openInstructionSetModal(id) {
+  const s = id ? (S.instructionSets||[]).find(x=>x.id===id) : null;
+  const map = S.instructionMap||[];
+  const mySvcIds = new Set(map.filter(m=>s&&m.instruction_set_id===s.id).map(m=>m.service_id));
+  const takenElsewhere = new Map(map.filter(m=>!s||m.instruction_set_id!==s.id).map(m=>[m.service_id, m.instruction_set_id]));
+  const setName = (sid)=>((S.instructionSets||[]).find(x=>x.id===sid)||{}).name||'άλλο σετ';
+  const old = document.getElementById('ins-overlay'); if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'ins-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9000;display:flex;align-items:center;justify-content:center;padding:12px';
+  ov.innerHTML = `
+    <div style="background:var(--white);border-radius:16px;max-width:640px;width:100%;max-height:92vh;overflow-y:auto;padding:20px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div style="font-size:15px;font-weight:700">${s?'Επεξεργασία Σετ Οδηγιών':'Νέο Σετ Οδηγιών'}</div>
+        <button onclick="document.getElementById('ins-overlay').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-2)">×</button>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Όνομα *</label><input class="form-control" id="ins-name" value="${s?esc(s.name):''}" placeholder="π.χ. Οδηγίες Laser Αποτρίχωσης"/></div>
+        <div class="form-group" style="display:flex;align-items:flex-end;padding-bottom:10px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="ins-active" ${!s||s.active?'checked':''}/> Ενεργό</label>
+        </div>
+      </div>
+      <div class="form-group"><label class="form-label">Περιγραφή</label><input class="form-control" id="ins-desc" value="${s?esc(s.description||''):''}" placeholder="σύντομη εσωτερική περιγραφή"/></div>
+      <div class="form-group"><label class="form-label">🌿 Οδηγίες ΠΡΙΝ τη θεραπεία</label>
+        <textarea class="form-control" id="ins-pre" rows="5" placeholder="Ένα σημείο ανά γραμμή — θα εμφανιστούν όπως τα γράφεις">${s?esc(s.pre_instructions||''):''}</textarea></div>
+      <div class="form-group"><label class="form-label">💛 Οδηγίες ΜΕΤΑ τη θεραπεία</label>
+        <textarea class="form-control" id="ins-post" rows="5" placeholder="Ένα σημείο ανά γραμμή">${s?esc(s.post_instructions||''):''}</textarea></div>
+      <div class="form-group"><label class="form-label">Υπηρεσίες που παίρνουν αυτές τις οδηγίες</label>
+        <div style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px 12px">
+          ${(S.instructionServices||[]).map(sv=>{
+            const taken = takenElsewhere.get(sv.id);
+            return `<label style="display:flex;align-items:center;gap:8px;font-size:12px;padding:3px 0;cursor:pointer;${taken?'opacity:.55':''}">
+              <input type="checkbox" class="ins-svc" value="${sv.id}" ${mySvcIds.has(sv.id)?'checked':''}/>
+              <span style="flex:1">${esc(sv.name)}</span>
+              ${taken?`<span style="font-size:10px;color:var(--text-3)">→ ${esc(setName(taken))}</span>`:''}
+            </label>`;
+          }).join('')||'<div style="font-size:12px;color:var(--text-2)">Δεν υπάρχουν ενεργές υπηρεσίες στον κατάλογο.</div>'}
+        </div>
+        <div style="font-size:10.5px;color:var(--text-3);margin-top:4px">Κάθε υπηρεσία ανήκει σε ΕΝΑ σετ — αν τσεκάρεις υπηρεσία άλλου σετ, μεταφέρεται εδώ.</div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
+        <button class="btn btn-ghost" onclick="document.getElementById('ins-overlay').remove()">Ακύρωση</button>
+        <button class="btn btn-primary" onclick="saveInstructionSet(${s?`'${s.id}'`:'null'})">Αποθήκευση</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+}
+
+async function saveInstructionSet(id) {
+  const name = document.getElementById('ins-name').value.trim();
+  if (!name) { alert('Το όνομα είναι υποχρεωτικό.'); return; }
+  const payload = {
+    clinic_id: clinicId(), name,
+    description: document.getElementById('ins-desc').value.trim()||null,
+    pre_instructions: document.getElementById('ins-pre').value.trim()||null,
+    post_instructions: document.getElementById('ins-post').value.trim()||null,
+    active: document.getElementById('ins-active').checked,
+  };
+  let setId = id;
+  if (id) {
+    const {error} = await sb.from('instruction_sets').update(payload).eq('id',id);
+    if (error) { alert('Σφάλμα: '+error.message); return; }
+  } else {
+    const {data, error} = await sb.from('instruction_sets').insert(payload).select('id').single();
+    if (error) { alert('Σφάλμα: '+error.message); return; }
+    setId = data && data.id;
+  }
+  // Αντιστοίχιση υπηρεσιών: σβήνουμε ό,τι δικό του υπήρχε και ξαναγράφουμε τα
+  // τσεκαρισμένα (τσεκαρισμένη υπηρεσία άλλου σετ μεταφέρεται εδώ).
+  const checked = [...document.querySelectorAll('.ins-svc:checked')].map(c=>c.value);
+  if (setId) {
+    await sb.from('service_instruction_map').delete().eq('instruction_set_id', setId);
+    if (checked.length) {
+      await sb.from('service_instruction_map').delete().in('service_id', checked);
+      const {error:mapErr} = await sb.from('service_instruction_map').insert(
+        checked.map(svcId=>({clinic_id: clinicId(), service_id: svcId, instruction_set_id: setId})));
+      if (mapErr) { alert('Σφάλμα αντιστοίχισης: '+mapErr.message); }
+    }
+  }
+  const ov = document.getElementById('ins-overlay'); if (ov) ov.remove();
+  await loadPageData(); render();
+}
+
+async function duplicateInstructionSet(id) {
+  const s = (S.instructionSets||[]).find(x=>x.id===id); if (!s) return;
+  const {error} = await sb.from('instruction_sets').insert({
+    clinic_id: clinicId(), name: s.name+' (αντίγραφο)', description: s.description,
+    pre_instructions: s.pre_instructions, post_instructions: s.post_instructions, active: false,
+  });
+  if (error) { alert('Σφάλμα: '+error.message); return; }
+  await loadPageData(); render();
+}
+
+async function toggleInstructionSet(id, active) {
+  const {error} = await sb.from('instruction_sets').update({active}).eq('id',id);
+  if (error) { alert('Σφάλμα: '+error.message); return; }
+  await loadPageData(); render();
+}
+
+async function deleteInstructionSet(id) {
+  if (!confirm('Διαγραφή αυτού του σετ οδηγιών; Οι υπηρεσίες του θα μείνουν χωρίς οδηγίες.')) return;
+  const {error} = await sb.from('instruction_sets').delete().eq('id',id);
+  if (error) { alert('Σφάλμα: '+error.message); return; }
+  await loadPageData(); render();
 }
 
 // ── CONSULTATIONS MODULE ──
@@ -3843,6 +4021,66 @@ async function maybeRedeemBirthdayGift(appt) {
 // booking247, που δεν στέλνει τιμές), ρωτάμε πόσο πληρώθηκε — αλλιώς τζίρος,
 // LTV και στατιστικά ανά υπηρεσία/θεραπευτή μετράνε 0€ για πραγματική δουλειά.
 // Ραντεβού ΠΑΚΕΤΟΥ εξαιρούνται: η τιμή τους είναι σκόπιμα 0 (πληρωμένο πακέτο).
+// Χειροκίνητη επιβεβαίωση από τη γραμματεία (τηλεφωνική) — οι οδηγίες θα
+// φύγουν αυτόματα από την ωριαία σάρωση του appointment-automations.
+async function manualConfirmAppt(aid) {
+  const {error} = await sb.from('appointments').update({status:'confirmed'}).eq('id', aid).eq('status','booked');
+  if (error) { alert('Σφάλμα: '+error.message); return; }
+  try {
+    await sb.from('communication_log').insert({
+      clinic_id: clinicId(), appointment_id: aid,
+      automation_type: 'confirmation_received', channel: 'manual', cycle: '',
+      status: 'received', metadata: { by: (S.profile&&S.profile.full_name)||'' },
+    });
+  } catch(e) {}
+  await loadPageData(); render();
+}
+
+// ── Αυτοματισμοί ραντεβού: ιστορικό + χειροκίνητες επαναποστολές ──
+async function loadApptAutomationInfo(aid) {
+  const el = document.getElementById('appt-autom-info'); if (!el) return;
+  try {
+    const {data:rows} = await sb.from('communication_log').select('automation_type,channel,status,created_at')
+      .eq('appointment_id', aid).order('created_at',{ascending:true}).limit(20);
+    if (!rows || !rows.length) { el.textContent = ''; return; }
+    const fmtD = d => new Date(d).toLocaleString('el-GR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+    const lines = rows.map(r=>{
+      if (r.automation_type==='confirmation_request') {
+        if (r.status==='sent') return `📧 Αίτημα επιβεβαίωσης εστάλη ${fmtD(r.created_at)}${r.channel==='manual'?' (χειροκίνητα)':''}`;
+        if (r.status==='no_email') return `⚠️ Χωρίς email — χρειάζεται τηλεφωνική επιβεβαίωση`;
+        if (r.status==='failed') return `✗ Αποτυχία αιτήματος επιβεβαίωσης ${fmtD(r.created_at)}`;
+      }
+      if (r.automation_type==='confirmation_received') return `✅ Επιβεβαιώθηκε από τον πελάτη ${fmtD(r.created_at)}`;
+      if (r.automation_type==='instructions') {
+        if (r.status==='sent') return `📋 Οδηγίες εστάλησαν ${fmtD(r.created_at)}${r.channel==='manual'?' (χειροκίνητα)':''}`;
+        if (r.status==='no_email') return `⚠️ Οδηγίες: ο πελάτης δεν έχει email`;
+        if (r.status==='no_set') return `— Δεν έχει οριστεί σετ οδηγιών για την υπηρεσία`;
+        if (r.status==='failed') return `✗ Αποτυχία αποστολής οδηγιών ${fmtD(r.created_at)}`;
+      }
+      return null;
+    }).filter(Boolean);
+    el.innerHTML = lines.map(l=>`<div style="padding:2px 0">${l}</div>`).join('');
+  } catch(e) { el.textContent = ''; }
+}
+
+async function resendApptAutomation(aid, action) {
+  const label = action==='resend_confirmation' ? 'το αίτημα επιβεβαίωσης' : 'τις οδηγίες θεραπείας';
+  if (!confirm(`Να σταλεί ξανά ${label} στον πελάτη με email;`)) return;
+  try {
+    const {data, error} = await sb.functions.invoke('appointment-automations', { body: { action, appointment_id: aid } });
+    if (error) throw new Error(await extractInvokeErrorMessage(error));
+    if (data && data.error) throw new Error(data.error);
+    const r = (data&&data.results)||{};
+    if (r.no_email) alert('⚠️ Ο πελάτης δεν έχει email — καταγράφηκε για τηλεφωνική ενημέρωση.');
+    else if (r.no_set) alert('⚠️ Η υπηρεσία δεν έχει αντιστοιχισμένο σετ οδηγιών (SMS & Αυτοματισμοί → Οδηγίες Ραντεβού).');
+    else if (r.errors) alert('✗ Η αποστολή απέτυχε — δες το ιστορικό.');
+    else alert('✓ Εστάλη.');
+    loadApptAutomationInfo(aid);
+  } catch(e) {
+    alert('Σφάλμα: '+(e.message||e)+'\n\nΈλεγξε ότι η Edge Function appointment-automations είναι ενεργή.');
+  }
+}
+
 async function apptStatusUpdatePayload(appt, newStatus) {
   const upd = {status: newStatus};
   if (newStatus==='completed' && appt && !appt.package_id && !(parseFloat(appt.price)>0)) {
@@ -6164,6 +6402,12 @@ function bindEvents() {
       : (notes ? notes+'\n' : '') + 'Προσωπικό: '+newTherapist;
     const stMatch = (S.staff||[]).find(s=>sameStaffName(s.full_name, newTherapist));
     upd.therapist_id = stMatch?stMatch.id:null;
+    // Reschedule = νέος κύκλος αυτοματισμών: αν αλλάζει η ώρα, το status
+    // επανυπολογίζεται με τον κανόνα 48ωρου (>48h → ΚΛΕΙΣΜΕΝΟ, νέο αίτημα
+    // επιβεβαίωσης· εντός 48h → ΕΠΙΒΕΒΑΙΩΜΕΝΟ). Ολοκληρωμένα/ακυρωμένα ανέγγιχτα.
+    if (upd.start_time && (appt.status==='booked' || appt.status==='confirmed')) {
+      upd.status = (new Date(upd.start_time).getTime() - Date.now() > 48*3600*1000) ? 'booked' : 'confirmed';
+    }
     const {error} = await sb.from('appointments').update(upd).eq('id', aid);
     if (error) { alert('Σφάλμα μεταφοράς: '+error.message); return; }
     Object.assign(appt, upd);
@@ -6349,8 +6593,15 @@ function bindEvents() {
           <select data-appt-status="${a.id}" style="flex:1;font-size:11px;padding:5px;border:1px solid var(--border);border-radius:6px;font-family:var(--font)">
             ${Object.entries(STATUS_APPT).map(([k,v])=>`<option value="${k}" ${a.status===k?'selected':''}>${v.l}</option>`).join('')}
           </select>
-        </div>`;
+        </div>
+        <div id="appt-autom-info" style="margin-top:10px;font-size:11px;color:var(--text-2)"></div>
+        ${canSee(['super_admin','clinic_admin','receptionist'])?`
+        <div style="display:flex;gap:6px;margin-top:6px">
+          <button class="btn btn-ghost btn-sm" style="flex:1;justify-content:center;font-size:11px" onclick="resendApptAutomation('${a.id}','resend_confirmation')">📧 Αίτημα επιβεβ.</button>
+          <button class="btn btn-ghost btn-sm" style="flex:1;justify-content:center;font-size:11px" onclick="resendApptAutomation('${a.id}','resend_instructions')">📋 Αποστολή οδηγιών</button>
+        </div>`:''}`;
       panel.style.display = 'block';
+      loadApptAutomationInfo(a.id);
       // Rebind patient link
       const _cp=content.querySelector('[data-patient]');if(_cp)_cp.addEventListener('click', () => {
         panel.style.display='none';
@@ -7522,7 +7773,10 @@ function bindModalEvents() {
       duration_minutes:parseInt(document.getElementById('a-duration').value)||60,
       price:parseFloat(document.getElementById('a-price').value)||null,
       notes:document.getElementById('a-notes').value,
-      status:'confirmed'
+      // ΚΛΕΙΣΜΕΝΟ για μελλοντικά ραντεβού >48 ωρών (θα πάρουν email
+      // επιβεβαίωσης 48 ώρες πριν)· κατευθείαν ΕΠΙΒΕΒΑΙΩΜΕΝΟ όταν το
+      // ραντεβού είναι εντός 48 ωρών ή στο παρελθόν (οι οδηγίες φεύγουν αμέσως).
+      status: (new Date(timeWithTz).getTime() - Date.now() > 48*3600*1000) ? 'booked' : 'confirmed'
     });
     if (error) { alert(error.message); btn.textContent='Αποθήκευση'; btn.disabled=false; return; }
     closeModal(); await loadPageData();
