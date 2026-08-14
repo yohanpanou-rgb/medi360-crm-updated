@@ -68,16 +68,37 @@ function b64utf8(s: string): string {
   return btoa(bin);
 }
 
-async function sendEmail(token: string, to: string, subject: string, html: string) {
-  const headerLines = [
+async function sendEmail(token: string, to: string, subject: string, html: string, ics?: string) {
+  const head = [
     `From: Beauty Line by Lina Panou <${SENDER}>`,
     `To: ${to}`,
     `Subject: =?UTF-8?B?${b64utf8(subject)}?=`,
     `MIME-Version: 1.0`,
-    `Content-Type: text/html; charset="UTF-8"`,
-    `Content-Transfer-Encoding: base64`,
   ];
-  const message = headerLines.join('\r\n') + '\r\n\r\n' + b64utf8(html);
+  let message: string;
+  if (ics) {
+    // multipart: HTML + συνημμένο .ics (ημερολόγιο με υπενθύμιση 1 ώρα πριν)
+    const boundary = 'blcalmixed';
+    message = [
+      ...head,
+      `Content-Type: multipart/mixed; boundary="${boundary}"`,
+      ``,
+      `--${boundary}`,
+      `Content-Type: text/html; charset="UTF-8"`,
+      `Content-Transfer-Encoding: base64`,
+      ``,
+      b64utf8(html),
+      `--${boundary}`,
+      `Content-Type: text/calendar; charset="UTF-8"; method=PUBLISH; name="randevou.ics"`,
+      `Content-Disposition: attachment; filename="randevou.ics"`,
+      `Content-Transfer-Encoding: base64`,
+      ``,
+      b64utf8(ics),
+      `--${boundary}--`,
+    ].join('\r\n');
+  } else {
+    message = [...head, `Content-Type: text/html; charset="UTF-8"`, `Content-Transfer-Encoding: base64`].join('\r\n') + '\r\n\r\n' + b64utf8(html);
+  }
   const raw = b64utf8(message).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
     method: 'POST',
@@ -105,6 +126,56 @@ function athensDT(iso: string): string {
   return d.toLocaleDateString('el-GR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Athens' })
     + ' στις ' + d.toLocaleTimeString('el-GR', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Europe/Athens' });
 }
+function athensTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString('el-GR', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Europe/Athens' });
+}
+function athensDay(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'Europe/Athens' });
+}
+
+// ── Ημερολόγιο: Google Calendar link + .ics με υπενθύμιση 1 ώρα πριν και
+// τοποθεσία/οδηγίες Google Maps ──
+function icsDate(d: Date): string {
+  return d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z/, 'Z');
+}
+function icsEsc(s: string): string {
+  return (s || '').replace(/\\/g, '\\\\').replace(/([,;])/g, '\\$1').replace(/\n/g, '\\n');
+}
+function buildCalendarBits(appts: Appt[], address: string) {
+  const sorted = [...appts].sort((a, b) => (a.start_time < b.start_time ? -1 : 1));
+  const start = new Date(sorted[0].start_time);
+  const last = sorted[sorted.length - 1];
+  const end = new Date(new Date(last.start_time).getTime() + ((last as { duration_minutes?: number }).duration_minutes || 60) * 60000);
+  const title = 'Ραντεβού Beauty Line';
+  const services = sorted.map((a) => a.service_name).filter(Boolean).join(', ');
+  const mapsUrl = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(address);
+  const details = `${services}\nΟδηγίες πρόσβασης (Google Maps): ${mapsUrl}`;
+  const gcal = 'https://calendar.google.com/calendar/render?action=TEMPLATE'
+    + '&text=' + encodeURIComponent(title)
+    + '&dates=' + icsDate(start) + '/' + icsDate(end)
+    + '&details=' + encodeURIComponent(details)
+    + '&location=' + encodeURIComponent(address);
+  const ics = [
+    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Beauty Line//medi360//EL', 'METHOD:PUBLISH',
+    'BEGIN:VEVENT',
+    'UID:' + sorted[0].id + '@beautyline',
+    'DTSTAMP:' + icsDate(new Date()),
+    'DTSTART:' + icsDate(start),
+    'DTEND:' + icsDate(end),
+    'SUMMARY:' + icsEsc(title),
+    'DESCRIPTION:' + icsEsc(details),
+    'LOCATION:' + icsEsc(address),
+    'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:' + icsEsc('Ραντεβού Beauty Line σε 1 ώρα'), 'TRIGGER:-PT1H', 'END:VALARM',
+    'END:VEVENT', 'END:VCALENDAR',
+  ].join('\r\n');
+  return { gcal, ics };
+}
+function calendarButtonHtml(gcal: string): string {
+  return `
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:12px 0 0;">
+          <a href="${esc(gcal)}" style="display:inline-block;background-color:#185FA5;color:#FFFFFF;-webkit-text-fill-color:#FFFFFF;font-size:13.5px;font-weight:bold;text-decoration:none;padding:11px 26px;border-radius:26px;">🗓 Προσθήκη στο Ημερολόγιό μου</a>
+        </td></tr><tr><td align="center" style="padding:6px 0 0;font-size:11px;color:#8A6070;-webkit-text-fill-color:#8A6070;">Με υπενθύμιση 1 ώρα πριν και οδηγίες Google Maps — ή ανοίξτε το συνημμένο αρχείο ημερολογίου</td></tr></table>`;
+}
 
 // ── Beauty Line email templates (ίδιο ύφος με τα υπόλοιπα: solid hex +
 // -webkit-text-fill-color για iPhone dark mode) ──
@@ -118,27 +189,37 @@ function shell(inner: string): string {
   </td></tr></table></body></html>`;
 }
 
-function confirmationEmailHtml(name: string, service: string, whenStr: string, confirmLink: string): string {
+// Δέχεται 1+ ραντεβού ΤΗΣ ΙΔΙΑΣ ΗΜΕΡΑΣ — σε πολλαπλά, ένα email με «ώρα
+// προσέλευσης» του πρώτου και λίστα όλων, για να μην μπερδεύεται ο πελάτης.
+function confirmationEmailHtml(name: string, appts: Appt[], confirmLink: string, calBtn: string): string {
+  const sorted = [...appts].sort((a, b) => (a.start_time < b.start_time ? -1 : 1));
+  const first = sorted[0];
+  const multi = sorted.length > 1;
+  const dayStr = new Date(first.start_time).toLocaleDateString('el-GR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Athens' });
+  const rows = sorted.map((a) => `
+          <div style="font-size:14px;color:#333333;-webkit-text-fill-color:#333333;margin-top:6px;"><b>${esc(athensTime(a.start_time))}</b> — ${esc(a.service_name || '')}</div>`).join('');
   return shell(`
       <tr><td style="background-color:#C4618A;padding:28px 30px;text-align:center;">
         <div style="font-size:36px;line-height:1;">📅</div>
-        <div style="font-size:21px;font-weight:bold;color:#FFFFFF;-webkit-text-fill-color:#FFFFFF;margin-top:8px;">Επιβεβαίωση Ραντεβού</div>
+        <div style="font-size:21px;font-weight:bold;color:#FFFFFF;-webkit-text-fill-color:#FFFFFF;margin-top:8px;">Επιβεβαίωση ${multi ? 'Ραντεβού Ημέρας' : 'Ραντεβού'}</div>
       </td></tr>
       <tr><td style="padding:28px 30px;">
         <p style="font-size:15px;line-height:1.7;color:#333333;-webkit-text-fill-color:#333333;margin:0 0 16px;">Αγαπητή/έ <b>${esc(name)}</b>,</p>
-        <p style="font-size:15px;line-height:1.7;color:#333333;-webkit-text-fill-color:#333333;margin:0 0 18px;">Έχετε προγραμματισμένο ραντεβού:</p>
+        <p style="font-size:15px;line-height:1.7;color:#333333;-webkit-text-fill-color:#333333;margin:0 0 18px;">${multi ? `Έχετε <b>${sorted.length} ραντεβού</b> την ίδια ημέρα:` : 'Έχετε προγραμματισμένο ραντεβού:'}</p>
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#FDF0F5;border-radius:14px;"><tr><td style="padding:18px 22px;text-align:center;">
-          <div style="font-size:16px;font-weight:bold;color:#333333;-webkit-text-fill-color:#333333;">${esc(service)}</div>
-          <div style="font-size:14px;color:#8A6070;-webkit-text-fill-color:#8A6070;margin-top:6px;">${esc(whenStr)}</div>
+          <div style="font-size:15px;font-weight:bold;color:#C4618A;-webkit-text-fill-color:#C4618A;">${esc(dayStr)}</div>
+          ${rows}
+          ${multi ? `<div style="font-size:13.5px;font-weight:bold;color:#0F6E56;-webkit-text-fill-color:#0F6E56;margin-top:12px;">Ώρα προσέλευσης: ${esc(athensTime(first.start_time))}</div>` : ''}
         </td></tr></table>
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:22px 0 6px;">
-          <a href="${esc(confirmLink)}" style="display:inline-block;background-color:#0F6E56;color:#FFFFFF;-webkit-text-fill-color:#FFFFFF;font-size:15px;font-weight:bold;text-decoration:none;padding:14px 34px;border-radius:30px;">✅ Επιβεβαιώνω το ραντεβού</a>
+          <a href="${esc(confirmLink)}" style="display:inline-block;background-color:#0F6E56;color:#FFFFFF;-webkit-text-fill-color:#FFFFFF;font-size:15px;font-weight:bold;text-decoration:none;padding:14px 34px;border-radius:30px;">✅ Επιβεβαιώνω ${multi ? 'τα ραντεβού' : 'το ραντεβού'}</a>
         </td></tr></table>
+        ${calBtn}
         <p style="font-size:13px;line-height:1.7;color:#8A6070;-webkit-text-fill-color:#8A6070;margin:14px 0 0;text-align:center;">Αν η ώρα δεν σας εξυπηρετεί ή θέλετε αλλαγή, απαντήστε σε αυτό το email ή τηλεφωνήστε μας.</p>
       </td></tr>`);
 }
 
-function instructionsEmailHtml(name: string, service: string, whenStr: string, pre: string, post: string): string {
+function instructionsEmailHtml(name: string, service: string, whenStr: string, pre: string, post: string, calBtn = ''): string {
   const block = (title: string, text: string, color: string, bg: string) => text ? `
         <div style="font-size:14px;font-weight:bold;color:${color};-webkit-text-fill-color:${color};margin:18px 0 8px;">${title}</div>
         <div style="background-color:${bg};border-radius:12px;padding:14px 18px;font-size:13.5px;line-height:1.8;color:#333333;-webkit-text-fill-color:#333333;white-space:pre-line;">${esc(text)}</div>` : '';
@@ -152,13 +233,14 @@ function instructionsEmailHtml(name: string, service: string, whenStr: string, p
         <p style="font-size:14.5px;line-height:1.7;color:#333333;-webkit-text-fill-color:#333333;margin:0 0 6px;">Το ραντεβού σας για <b>${esc(service)}</b> (${esc(whenStr)}) έχει επιβεβαιωθεί. Για την καλύτερη προετοιμασία και φροντίδα σας:</p>
         ${block('🌿 Πριν από τη θεραπεία', pre, '#0F6E56', '#E1F5EE')}
         ${block('💛 Μετά τη θεραπεία', post, '#854F0B', '#FAEEDA')}
+        ${calBtn}
         <p style="font-size:13px;line-height:1.7;color:#8A6070;-webkit-text-fill-color:#8A6070;margin:18px 0 0;">Για οποιαδήποτε απορία, απαντήστε σε αυτό το email ή τηλεφωνήστε μας. Σας περιμένουμε! ✨</p>
       </td></tr>`);
 }
 
 interface Appt {
   id: string; clinic_id: string; patient_id: string; status: string;
-  start_time: string; service_name?: string;
+  start_time: string; service_name?: string; duration_minutes?: number;
   patients?: { full_name?: string; email?: string } | null;
 }
 
@@ -211,6 +293,12 @@ Deno.serve(async (req: Request) => {
       return !!(data && data.length);
     };
 
+    // Διεύθυνση ινστιτούτου για ημερολόγιο/χάρτες — fallback στο όνομα (το
+    // Google Maps βρίσκει την επιχείρηση με αναζήτηση ονόματος).
+    const { data: clinicRow } = await supabase.from('clinics').select('*').ilike('name', '%Beauty Line%').limit(1).single();
+    const cRow = (clinicRow || {}) as { address?: string; settings?: { address?: string } };
+    const clinicAddress = cRow.address || (cRow.settings && cRow.settings.address) || 'Beauty Line by Lina Panou';
+
     // ── Φόρτωση instruction sets + καταλόγου για την αντιστοίχιση ──
     const { data: sets } = await supabase.from('instruction_sets').select('*').eq('active', true);
     const { data: maps } = await supabase.from('service_instruction_map').select('service_id,instruction_set_id');
@@ -225,18 +313,28 @@ Deno.serve(async (req: Request) => {
       return (sets || []).find((x) => x.id === m.instruction_set_id) || null;
     };
 
-    const sendConfirmation = async (a: Appt, channel = 'email') => {
-      const email = a.patients && a.patients.email;
-      if (!email || !String(email).includes('@')) { await log(a, 'confirmation_request', channel, 'no_email'); results.no_email++; return; }
-      const ts = Math.floor(new Date(a.start_time).getTime() / 1000);
-      const link = `${CONFIRM_URL}?id=${a.id}&ts=${ts}`;
-      const html = confirmationEmailHtml(firstName((a.patients && a.patients.full_name) || ''), a.service_name || 'την υπηρεσία σας', athensDT(a.start_time), link);
+    // Δέχεται ΟΛΑ τα ραντεβού μιας ημέρας του πελάτη (dayAppts) και στέλνει ΕΝΑ
+    // email· pending = όσα δεν έχουν πάρει ακόμα αίτημα στον κύκλο τους (μόνο
+    // αυτά καταγράφονται). Το κουμπί επιβεβαιώνει όλη την ημέρα (βλ.
+    // appointment-confirm).
+    const sendConfirmation = async (dayAppts: Appt[], pending: Appt[], channel = 'email') => {
+      const sorted = [...dayAppts].sort((x, y) => (x.start_time < y.start_time ? -1 : 1));
+      const first = sorted[0];
+      const email = first.patients && first.patients.email;
+      if (!email || !String(email).includes('@')) {
+        for (const a of pending) await log(a, 'confirmation_request', channel, 'no_email');
+        results.no_email++; return;
+      }
+      const ts = Math.floor(new Date(first.start_time).getTime() / 1000);
+      const link = `${CONFIRM_URL}?id=${first.id}&ts=${ts}`;
+      const { gcal, ics } = buildCalendarBits(sorted, clinicAddress);
+      const html = confirmationEmailHtml(firstName((first.patients && first.patients.full_name) || ''), sorted, link, calendarButtonHtml(gcal));
       try {
-        const msgId = await sendEmail(await gmail(), String(email), '📅 Επιβεβαιώστε το ραντεβού σας — Beauty Line', html);
-        await log(a, 'confirmation_request', channel, 'sent', { metadata: { gmail_id: msgId } });
+        const msgId = await sendEmail(await gmail(), String(email), sorted.length > 1 ? '📅 Επιβεβαιώστε τα ραντεβού σας — Beauty Line' : '📅 Επιβεβαιώστε το ραντεβού σας — Beauty Line', html, ics);
+        for (const a of pending) await log(a, 'confirmation_request', channel, 'sent', { metadata: { gmail_id: msgId, grouped: sorted.length } });
         results.confirmations++;
       } catch (e) {
-        await log(a, 'confirmation_request', channel, 'failed', { error: e instanceof Error ? e.message : String(e) });
+        for (const a of pending) await log(a, 'confirmation_request', channel, 'failed', { error: e instanceof Error ? e.message : String(e) });
         results.errors++;
       }
     };
@@ -246,9 +344,10 @@ Deno.serve(async (req: Request) => {
       if (!set) { await log(a, 'instructions', channel, 'no_set'); results.no_set++; return; }
       const email = a.patients && a.patients.email;
       if (!email || !String(email).includes('@')) { await log(a, 'instructions', channel, 'no_email', { metadata: { instruction_set: set.name } }); results.no_email++; return; }
-      const html = instructionsEmailHtml(firstName((a.patients && a.patients.full_name) || ''), a.service_name || '', athensDT(a.start_time), set.pre_instructions || '', set.post_instructions || '');
+      const { gcal, ics } = buildCalendarBits([a], clinicAddress);
+      const html = instructionsEmailHtml(firstName((a.patients && a.patients.full_name) || ''), a.service_name || '', athensDT(a.start_time), set.pre_instructions || '', set.post_instructions || '', calendarButtonHtml(gcal));
       try {
-        const msgId = await sendEmail(await gmail(), String(email), '📋 Οδηγίες για το ραντεβού σας — Beauty Line', html);
+        const msgId = await sendEmail(await gmail(), String(email), '📋 Οδηγίες για το ραντεβού σας — Beauty Line', html, ics);
         await log(a, 'instructions', channel, 'sent', { metadata: { gmail_id: msgId, instruction_set: set.name } });
         results.instructions++;
       } catch (e) {
@@ -260,11 +359,11 @@ Deno.serve(async (req: Request) => {
     // ── Χειροκίνητη ενέργεια από το CRM ──
     if (body.action && body.appointment_id) {
       const { data: appt } = await supabase.from('appointments')
-        .select('id,clinic_id,patient_id,status,start_time,service_name,patients(full_name,email)')
+        .select('id,clinic_id,patient_id,status,start_time,service_name,duration_minutes,patients(full_name,email)')
         .eq('id', body.appointment_id).single();
       if (!appt) return json({ error: 'Appointment not found' }, 404);
       const a = appt as unknown as Appt;
-      if (body.action === 'resend_confirmation') await sendConfirmation(a, 'manual');
+      if (body.action === 'resend_confirmation') await sendConfirmation([a], [a], 'manual');
       else if (body.action === 'resend_instructions') await sendInstructions(a, 'manual');
       else return json({ error: 'Unknown action' }, 400);
       return json({ ok: true, results });
@@ -276,20 +375,29 @@ Deno.serve(async (req: Request) => {
     const in48h = new Date(now.getTime() + 48 * 3600 * 1000);
     const horizon = new Date(now.getTime() + 14 * 86400 * 1000);
 
-    // 1) ΚΛΕΙΣΜΕΝΑ μέσα στο 48ωρο → αίτημα επιβεβαίωσης
+    // 1) ΚΛΕΙΣΜΕΝΑ μέσα στο 48ωρο → αίτημα επιβεβαίωσης — ΟΜΑΔΟΠΟΙΗΜΕΝΑ ανά
+    //    πελάτη+ημέρα: 2 ραντεβού την ίδια μέρα = ΕΝΑ email με ώρα προσέλευσης
+    //    του πρώτου, ώστε να μην μπερδεύεται ο πελάτης.
     const { data: bookedRows } = await supabase.from('appointments')
-      .select('id,clinic_id,patient_id,status,start_time,service_name,patients(full_name,email)')
+      .select('id,clinic_id,patient_id,status,start_time,service_name,duration_minutes,patients(full_name,email)')
       .eq('status', 'booked').gte('start_time', now.toISOString()).lte('start_time', in48h.toISOString());
+    const byPatientDay: Record<string, Appt[]> = {};
     for (const row of (bookedRows || []) as unknown as Appt[]) {
-      if (await alreadyDone(row, 'confirmation_request')) continue;
-      await sendConfirmation(row);
+      const k = row.patient_id + '|' + athensDay(row.start_time);
+      (byPatientDay[k] = byPatientDay[k] || []).push(row);
+    }
+    for (const group of Object.values(byPatientDay)) {
+      const pending: Appt[] = [];
+      for (const a of group) if (!(await alreadyDone(a, 'confirmation_request'))) pending.push(a);
+      if (!pending.length) continue;
+      await sendConfirmation(group, pending);
     }
 
     // 2) ΕΠΙΒΕΒΑΙΩΜΕΝΑ μελλοντικά χωρίς οδηγίες στον κύκλο τους → οδηγίες
     //    (πιάνει και τις χειροκίνητες επιβεβαιώσεις από τη γραμματεία και τα
     //    ≤48h ραντεβού που μπήκαν κατευθείαν ΕΠΙΒΕΒΑΙΩΜΕΝΑ)
     const { data: confRows } = await supabase.from('appointments')
-      .select('id,clinic_id,patient_id,status,start_time,service_name,patients(full_name,email)')
+      .select('id,clinic_id,patient_id,status,start_time,service_name,duration_minutes,patients(full_name,email)')
       .eq('status', 'confirmed').gte('start_time', now.toISOString()).lte('start_time', horizon.toISOString());
     for (const row of (confRows || []) as unknown as Appt[]) {
       if (await alreadyDone(row, 'instructions')) continue;

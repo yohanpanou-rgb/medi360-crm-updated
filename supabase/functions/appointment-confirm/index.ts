@@ -87,5 +87,28 @@ Deno.serve(async (req: Request) => {
     status: 'received', metadata: { previous_status: 'booked', new_status: 'confirmed' },
   });
 
-  return page('Το ραντεβού επιβεβαιώθηκε!', '🎉', `Ευχαριστούμε! Το ραντεβού σας για <b>${esc(appt.service_name || '')}</b> (${esc(whenStr)}) επιβεβαιώθηκε.<br/><br/>Θα λάβετε σύντομα email με χρήσιμες οδηγίες για τη θεραπεία σας. Σας περιμένουμε! ✨`);
+  // Ένα κλικ επιβεβαιώνει ΟΛΗ την ημέρα: αν ο πελάτης έχει και άλλα ΚΛΕΙΣΜΕΝΑ
+  // ραντεβού την ίδια ημέρα (ώρα Ελλάδας), επιβεβαιώνονται μαζί — το email
+  // επιβεβαίωσης ήταν ένα, κοινό για όλα.
+  const athensDay = (iso: string) => new Date(iso).toLocaleDateString('en-CA', { timeZone: 'Europe/Athens' });
+  const dayKey = athensDay(appt.start_time);
+  let extra = 0;
+  const { data: siblings } = await supabase.from('appointments')
+    .select('id,clinic_id,patient_id,start_time,status')
+    .eq('patient_id', appt.patient_id).eq('status', 'booked');
+  for (const s of (siblings || [])) {
+    if (s.id === appt.id || athensDay(s.start_time) !== dayKey) continue;
+    const { error: e2 } = await supabase.from('appointments')
+      .update({ status: 'confirmed' }).eq('id', s.id).eq('status', 'booked');
+    if (!e2) {
+      extra++;
+      await supabase.from('communication_log').insert({
+        clinic_id: s.clinic_id, appointment_id: s.id, patient_id: s.patient_id,
+        automation_type: 'confirmation_received', channel: 'email', cycle: s.start_time,
+        status: 'received', metadata: { grouped_with: appt.id },
+      });
+    }
+  }
+
+  return page('Το ραντεβού επιβεβαιώθηκε!', '🎉', `Ευχαριστούμε! Το ραντεβού σας για <b>${esc(appt.service_name || '')}</b> (${esc(whenStr)}) επιβεβαιώθηκε${extra ? ` — μαζί και ${extra === 1 ? 'το δεύτερο ραντεβού' : 'τα υπόλοιπα ' + extra + ' ραντεβού'} της ίδιας ημέρας` : ''}.<br/><br/>Θα λάβετε σύντομα email με χρήσιμες οδηγίες για τη θεραπεία σας. Σας περιμένουμε! ✨`);
 });
