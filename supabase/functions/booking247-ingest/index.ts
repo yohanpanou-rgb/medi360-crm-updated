@@ -172,10 +172,15 @@ Deno.serve(async (req: Request) => {
         row.staff ? `Προσωπικό: ${row.staff}` : '',
         nameDiffers ? `Όνομα κράτησης: ${name}` : '',
       ].filter(Boolean);
+      // ΚΛΕΙΣΜΕΝΟ αν το ραντεβού είναι >48 ώρες μπροστά (θα πάρει email
+      // επιβεβαίωσης), αλλιώς κατευθείαν ΕΠΙΒΕΒΑΙΩΜΕΝΟ. Και οι δύο χρόνοι
+      // στο ίδιο «naive τοπικό» πλαίσιο ώρας Ελλάδας.
+      const athensNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Athens' }));
+      const apptStatus = (new Date(localTs).getTime() - athensNow.getTime() > 48 * 3600 * 1000) ? 'booked' : 'confirmed';
       const { error: insApptErr } = await supabase.from('appointments').insert({
         clinic_id: cid, patient_id: patientId,
         service_name: row.service || '', start_time: localTs,
-        duration_minutes: row.duration || 60, status: 'confirmed',
+        duration_minutes: row.duration || 60, status: apptStatus,
         price: (typeof row.price === 'number' && row.price > 0) ? row.price : null,
         notes: noteLines.join('\n'),
       });
