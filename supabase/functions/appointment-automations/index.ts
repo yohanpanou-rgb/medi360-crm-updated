@@ -155,6 +155,14 @@ function buildCalendarBits(appts: Appt[], address: string) {
     + '&dates=' + icsDate(start) + '/' + icsDate(end)
     + '&details=' + encodeURIComponent(details)
     + '&location=' + encodeURIComponent(address);
+  // Outlook.com / Office 365 deeplink (web Outlook — το desktop Outlook
+  // ανοίγει το .ics)
+  const outlook = 'https://outlook.live.com/calendar/0/deeplink/compose?path=/calendar/action/compose&rru=addevent'
+    + '&subject=' + encodeURIComponent(title)
+    + '&startdt=' + encodeURIComponent(start.toISOString())
+    + '&enddt=' + encodeURIComponent(end.toISOString())
+    + '&body=' + encodeURIComponent(details)
+    + '&location=' + encodeURIComponent(address);
   const ics = [
     'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Beauty Line//medi360//EL', 'METHOD:PUBLISH',
     'BEGIN:VEVENT',
@@ -168,12 +176,20 @@ function buildCalendarBits(appts: Appt[], address: string) {
     'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:' + icsEsc('Ραντεβού Beauty Line σε 1 ώρα'), 'TRIGGER:-PT1H', 'END:VALARM',
     'END:VEVENT', 'END:VCALENDAR',
   ].join('\r\n');
-  return { gcal, ics };
+  return { gcal, outlook, ics };
 }
-function calendarButtonHtml(gcal: string): string {
+// Τρία κουμπιά: Google (web link), Outlook (web deeplink), Apple/iPhone
+// (σύνδεσμος .ics από το appointment-confirm — το iPhone τον ανοίγει
+// κατευθείαν στο Ημερολόγιο, με την υπενθύμιση 1 ώρας μέσα).
+function calendarButtonHtml(gcal: string, outlook: string, icsUrl: string): string {
+  const pill = (href: string, label: string, bg: string) =>
+    `<a href="${esc(href)}" style="display:inline-block;background-color:${bg};color:#FFFFFF;-webkit-text-fill-color:#FFFFFF;font-size:12.5px;font-weight:bold;text-decoration:none;padding:9px 16px;border-radius:22px;margin:3px 3px;">${label}</a>`;
   return `
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:12px 0 0;">
-          <a href="${esc(gcal)}" style="display:inline-block;background-color:#185FA5;color:#FFFFFF;-webkit-text-fill-color:#FFFFFF;font-size:13.5px;font-weight:bold;text-decoration:none;padding:11px 26px;border-radius:26px;">🗓 Προσθήκη στο Ημερολόγιό μου</a>
+          <div style="font-size:12.5px;font-weight:bold;color:#333333;-webkit-text-fill-color:#333333;margin-bottom:6px;">🗓 Προσθήκη στο Ημερολόγιό μου</div>
+          ${pill(gcal, 'Google', '#185FA5')}
+          ${pill(outlook, 'Outlook', '#0F5E9C')}
+          ${pill(icsUrl, ' iPhone / Apple', '#333333')}
         </td></tr><tr><td align="center" style="padding:6px 0 0;font-size:11px;color:#8A6070;-webkit-text-fill-color:#8A6070;">Με υπενθύμιση 1 ώρα πριν και οδηγίες Google Maps — ή ανοίξτε το συνημμένο αρχείο ημερολογίου</td></tr></table>`;
 }
 
@@ -327,8 +343,9 @@ Deno.serve(async (req: Request) => {
       }
       const ts = Math.floor(new Date(first.start_time).getTime() / 1000);
       const link = `${CONFIRM_URL}?id=${first.id}&ts=${ts}`;
-      const { gcal, ics } = buildCalendarBits(sorted, clinicAddress);
-      const html = confirmationEmailHtml(firstName((first.patients && first.patients.full_name) || ''), sorted, link, calendarButtonHtml(gcal));
+      const icsUrl = `${CONFIRM_URL}?id=${first.id}&ts=${ts}&ics=1`;
+      const { gcal, outlook, ics } = buildCalendarBits(sorted, clinicAddress);
+      const html = confirmationEmailHtml(firstName((first.patients && first.patients.full_name) || ''), sorted, link, calendarButtonHtml(gcal, outlook, icsUrl));
       try {
         const msgId = await sendEmail(await gmail(), String(email), sorted.length > 1 ? '📅 Επιβεβαιώστε τα ραντεβού σας — Beauty Line' : '📅 Επιβεβαιώστε το ραντεβού σας — Beauty Line', html, ics);
         for (const a of pending) await log(a, 'confirmation_request', channel, 'sent', { metadata: { gmail_id: msgId, grouped: sorted.length } });
@@ -344,8 +361,10 @@ Deno.serve(async (req: Request) => {
       if (!set) { await log(a, 'instructions', channel, 'no_set'); results.no_set++; return; }
       const email = a.patients && a.patients.email;
       if (!email || !String(email).includes('@')) { await log(a, 'instructions', channel, 'no_email', { metadata: { instruction_set: set.name } }); results.no_email++; return; }
-      const { gcal, ics } = buildCalendarBits([a], clinicAddress);
-      const html = instructionsEmailHtml(firstName((a.patients && a.patients.full_name) || ''), a.service_name || '', athensDT(a.start_time), set.pre_instructions || '', set.post_instructions || '', calendarButtonHtml(gcal));
+      const insTs = Math.floor(new Date(a.start_time).getTime() / 1000);
+      const insIcsUrl = `${CONFIRM_URL}?id=${a.id}&ts=${insTs}&ics=1`;
+      const { gcal, outlook, ics } = buildCalendarBits([a], clinicAddress);
+      const html = instructionsEmailHtml(firstName((a.patients && a.patients.full_name) || ''), a.service_name || '', athensDT(a.start_time), set.pre_instructions || '', set.post_instructions || '', calendarButtonHtml(gcal, outlook, insIcsUrl));
       try {
         const msgId = await sendEmail(await gmail(), String(email), '📋 Οδηγίες για το ραντεβού σας — Beauty Line', html, ics);
         await log(a, 'instructions', channel, 'sent', { metadata: { gmail_id: msgId, instruction_set: set.name } });
