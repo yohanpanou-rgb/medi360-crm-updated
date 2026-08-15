@@ -68,9 +68,9 @@ function b64utf8(s: string): string {
   return btoa(bin);
 }
 
-async function sendEmail(token: string, to: string, subject: string, html: string, ics?: string) {
+async function sendEmail(token: string, to: string, subject: string, html: string, ics: string | undefined, fromName: string) {
   const head = [
-    `From: Beauty Line by Lina Panou <${SENDER}>`,
+    `From: ${fromName.replace(/[\r\n]/g, '')} <${SENDER}>`,
     `To: ${to}`,
     `Subject: =?UTF-8?B?${b64utf8(subject)}?=`,
     `MIME-Version: 1.0`,
@@ -141,12 +141,14 @@ function icsDate(d: Date): string {
 function icsEsc(s: string): string {
   return (s || '').replace(/\\/g, '\\\\').replace(/([,;])/g, '\\$1').replace(/\n/g, '\\n');
 }
-function buildCalendarBits(appts: Appt[], address: string) {
+interface Brand { name: string; color: string; logoUrl: string }
+
+function buildCalendarBits(appts: Appt[], address: string, brand: Brand) {
   const sorted = [...appts].sort((a, b) => (a.start_time < b.start_time ? -1 : 1));
   const start = new Date(sorted[0].start_time);
   const last = sorted[sorted.length - 1];
   const end = new Date(new Date(last.start_time).getTime() + ((last as { duration_minutes?: number }).duration_minutes || 60) * 60000);
-  const title = 'Ραντεβού Beauty Line';
+  const title = 'Ραντεβού ' + brand.name;
   const services = sorted.map((a) => a.service_name).filter(Boolean).join(', ');
   const mapsUrl = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(address);
   const details = `${services}\nΟδηγίες πρόσβασης (Google Maps): ${mapsUrl}`;
@@ -164,7 +166,7 @@ function buildCalendarBits(appts: Appt[], address: string) {
     + '&body=' + encodeURIComponent(details)
     + '&location=' + encodeURIComponent(address);
   const ics = [
-    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Beauty Line//medi360//EL', 'METHOD:PUBLISH',
+    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//' + icsEsc(brand.name) + '//medi360//EL', 'METHOD:PUBLISH',
     'BEGIN:VEVENT',
     'UID:' + sorted[0].id + '@beautyline',
     'DTSTAMP:' + icsDate(new Date()),
@@ -173,7 +175,7 @@ function buildCalendarBits(appts: Appt[], address: string) {
     'SUMMARY:' + icsEsc(title),
     'DESCRIPTION:' + icsEsc(details),
     'LOCATION:' + icsEsc(address),
-    'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:' + icsEsc('Ραντεβού Beauty Line σε 1 ώρα'), 'TRIGGER:-PT1H', 'END:VALARM',
+    'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:' + icsEsc(title + ' σε 1 ώρα'), 'TRIGGER:-PT1H', 'END:VALARM',
     'END:VEVENT', 'END:VCALENDAR',
   ].join('\r\n');
   return { gcal, outlook, ics };
@@ -193,21 +195,32 @@ function calendarButtonHtml(gcal: string, outlook: string, icsUrl: string): stri
         </td></tr><tr><td align="center" style="padding:6px 0 0;font-size:11px;color:#8A6070;-webkit-text-fill-color:#8A6070;">Με υπενθύμιση 1 ώρα πριν και οδηγίες Google Maps — ή ανοίξτε το συνημμένο αρχείο ημερολογίου</td></tr></table>`;
 }
 
-// ── Beauty Line email templates (ίδιο ύφος με τα υπόλοιπα: solid hex +
-// -webkit-text-fill-color για iPhone dark mode) ──
-function shell(inner: string): string {
+// ── Email templates (ίδιο ύφος για κάθε κλινική: solid hex + -webkit-text-
+// fill-color για iPhone dark mode· χρώμα/λογότυπο/όνομα έρχονται από τις
+// ρυθμίσεις branding της κλινικής — clinics.settings.brand_*) ──
+function shell(inner: string, brand: Brand): string {
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="margin:0;padding:0;background-color:#FAF3F6;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#FAF3F6;padding:24px 0;"><tr><td align="center">
     <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background-color:#FFFFFF;border-radius:18px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;">
       ${inner}
-      <tr><td style="padding:0 26px 22px;font-size:11.5px;color:#8A6070;-webkit-text-fill-color:#8A6070;text-align:center;">Beauty Line by Lina Panou</td></tr>
+      <tr><td style="padding:0 26px 22px;font-size:11.5px;color:#8A6070;-webkit-text-fill-color:#8A6070;text-align:center;">${esc(brand.name)}</td></tr>
     </table>
   </td></tr></table></body></html>`;
 }
 
+function headerBand(brand: Brand, emoji: string, title: string): string {
+  const logo = brand.logoUrl ? `<img src="${esc(brand.logoUrl)}" alt="${esc(brand.name)}" style="max-height:40px;margin-bottom:8px;" />` : '';
+  return `
+      <tr><td style="background-color:${esc(brand.color)};padding:28px 30px;text-align:center;">
+        ${logo}
+        <div style="font-size:36px;line-height:1;">${emoji}</div>
+        <div style="font-size:21px;font-weight:bold;color:#FFFFFF;-webkit-text-fill-color:#FFFFFF;margin-top:8px;">${title}</div>
+      </td></tr>`;
+}
+
 // Δέχεται 1+ ραντεβού ΤΗΣ ΙΔΙΑΣ ΗΜΕΡΑΣ — σε πολλαπλά, ένα email με «ώρα
 // προσέλευσης» του πρώτου και λίστα όλων, για να μην μπερδεύεται ο πελάτης.
-function confirmationEmailHtml(name: string, appts: Appt[], confirmLink: string, calBtn: string): string {
+function confirmationEmailHtml(name: string, appts: Appt[], confirmLink: string, calBtn: string, brand: Brand): string {
   const sorted = [...appts].sort((a, b) => (a.start_time < b.start_time ? -1 : 1));
   const first = sorted[0];
   const multi = sorted.length > 1;
@@ -215,15 +228,12 @@ function confirmationEmailHtml(name: string, appts: Appt[], confirmLink: string,
   const rows = sorted.map((a) => `
           <div style="font-size:14px;color:#333333;-webkit-text-fill-color:#333333;margin-top:6px;"><b>${esc(athensTime(a.start_time))}</b> — ${esc(a.service_name || '')}</div>`).join('');
   return shell(`
-      <tr><td style="background-color:#C4618A;padding:28px 30px;text-align:center;">
-        <div style="font-size:36px;line-height:1;">📅</div>
-        <div style="font-size:21px;font-weight:bold;color:#FFFFFF;-webkit-text-fill-color:#FFFFFF;margin-top:8px;">Επιβεβαίωση ${multi ? 'Ραντεβού Ημέρας' : 'Ραντεβού'}</div>
-      </td></tr>
+      ${headerBand(brand, '📅', 'Επιβεβαίωση ' + (multi ? 'Ραντεβού Ημέρας' : 'Ραντεβού'))}
       <tr><td style="padding:28px 30px;">
         <p style="font-size:15px;line-height:1.7;color:#333333;-webkit-text-fill-color:#333333;margin:0 0 16px;">Αγαπητή/έ <b>${esc(name)}</b>,</p>
         <p style="font-size:15px;line-height:1.7;color:#333333;-webkit-text-fill-color:#333333;margin:0 0 18px;">${multi ? `Έχετε <b>${sorted.length} ραντεβού</b> την ίδια ημέρα:` : 'Έχετε προγραμματισμένο ραντεβού:'}</p>
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#FDF0F5;border-radius:14px;"><tr><td style="padding:18px 22px;text-align:center;">
-          <div style="font-size:15px;font-weight:bold;color:#C4618A;-webkit-text-fill-color:#C4618A;">${esc(dayStr)}</div>
+          <div style="font-size:15px;font-weight:bold;color:${esc(brand.color)};-webkit-text-fill-color:${esc(brand.color)};">${esc(dayStr)}</div>
           ${rows}
           ${multi ? `<div style="font-size:13.5px;font-weight:bold;color:#0F6E56;-webkit-text-fill-color:#0F6E56;margin-top:12px;">Ώρα προσέλευσης: ${esc(athensTime(first.start_time))}</div>` : ''}
         </td></tr></table>
@@ -232,18 +242,15 @@ function confirmationEmailHtml(name: string, appts: Appt[], confirmLink: string,
         </td></tr></table>
         ${calBtn}
         <p style="font-size:13px;line-height:1.7;color:#8A6070;-webkit-text-fill-color:#8A6070;margin:14px 0 0;text-align:center;">Αν η ώρα δεν σας εξυπηρετεί ή θέλετε αλλαγή, απαντήστε σε αυτό το email ή τηλεφωνήστε μας.</p>
-      </td></tr>`);
+      </td></tr>`, brand);
 }
 
-function instructionsEmailHtml(name: string, service: string, whenStr: string, pre: string, post: string, calBtn = ''): string {
+function instructionsEmailHtml(name: string, service: string, whenStr: string, pre: string, post: string, calBtn: string, brand: Brand): string {
   const block = (title: string, text: string, color: string, bg: string) => text ? `
         <div style="font-size:14px;font-weight:bold;color:${color};-webkit-text-fill-color:${color};margin:18px 0 8px;">${title}</div>
         <div style="background-color:${bg};border-radius:12px;padding:14px 18px;font-size:13.5px;line-height:1.8;color:#333333;-webkit-text-fill-color:#333333;white-space:pre-line;">${esc(text)}</div>` : '';
   return shell(`
-      <tr><td style="background-color:#C4618A;padding:28px 30px;text-align:center;">
-        <div style="font-size:36px;line-height:1;">📋</div>
-        <div style="font-size:21px;font-weight:bold;color:#FFFFFF;-webkit-text-fill-color:#FFFFFF;margin-top:8px;">Οδηγίες για το ραντεβού σας</div>
-      </td></tr>
+      ${headerBand(brand, '📋', 'Οδηγίες για το ραντεβού σας')}
       <tr><td style="padding:28px 30px;">
         <p style="font-size:15px;line-height:1.7;color:#333333;-webkit-text-fill-color:#333333;margin:0 0 14px;">Αγαπητή/έ <b>${esc(name)}</b>,</p>
         <p style="font-size:14.5px;line-height:1.7;color:#333333;-webkit-text-fill-color:#333333;margin:0 0 6px;">Το ραντεβού σας για <b>${esc(service)}</b> (${esc(whenStr)}) έχει επιβεβαιωθεί. Για την καλύτερη προετοιμασία και φροντίδα σας:</p>
@@ -251,7 +258,7 @@ function instructionsEmailHtml(name: string, service: string, whenStr: string, p
         ${block('💛 Μετά τη θεραπεία', post, '#854F0B', '#FAEEDA')}
         ${calBtn}
         <p style="font-size:13px;line-height:1.7;color:#8A6070;-webkit-text-fill-color:#8A6070;margin:18px 0 0;">Για οποιαδήποτε απορία, απαντήστε σε αυτό το email ή τηλεφωνήστε μας. Σας περιμένουμε! ✨</p>
-      </td></tr>`);
+      </td></tr>`, brand);
 }
 
 interface Appt {
@@ -312,8 +319,13 @@ Deno.serve(async (req: Request) => {
     // Διεύθυνση ινστιτούτου για ημερολόγιο/χάρτες — fallback στο όνομα (το
     // Google Maps βρίσκει την επιχείρηση με αναζήτηση ονόματος).
     const { data: clinicRow } = await supabase.from('clinics').select('*').ilike('name', '%Beauty Line%').limit(1).single();
-    const cRow = (clinicRow || {}) as { address?: string; settings?: { address?: string } };
+    const cRow = (clinicRow || {}) as { name?: string; address?: string; settings?: { address?: string; brand_name?: string; brand_color?: string; brand_logo_url?: string } };
     const clinicAddress = cRow.address || (cRow.settings && cRow.settings.address) || 'Beauty Line by Lina Panou';
+    const brand: Brand = {
+      name: (cRow.settings && cRow.settings.brand_name) || cRow.name || 'Beauty Line by Lina Panou',
+      color: (cRow.settings && cRow.settings.brand_color) || '#C4618A',
+      logoUrl: (cRow.settings && cRow.settings.brand_logo_url) || '',
+    };
 
     // ── Φόρτωση instruction sets + καταλόγου για την αντιστοίχιση ──
     const { data: sets } = await supabase.from('instruction_sets').select('*').eq('active', true);
@@ -344,10 +356,10 @@ Deno.serve(async (req: Request) => {
       const ts = Math.floor(new Date(first.start_time).getTime() / 1000);
       const link = `${CONFIRM_URL}?id=${first.id}&ts=${ts}`;
       const icsUrl = `${CONFIRM_URL}?id=${first.id}&ts=${ts}&ics=1`;
-      const { gcal, outlook, ics } = buildCalendarBits(sorted, clinicAddress);
-      const html = confirmationEmailHtml(firstName((first.patients && first.patients.full_name) || ''), sorted, link, calendarButtonHtml(gcal, outlook, icsUrl));
+      const { gcal, outlook, ics } = buildCalendarBits(sorted, clinicAddress, brand);
+      const html = confirmationEmailHtml(firstName((first.patients && first.patients.full_name) || ''), sorted, link, calendarButtonHtml(gcal, outlook, icsUrl), brand);
       try {
-        const msgId = await sendEmail(await gmail(), String(email), sorted.length > 1 ? '📅 Επιβεβαιώστε τα ραντεβού σας — Beauty Line' : '📅 Επιβεβαιώστε το ραντεβού σας — Beauty Line', html, ics);
+        const msgId = await sendEmail(await gmail(), String(email), (sorted.length > 1 ? '📅 Επιβεβαιώστε τα ραντεβού σας — ' : '📅 Επιβεβαιώστε το ραντεβού σας — ') + brand.name, html, ics, brand.name);
         for (const a of pending) await log(a, 'confirmation_request', channel, 'sent', { metadata: { gmail_id: msgId, grouped: sorted.length } });
         results.confirmations++;
       } catch (e) {
@@ -363,10 +375,10 @@ Deno.serve(async (req: Request) => {
       if (!email || !String(email).includes('@')) { await log(a, 'instructions', channel, 'no_email', { metadata: { instruction_set: set.name } }); results.no_email++; return; }
       const insTs = Math.floor(new Date(a.start_time).getTime() / 1000);
       const insIcsUrl = `${CONFIRM_URL}?id=${a.id}&ts=${insTs}&ics=1`;
-      const { gcal, outlook, ics } = buildCalendarBits([a], clinicAddress);
-      const html = instructionsEmailHtml(firstName((a.patients && a.patients.full_name) || ''), a.service_name || '', athensDT(a.start_time), set.pre_instructions || '', set.post_instructions || '', calendarButtonHtml(gcal, outlook, insIcsUrl));
+      const { gcal, outlook, ics } = buildCalendarBits([a], clinicAddress, brand);
+      const html = instructionsEmailHtml(firstName((a.patients && a.patients.full_name) || ''), a.service_name || '', athensDT(a.start_time), set.pre_instructions || '', set.post_instructions || '', calendarButtonHtml(gcal, outlook, insIcsUrl), brand);
       try {
-        const msgId = await sendEmail(await gmail(), String(email), '📋 Οδηγίες για το ραντεβού σας — Beauty Line', html, ics);
+        const msgId = await sendEmail(await gmail(), String(email), '📋 Οδηγίες για το ραντεβού σας — ' + brand.name, html, ics, brand.name);
         await log(a, 'instructions', channel, 'sent', { metadata: { gmail_id: msgId, instruction_set: set.name } });
         results.instructions++;
       } catch (e) {

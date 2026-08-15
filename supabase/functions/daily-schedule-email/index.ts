@@ -112,14 +112,16 @@ function athensTime(iso: string): string {
   return new Date(iso).toLocaleTimeString('el-GR', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Europe/Athens' });
 }
 
-function scheduleEmailHtml(dayLabel: string, appts: Appt[], staffList: { id: string; full_name: string }[]): string {
+interface Brand { name: string; color: string; logoUrl: string }
+
+function scheduleEmailHtml(dayLabel: string, appts: Appt[], staffList: { id: string; full_name: string }[], brand: Brand): string {
   const canon = (t: string | null) => FIXED.find((f) => sameStaffName(f, t || '')) || t || 'Μη ανατεθειμένα';
   const groups: Record<string, Appt[]> = {};
   appts.forEach((a) => { const k = canon(apptStaffName(a, staffList)); (groups[k] = groups[k] || []).push(a); });
   const order = [...FIXED.filter((f) => groups[f]), ...Object.keys(groups).filter((k) => !FIXED.includes(k))];
 
   const section = (k: string) => `
-    <tr><td style="padding:18px 0 6px;font-size:15px;font-weight:bold;color:#C4618A;-webkit-text-fill-color:#C4618A;border-bottom:2px solid #C4618A;">${esc(k)} (${groups[k].length})</td></tr>
+    <tr><td style="padding:18px 0 6px;font-size:15px;font-weight:bold;color:${esc(brand.color)};-webkit-text-fill-color:${esc(brand.color)};border-bottom:2px solid ${esc(brand.color)};">${esc(k)} (${groups[k].length})</td></tr>
     <tr><td>
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
         ${groups[k].map((a) => `
@@ -138,7 +140,8 @@ function scheduleEmailHtml(dayLabel: string, appts: Appt[], staffList: { id: str
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#FAF3F6;padding:24px 0;">
     <tr><td align="center">
       <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background-color:#FFFFFF;border-radius:18px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;">
-        <tr><td style="background-color:#C4618A;padding:26px 30px;text-align:center;">
+        <tr><td style="background-color:${esc(brand.color)};padding:26px 30px;text-align:center;">
+          ${brand.logoUrl ? `<img src="${esc(brand.logoUrl)}" alt="${esc(brand.name)}" style="max-height:32px;margin-bottom:6px;" />` : ''}
           <div style="font-size:34px;line-height:1;">📋</div>
           <div style="font-size:20px;font-weight:bold;color:#FFFFFF;-webkit-text-fill-color:#FFFFFF;margin-top:8px;">Ημερήσιο Πρόγραμμα</div>
           <div style="font-size:14px;color:#F7DCE8;-webkit-text-fill-color:#F7DCE8;margin-top:5px;">${esc(dayLabel)} · ${appts.length} ραντεβού</div>
@@ -148,7 +151,7 @@ function scheduleEmailHtml(dayLabel: string, appts: Appt[], staffList: { id: str
             ${order.map(section).join('')}
           </table>
         </td></tr>
-        <tr><td style="padding:0 26px 22px;font-size:11.5px;color:#8A6070;-webkit-text-fill-color:#8A6070;text-align:center;">Beauty Line by Lina Panou · αυτόματη ενημέρωση από το Medi360</td></tr>
+        <tr><td style="padding:0 26px 22px;font-size:11.5px;color:#8A6070;-webkit-text-fill-color:#8A6070;text-align:center;">${esc(brand.name)} · αυτόματη ενημέρωση από το Medi360</td></tr>
       </table>
     </td></tr>
   </table>
@@ -174,6 +177,12 @@ Deno.serve(async (req: Request) => {
       .from('clinics').select('*').ilike('name', '%Beauty Line%').limit(1).single();
     if (clinicErr || !clinic) return json({ error: 'Clinic not found: ' + (clinicErr ? clinicErr.message : '') }, 500);
     const cid = clinic.id as string;
+    const cRow = clinic as { name?: string; settings?: { brand_name?: string; brand_color?: string; brand_logo_url?: string } };
+    const brand: Brand = {
+      name: (cRow.settings && cRow.settings.brand_name) || cRow.name || 'Beauty Line by Lina Panou',
+      color: (cRow.settings && cRow.settings.brand_color) || '#C4618A',
+      logoUrl: (cRow.settings && cRow.settings.brand_logo_url) || '',
+    };
 
     // Ένα ερώτημα για όλο το 8ήμερο παράθυρο· η κατανομή σε ημέρες γίνεται
     // μετά, με βάση την ημερομηνία ΩΡΑΣ ΕΛΛΑΔΑΣ του κάθε ραντεβού (τα
@@ -211,12 +220,12 @@ Deno.serve(async (req: Request) => {
       const dayNoon = new Date(dstr(day) + 'T12:00:00Z');
       const dayLabel = dayNoon.toLocaleDateString('el-GR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
 
-      const html = scheduleEmailHtml(dayLabel, appts, staff || []);
+      const html = scheduleEmailHtml(dayLabel, appts, staff || [], brand);
       const subject = `📋 Πρόγραμμα — ${dayLabel} · ${appts.length} ραντεβού`;
 
       const token = await getGmailAccessToken();
       const headerLines = [
-        `From: Beauty Line by Lina Panou <${RECIPIENT}>`,
+        `From: ${brand.name.replace(/[\r\n]/g, '')} <${RECIPIENT}>`,
         `To: ${RECIPIENT}`,
         `Subject: =?UTF-8?B?${b64utf8(subject)}?=`,
         `MIME-Version: 1.0`,

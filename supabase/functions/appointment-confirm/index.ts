@@ -31,9 +31,15 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const SITE_URL = 'https://medi360-crm.netlify.app';
 
-function redirectPage(status: string, extra: Record<string, string> = {}): Response {
+interface Brand { name: string; color: string; logoUrl: string }
+const DEFAULT_BRAND: Brand = { name: 'Beauty Line by Lina Panou', color: '#C4618A', logoUrl: '' };
+
+function redirectPage(status: string, brand: Brand, extra: Record<string, string> = {}): Response {
   const u = new URL(SITE_URL + '/confirm.html');
   u.searchParams.set('status', status);
+  u.searchParams.set('brand', brand.name);
+  u.searchParams.set('color', brand.color);
+  if (brand.logoUrl) u.searchParams.set('logo', brand.logoUrl);
   for (const [k, v] of Object.entries(extra)) if (v) u.searchParams.set(k, v);
   return new Response(null, { status: 302, headers: { Location: u.toString() } });
 }
@@ -59,7 +65,7 @@ Deno.serve(async (req: Request) => {
   const ts = url.searchParams.get('ts') || '';
   const wantsIcs = url.searchParams.get('ics') === '1';
   if (!/^[0-9a-f-]{36}$/i.test(id) || !/^\d+$/.test(ts)) {
-    return redirectPage('invalid');
+    return redirectPage('invalid', DEFAULT_BRAND);
   }
 
   const supabase = createClient(
@@ -70,7 +76,16 @@ Deno.serve(async (req: Request) => {
   const { data: appt } = await supabase.from('appointments')
     .select('id,clinic_id,patient_id,status,start_time,service_name,duration_minutes')
     .eq('id', id).single();
-  if (!appt) return redirectPage('notfound');
+  if (!appt) return redirectPage('notfound', DEFAULT_BRAND);
+
+  const { data: clinicRow } = await supabase.from('clinics').select('*').eq('id', appt.clinic_id).single();
+  const cRow = (clinicRow || {}) as { address?: string; name?: string; settings?: { address?: string; brand_name?: string; brand_color?: string; brand_logo_url?: string } };
+  const address = cRow.address || (cRow.settings && cRow.settings.address) || cRow.name || DEFAULT_BRAND.name;
+  const brand: Brand = {
+    name: (cRow.settings && cRow.settings.brand_name) || cRow.name || DEFAULT_BRAND.name,
+    color: (cRow.settings && cRow.settings.brand_color) || DEFAULT_BRAND.color,
+    logoUrl: (cRow.settings && cRow.settings.brand_logo_url) || '',
+  };
 
   // ── Λήψη .ics (κουμπί «iPhone / Apple» των emails) — δεν αγγίζει status,
   // απλώς σερβίρει το αρχείο ημερολογίου με το ίδιο περιεχόμενο του
@@ -78,9 +93,6 @@ Deno.serve(async (req: Request) => {
   // Content-Disposition: attachment αναγκάζει λήψη αρχείου ανεξαρτήτως
   // Content-Type, οπότε δεν επηρεάζεται από τον παραπάνω περιορισμό.
   if (wantsIcs) {
-    const { data: clinicRow } = await supabase.from('clinics').select('*').eq('id', appt.clinic_id).single();
-    const cRow = (clinicRow || {}) as { address?: string; name?: string; settings?: { address?: string } };
-    const address = cRow.address || (cRow.settings && cRow.settings.address) || cRow.name || 'Beauty Line by Lina Panou';
     const dayKey = athensDayKey(appt.start_time);
     const { data: siblingRows } = await supabase.from('appointments')
       .select('id,start_time,service_name,duration_minutes')
@@ -92,17 +104,18 @@ Deno.serve(async (req: Request) => {
     const end = new Date(new Date(last.start_time).getTime() + (last.duration_minutes || 60) * 60000);
     const services = group.map((a) => a.service_name).filter(Boolean).join(', ');
     const mapsUrl = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(address);
+    const title = 'Ραντεβού ' + brand.name;
     const ics = [
-      'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Beauty Line//medi360//EL', 'METHOD:PUBLISH',
+      'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//' + icsEsc(brand.name) + '//medi360//EL', 'METHOD:PUBLISH',
       'BEGIN:VEVENT',
       'UID:' + group[0].id + '@beautyline',
       'DTSTAMP:' + icsDate(new Date()),
       'DTSTART:' + icsDate(start),
       'DTEND:' + icsDate(end),
-      'SUMMARY:' + icsEsc('Ραντεβού Beauty Line'),
+      'SUMMARY:' + icsEsc(title),
       'DESCRIPTION:' + icsEsc(`${services}\nΟδηγίες πρόσβασης (Google Maps): ${mapsUrl}`),
       'LOCATION:' + icsEsc(address),
-      'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:' + icsEsc('Ραντεβού Beauty Line σε 1 ώρα'), 'TRIGGER:-PT1H', 'END:VALARM',
+      'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:' + icsEsc(title + ' σε 1 ώρα'), 'TRIGGER:-PT1H', 'END:VALARM',
       'END:VEVENT', 'END:VCALENDAR',
     ].join('\r\n');
     const icsHeaders = new Headers();
@@ -116,20 +129,20 @@ Deno.serve(async (req: Request) => {
   // δεν ισχύει — θα σταλεί νέο αίτημα για τη νέα ώρα.
   const curTs = Math.floor(new Date(appt.start_time).getTime() / 1000);
   if (String(curTs) !== ts) {
-    return redirectPage('stale');
+    return redirectPage('stale', brand);
   }
 
   const whenStr = athensDT(appt.start_time);
   if (appt.status === 'confirmed') {
-    return redirectPage('already', { service: appt.service_name || '', when: whenStr });
+    return redirectPage('already', brand, { service: appt.service_name || '', when: whenStr });
   }
   if (appt.status !== 'booked') {
-    return redirectPage('unavailable');
+    return redirectPage('unavailable', brand);
   }
 
   const { error } = await supabase.from('appointments')
     .update({ status: 'confirmed' }).eq('id', id).eq('status', 'booked');
-  if (error) return redirectPage('error');
+  if (error) return redirectPage('error', brand);
 
   await supabase.from('communication_log').insert({
     clinic_id: appt.clinic_id, appointment_id: appt.id, patient_id: appt.patient_id,
@@ -160,5 +173,5 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  return redirectPage('ok', { service: appt.service_name || '', when: whenStr, extra: String(extra) });
+  return redirectPage('ok', brand, { service: appt.service_name || '', when: whenStr, extra: String(extra) });
 });
