@@ -34,7 +34,15 @@ function page(title: string, emoji: string, msg: string, ok = true): Response {
     </div>
   </div>
 </body></html>`;
-  return new Response(html, { status: ok ? 200 : 400, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+  // Ρητό UTF-8 encoding + Headers instance (αντί για string body + plain
+  // object): live report έδειξε τον browser να εμφανίζει την απάντηση σαν
+  // ωμό κείμενο με λάθος κωδικοποίηση («Î¤Î¿ ÏÎ±Î½Ï…» αντί «Το ραντεβού…») —
+  // σημάδι ότι το Content-Type δεν έφτανε σωστά μέσα από το Supabase edge
+  // runtime. Η ρητή κωδικοποίηση των bytes εξαλείφει κάθε ασάφεια.
+  const headers = new Headers();
+  headers.set('Content-Type', 'text/html; charset=utf-8');
+  headers.set('X-Content-Type-Options', 'nosniff');
+  return new Response(new TextEncoder().encode(html), { status: ok ? 200 : 400, headers });
 }
 
 function athensDT(iso: string): string {
@@ -102,7 +110,10 @@ Deno.serve(async (req: Request) => {
       'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:' + icsEsc('Ραντεβού Beauty Line σε 1 ώρα'), 'TRIGGER:-PT1H', 'END:VALARM',
       'END:VEVENT', 'END:VCALENDAR',
     ].join('\r\n');
-    return new Response(ics, { headers: { 'Content-Type': 'text/calendar; charset=utf-8', 'Content-Disposition': 'attachment; filename="randevou.ics"' } });
+    const icsHeaders = new Headers();
+    icsHeaders.set('Content-Type', 'text/calendar; charset=utf-8');
+    icsHeaders.set('Content-Disposition', 'attachment; filename="randevou.ics"');
+    return new Response(new TextEncoder().encode(ics), { headers: icsHeaders });
   }
 
   // Ο σύνδεσμος δένεται με τη συγκεκριμένη ώρα ραντεβού (κύκλο): αν το
