@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="el">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Επιβεβαίωση Ραντεβού — Beauty Line</title>
+</head>
+<body style="margin:0;font-family:Arial,Helvetica,sans-serif;background:#FAF3F6;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;">
+  <div style="max-width:420px;width:100%;background:#fff;border-radius:18px;overflow:hidden;box-shadow:0 10px 40px rgba(196,97,138,.18);text-align:center;">
+    <div style="background:#C4618A;padding:26px;">
+      <div id="emoji" style="font-size:40px;line-height:1;">⏳</div>
+      <div id="title" style="font-size:20px;font-weight:bold;color:#fff;margin-top:8px;">Φόρτωση…</div>
+    </div>
+    <div style="padding:26px;font-size:15px;line-height:1.7;color:#333;">
+      <div id="msg"></div>
+      <div style="margin-top:18px;font-size:12px;color:#8A6070;">Beauty Line by Lina Panou</div>
+    </div>
+  </div>
+<script>
+  function esc(s) {
+    return (s == null ? '' : String(s)).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  var p = new URLSearchParams(location.search);
+  var status = p.get('status') || 'invalid';
+  var service = esc(p.get('service') || '');
+  var when = esc(p.get('when') || '');
+  var extra = parseInt(p.get('extra') || '0', 10) || 0;
+
+  var MAP = {
+    ok: ['🎉', 'Το ραντεβού επιβεβαιώθηκε!',
+      'Ευχαριστούμε! Το ραντεβού σας για <b>' + service + '</b> (' + when + ') επιβεβαιώθηκε' +
+      (extra ? (' — μαζί και ' + (extra === 1 ? 'το δεύτερο ραντεβού' : 'τα υπόλοιπα ' + extra + ' ραντεβού') + ' της ίδιας ημέρας') : '') +
+      '.<br/><br/>Θα λάβετε σύντομα email με χρήσιμες οδηγίες για τη θεραπεία σας. Σας περιμένουμε! ✨'],
+    already: ['✅', 'Ήδη επιβεβαιωμένο',
+      'Το ραντεβού σας για <b>' + service + '</b> (' + when + ') είναι ήδη επιβεβαιωμένο. Σας περιμένουμε! ✨'],
+    stale: ['🔄', 'Ο σύνδεσμος έληξε',
+      'Το ραντεβού σας έχει τροποποιηθεί. Θα λάβετε νέο email επιβεβαίωσης — ή επικοινωνήστε μαζί μας.'],
+    notfound: ['⚠️', 'Δεν βρέθηκε',
+      'Το ραντεβού δεν βρέθηκε. Παρακαλούμε επικοινωνήστε μαζί μας τηλεφωνικά.'],
+    unavailable: ['⚠️', 'Μη διαθέσιμο',
+      'Το ραντεβού δεν μπορεί να επιβεβαιωθεί από εδώ. Παρακαλούμε επικοινωνήστε μαζί μας τηλεφωνικά.'],
+    error: ['⚠️', 'Σφάλμα',
+      'Κάτι πήγε στραβά. Παρακαλούμε δοκιμάστε ξανά ή τηλεφωνήστε μας.'],
+    invalid: ['⚠️', 'Μη έγκυρος σύνδεσμος',
+      'Ο σύνδεσμος δεν είναι έγκυρος. Παρακαλούμε επικοινωνήστε μαζί μας τηλεφωνικά.']
+  };
+  var e = MAP[status] || MAP.invalid;
+  document.getElementById('emoji').textContent = e[0];
+  document.getElementById('title').textContent = e[1];
+  document.getElementById('msg').innerHTML = e[2];
+  document.title = e[1] + ' — Beauty Line';
+</script>
+</body>
+</html>
