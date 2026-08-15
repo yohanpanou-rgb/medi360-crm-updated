@@ -7,13 +7,14 @@
 </head>
 <body style="margin:0;font-family:Arial,Helvetica,sans-serif;background:#FAF3F6;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;">
   <div style="max-width:420px;width:100%;background:#fff;border-radius:18px;overflow:hidden;box-shadow:0 10px 40px rgba(196,97,138,.18);text-align:center;">
-    <div style="background:#C4618A;padding:26px;">
+    <div id="band" style="background:#C4618A;padding:26px;">
+      <div id="logo"></div>
       <div id="emoji" style="font-size:40px;line-height:1;">⏳</div>
       <div id="title" style="font-size:20px;font-weight:bold;color:#fff;margin-top:8px;">Φόρτωση…</div>
     </div>
     <div style="padding:26px;font-size:15px;line-height:1.7;color:#333;">
       <div id="msg"></div>
-      <div style="margin-top:18px;font-size:12px;color:#8A6070;">Beauty Line by Lina Panou</div>
+      <div id="footer" style="margin-top:18px;font-size:12px;color:#8A6070;">Beauty Line by Lina Panou</div>
     </div>
   </div>
 <script>
@@ -25,6 +26,20 @@
   var service = esc(p.get('service') || '');
   var when = esc(p.get('when') || '');
   var extra = parseInt(p.get('extra') || '0', 10) || 0;
+  var brandName = esc(p.get('brand') || 'Beauty Line by Lina Panou');
+  var brandColor = /^#[0-9a-fA-F]{3,8}$/.test(p.get('color') || '') ? p.get('color') : '#C4618A';
+  var brandLogo = p.get('logo') || '';
+
+  document.getElementById('band').style.background = brandColor;
+  document.getElementById('footer').textContent = p.get('brand') || 'Beauty Line by Lina Panou';
+  if (brandLogo && /^https:\/\//i.test(brandLogo)) {
+    var img = document.createElement('img');
+    img.src = brandLogo;
+    img.alt = p.get('brand') || 'Beauty Line by Lina Panou';
+    img.style.maxHeight = '40px';
+    img.style.marginBottom = '8px';
+    document.getElementById('logo').appendChild(img);
+  }
 
   var MAP = {
     ok: ['🎉', 'Το ραντεβού επιβεβαιώθηκε!',

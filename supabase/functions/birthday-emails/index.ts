@@ -70,27 +70,32 @@ function firstName(full: string): string {
   return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
 }
 
-function birthdayEmailHtml(name: string, expiresStr: string, bookingLink?: string): string {
+interface Brand { name: string; color: string; logoUrl: string }
+
+function birthdayEmailHtml(name: string, expiresStr: string, bookingLink: string | undefined, brand: Brand): string {
   // Solid hex χρώματα + -webkit-text-fill-color: ίδιο pattern με το consultation
-  // email για σωστή εμφάνιση στο iPhone Gmail dark mode.
+  // email για σωστή εμφάνιση στο iPhone Gmail dark mode. Χρώμα/λογότυπο/όνομα
+  // έρχονται από τις ρυθμίσεις branding της κλινικής (clinics.settings.brand_*).
+  const logo = brand.logoUrl ? `<img src="${esc(brand.logoUrl)}" alt="${esc(brand.name)}" style="max-height:36px;margin-bottom:8px;" />` : '';
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="margin:0;padding:0;background-color:#FAF3F6;">
   <div style="display:none!important;white-space:nowrap;font-size:0;line-height:0;">${'.'.repeat(200)}</div>
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#FAF3F6;padding:24px 0;">
     <tr><td align="center">
       <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background-color:#FFFFFF;border-radius:18px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;">
-        <tr><td style="background-color:#C4618A;padding:34px 30px;text-align:center;">
+        <tr><td style="background-color:${esc(brand.color)};padding:34px 30px;text-align:center;">
+          ${logo}
           <div style="font-size:44px;line-height:1;">🎂</div>
           <div style="font-size:24px;font-weight:bold;color:#FFFFFF;-webkit-text-fill-color:#FFFFFF;margin-top:10px;">Χρόνια Πολλά, ${esc(name)}!</div>
-          <div style="font-size:13px;color:#F7DCE8;-webkit-text-fill-color:#F7DCE8;margin-top:6px;letter-spacing:1px;">BEAUTY LINE BY LINA PANOU</div>
+          <div style="font-size:13px;color:#F7DCE8;-webkit-text-fill-color:#F7DCE8;margin-top:6px;letter-spacing:1px;">${esc(brand.name.toUpperCase())}</div>
         </td></tr>
         <tr><td style="padding:30px;">
           <p style="font-size:15px;line-height:1.7;color:#333333;-webkit-text-fill-color:#333333;margin:0 0 18px;">
             Σήμερα είναι η μέρα σας — και θέλουμε να τη γιορτάσουμε μαζί σας! 💛
-            Όλη η ομάδα του Beauty Line σάς εύχεται <b>χρόνια πολλά</b>, με υγεία, χαμόγελα και λάμψη.
+            Όλη η ομάδα του ${esc(brand.name)} σάς εύχεται <b>χρόνια πολλά</b>, με υγεία, χαμόγελα και λάμψη.
           </p>
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#FDF0F5;border-radius:14px;">
             <tr><td style="padding:22px 24px;text-align:center;">
-              <div style="font-size:15px;font-weight:bold;color:#C4618A;-webkit-text-fill-color:#C4618A;">🎁 ΤΟ ΔΩΡΟ ΤΩΝ ΓΕΝΕΘΛΙΩΝ ΣΑΣ</div>
+              <div style="font-size:15px;font-weight:bold;color:${esc(brand.color)};-webkit-text-fill-color:${esc(brand.color)};">🎁 ΤΟ ΔΩΡΟ ΤΩΝ ΓΕΝΕΘΛΙΩΝ ΣΑΣ</div>
               <div style="font-size:26px;font-weight:bold;color:#333333;-webkit-text-fill-color:#333333;margin-top:12px;">Δωροεπιταγή ${GIFT_VALUE}€</div>
               <div style="font-size:14px;color:#8A6070;-webkit-text-fill-color:#8A6070;margin-top:4px;">για τη θεραπεία προσώπου της επιλογής σας</div>
               <div style="font-size:15px;font-weight:bold;color:#333333;-webkit-text-fill-color:#333333;margin-top:12px;">+ 10% έκπτωση στα καλλυντικά μας</div>
@@ -99,13 +104,13 @@ function birthdayEmailHtml(name: string, expiresStr: string, bookingLink?: strin
           </table>
           ${bookingLink ? `
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:22px 0 4px;">
-            <a href="${esc(bookingLink)}" style="display:inline-block;background-color:#C4618A;color:#FFFFFF;-webkit-text-fill-color:#FFFFFF;font-size:15px;font-weight:bold;text-decoration:none;padding:14px 34px;border-radius:30px;">📅 Κλείστε το ραντεβού σας online</a>
+            <a href="${esc(bookingLink)}" style="display:inline-block;background-color:${esc(brand.color)};color:#FFFFFF;-webkit-text-fill-color:#FFFFFF;font-size:15px;font-weight:bold;text-decoration:none;padding:14px 34px;border-radius:30px;">📅 Κλείστε το ραντεβού σας online</a>
           </td></tr></table>` : ''}
           <p style="font-size:14px;line-height:1.7;color:#333333;-webkit-text-fill-color:#333333;margin:${bookingLink ? '14px' : '20px'} 0 0;text-align:${bookingLink ? 'center' : 'left'};">
             ${bookingLink ? 'Ή απαντήστε σε αυτό το email / τηλεφωνήστε μας — θα χαρούμε πολύ να σας δούμε! ✨' : 'Για να κλείσετε τη δωρεάν θεραπεία σας, απαντήστε σε αυτό το email ή τηλεφωνήστε μας — θα χαρούμε πολύ να σας δούμε! ✨'}
           </p>
           <p style="font-size:13px;color:#8A6070;-webkit-text-fill-color:#8A6070;margin:22px 0 0;">
-            Με αγάπη,<br/><b>Η ομάδα του Beauty Line by Lina Panou</b>
+            Με αγάπη,<br/><b>Η ομάδα του ${esc(brand.name)}</b>
           </p>
         </td></tr>
       </table>
@@ -135,8 +140,13 @@ Deno.serve(async (req: Request) => {
       .from('clinics').select('*').ilike('name', '%Beauty Line%').limit(1).single();
     if (clinicErr || !clinic) return json({ error: 'Clinic not found: ' + (clinicErr ? clinicErr.message : '') }, 500);
     const cid = clinic.id as string;
-    const c = clinic as { booking_link?: string; settings?: { booking_link?: string } };
+    const c = clinic as { name?: string; booking_link?: string; settings?: { booking_link?: string; brand_name?: string; brand_color?: string; brand_logo_url?: string } };
     const bookingLink = c.booking_link || (c.settings && c.settings.booking_link) || '';
+    const brand: Brand = {
+      name: (c.settings && c.settings.brand_name) || c.name || 'Beauty Line by Lina Panou',
+      color: (c.settings && c.settings.brand_color) || '#C4618A',
+      logoUrl: (c.settings && c.settings.brand_logo_url) || '',
+    };
 
     // Σημερινή ημερομηνία ΩΡΑΣ ΕΛΛΑΔΑΣ (το function τρέχει σε UTC)
     const nowAthens = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Athens' }));
@@ -177,9 +187,9 @@ Deno.serve(async (req: Request) => {
         try {
           if (!token) token = await getGmailAccessToken();
           const subject = `🎂 Χρόνια Πολλά, ${firstName(p.full_name)}! Ένα δώρο σας περιμένει 🎁`;
-          const html = birthdayEmailHtml(firstName(p.full_name), expiresStr, bookingLink);
+          const html = birthdayEmailHtml(firstName(p.full_name), expiresStr, bookingLink, brand);
           const headerLines = [
-            `From: Beauty Line by Lina Panou <yourbeautyline@gmail.com>`,
+            `From: ${brand.name.replace(/[\r\n]/g, '')} <yourbeautyline@gmail.com>`,
             `To: ${p.email}`,
             `Subject: =?UTF-8?B?${b64utf8(subject)}?=`,
             `MIME-Version: 1.0`,
