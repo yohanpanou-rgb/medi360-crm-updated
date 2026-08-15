@@ -42,11 +42,21 @@ function athensDT(iso: string): string {
   return d.toLocaleDateString('el-GR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'Europe/Athens' })
     + ' στις ' + d.toLocaleTimeString('el-GR', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Europe/Athens' });
 }
+function athensDayKey(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'Europe/Athens' });
+}
+function icsDate(d: Date): string {
+  return d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z/, 'Z');
+}
+function icsEsc(s: string): string {
+  return (s || '').replace(/\\/g, '\\\\').replace(/([,;])/g, '\\$1').replace(/\n/g, '\\n');
+}
 
 Deno.serve(async (req: Request) => {
   const url = new URL(req.url);
   const id = url.searchParams.get('id') || '';
   const ts = url.searchParams.get('ts') || '';
+  const wantsIcs = url.searchParams.get('ics') === '1';
   if (!/^[0-9a-f-]{36}$/i.test(id) || !/^\d+$/.test(ts)) {
     return page('Μη έγκυρος σύνδεσμος', '⚠️', 'Ο σύνδεσμος δεν είναι έγκυρος. Παρακαλούμε επικοινωνήστε μαζί μας τηλεφωνικά.', false);
   }
@@ -57,9 +67,43 @@ Deno.serve(async (req: Request) => {
   );
 
   const { data: appt } = await supabase.from('appointments')
-    .select('id,clinic_id,patient_id,status,start_time,service_name')
+    .select('id,clinic_id,patient_id,status,start_time,service_name,duration_minutes')
     .eq('id', id).single();
   if (!appt) return page('Δεν βρέθηκε', '⚠️', 'Το ραντεβού δεν βρέθηκε. Παρακαλούμε επικοινωνήστε μαζί μας τηλεφωνικά.', false);
+
+  // ── Λήψη .ics (κουμπί «iPhone / Apple» των emails) — δεν αγγίζει status,
+  // απλώς σερβίρει το αρχείο ημερολογίου με το ίδιο περιεχόμενο του
+  // συνημμένου. Ομαδοποιεί με τυχόν ραντεβού της ίδιας ημέρας, όπως το email.
+  if (wantsIcs) {
+    const { data: clinicRow } = await supabase.from('clinics').select('*').eq('id', appt.clinic_id).single();
+    const cRow = (clinicRow || {}) as { address?: string; name?: string; settings?: { address?: string } };
+    const address = cRow.address || (cRow.settings && cRow.settings.address) || cRow.name || 'Beauty Line by Lina Panou';
+    const dayKey = athensDayKey(appt.start_time);
+    const { data: siblingRows } = await supabase.from('appointments')
+      .select('id,start_time,service_name,duration_minutes')
+      .eq('patient_id', appt.patient_id).in('status', ['booked', 'confirmed']);
+    const group = [appt, ...((siblingRows || []).filter((s) => s.id !== appt.id && athensDayKey(s.start_time) === dayKey))]
+      .sort((a, b) => (a.start_time < b.start_time ? -1 : 1));
+    const start = new Date(group[0].start_time);
+    const last = group[group.length - 1];
+    const end = new Date(new Date(last.start_time).getTime() + (last.duration_minutes || 60) * 60000);
+    const services = group.map((a) => a.service_name).filter(Boolean).join(', ');
+    const mapsUrl = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(address);
+    const ics = [
+      'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Beauty Line//medi360//EL', 'METHOD:PUBLISH',
+      'BEGIN:VEVENT',
+      'UID:' + group[0].id + '@beautyline',
+      'DTSTAMP:' + icsDate(new Date()),
+      'DTSTART:' + icsDate(start),
+      'DTEND:' + icsDate(end),
+      'SUMMARY:' + icsEsc('Ραντεβού Beauty Line'),
+      'DESCRIPTION:' + icsEsc(`${services}\nΟδηγίες πρόσβασης (Google Maps): ${mapsUrl}`),
+      'LOCATION:' + icsEsc(address),
+      'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:' + icsEsc('Ραντεβού Beauty Line σε 1 ώρα'), 'TRIGGER:-PT1H', 'END:VALARM',
+      'END:VEVENT', 'END:VCALENDAR',
+    ].join('\r\n');
+    return new Response(ics, { headers: { 'Content-Type': 'text/calendar; charset=utf-8', 'Content-Disposition': 'attachment; filename="randevou.ics"' } });
+  }
 
   // Ο σύνδεσμος δένεται με τη συγκεκριμένη ώρα ραντεβού (κύκλο): αν το
   // ραντεβού μετακινήθηκε μετά την αποστολή του email, ο παλιός σύνδεσμος
