@@ -5,44 +5,37 @@
 // ραντεβού>. Αν το ραντεβού είναι ΚΛΕΙΣΜΕΝΟ και το ts ταιριάζει με την
 // τρέχουσα ώρα του (ο σύνδεσμος παλιού κύκλου/πριν από reschedule
 // απορρίπτεται), γίνεται ΕΠΙΒΕΒΑΙΩΜΕΝΟ, καταγράφεται στο communication_log
-// και επιστρέφεται όμορφη σελίδα επιβεβαίωσης. Οι οδηγίες φεύγουν από την
-// ωριαία σάρωση του appointment-automations (μέσα στη 1 ώρα).
+// και ο browser γίνεται redirect σε στατική σελίδα επιβεβαίωσης στο ίδιο
+// το Netlify site (/confirm.html) — βλ. σημείωση παρακάτω για το γιατί.
+// Οι οδηγίες φεύγουν από την ωριαία σάρωση του appointment-automations
+// (μέσα στη 1 ώρα).
 //
 // Ασφάλεια: το appointment id είναι τυχαίο UUID (μη μαντέψιμο) — λειτουργεί
 // ως capability link, δεν εκθέτει δεδομένα και μόνο η μετάβαση
 // booked→confirmed επιτρέπεται.
+//
+// Σημείωση για το redirect αντί για απευθείας HTML: το Supabase Edge
+// Functions gateway επιβάλλει Content-Type: text/plain + αυστηρό
+// Content-Security-Policy σε HTML απαντήσεις από *.supabase.co/functions/
+// (πιθανώς σκόπιμο μέτρο ασφαλείας κατά του phishing hosting) — ό,τι
+// header κι αν θέσουμε ρητά στον κώδικά μας δεν περνάει στον browser, με
+// αποτέλεσμα η σελίδα να εμφανίζεται ως ακατέργαστο/λάθος-κωδικοποιημένο
+// κείμενο. Το site μας (Netlify) δεν έχει αυτόν τον περιορισμό, οπότε η
+// function κάνει μόνο τη δουλειά στη βάση και το frontend μας ζωγραφίζει
+// την όμορφη σελίδα.
 //
 // Deploy with:
 //   supabase functions deploy appointment-confirm --no-verify-jwt
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-function esc(x: unknown) {
-  return (x == null ? '' : String(x)).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
+const SITE_URL = 'https://medi360-crm.netlify.app';
 
-function page(title: string, emoji: string, msg: string, ok = true): Response {
-  const html = `<!doctype html><html lang="el"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(title)} — Beauty Line</title></head>
-<body style="margin:0;font-family:Arial,Helvetica,sans-serif;background:#FAF3F6;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;">
-  <div style="max-width:420px;width:100%;background:#fff;border-radius:18px;overflow:hidden;box-shadow:0 10px 40px rgba(196,97,138,.18);text-align:center;">
-    <div style="background:#C4618A;padding:26px;">
-      <div style="font-size:40px;line-height:1;">${emoji}</div>
-      <div style="font-size:20px;font-weight:bold;color:#fff;margin-top:8px;">${esc(title)}</div>
-    </div>
-    <div style="padding:26px;font-size:15px;line-height:1.7;color:#333;">${msg}
-      <div style="margin-top:18px;font-size:12px;color:#8A6070;">Beauty Line by Lina Panou</div>
-    </div>
-  </div>
-</body></html>`;
-  // Ρητό UTF-8 encoding + Headers instance (αντί για string body + plain
-  // object): live report έδειξε τον browser να εμφανίζει την απάντηση σαν
-  // ωμό κείμενο με λάθος κωδικοποίηση («Î¤Î¿ ÏÎ±Î½Ï…» αντί «Το ραντεβού…») —
-  // σημάδι ότι το Content-Type δεν έφτανε σωστά μέσα από το Supabase edge
-  // runtime. Η ρητή κωδικοποίηση των bytes εξαλείφει κάθε ασάφεια.
-  const headers = new Headers();
-  headers.set('Content-Type', 'text/html; charset=utf-8');
-  headers.set('X-Content-Type-Options', 'nosniff');
-  return new Response(new TextEncoder().encode(html), { status: ok ? 200 : 400, headers });
+function redirectPage(status: string, extra: Record<string, string> = {}): Response {
+  const u = new URL(SITE_URL + '/confirm.html');
+  u.searchParams.set('status', status);
+  for (const [k, v] of Object.entries(extra)) if (v) u.searchParams.set(k, v);
+  return new Response(null, { status: 302, headers: { Location: u.toString() } });
 }
 
 function athensDT(iso: string): string {
@@ -66,7 +59,7 @@ Deno.serve(async (req: Request) => {
   const ts = url.searchParams.get('ts') || '';
   const wantsIcs = url.searchParams.get('ics') === '1';
   if (!/^[0-9a-f-]{36}$/i.test(id) || !/^\d+$/.test(ts)) {
-    return page('Μη έγκυρος σύνδεσμος', '⚠️', 'Ο σύνδεσμος δεν είναι έγκυρος. Παρακαλούμε επικοινωνήστε μαζί μας τηλεφωνικά.', false);
+    return redirectPage('invalid');
   }
 
   const supabase = createClient(
@@ -77,11 +70,13 @@ Deno.serve(async (req: Request) => {
   const { data: appt } = await supabase.from('appointments')
     .select('id,clinic_id,patient_id,status,start_time,service_name,duration_minutes')
     .eq('id', id).single();
-  if (!appt) return page('Δεν βρέθηκε', '⚠️', 'Το ραντεβού δεν βρέθηκε. Παρακαλούμε επικοινωνήστε μαζί μας τηλεφωνικά.', false);
+  if (!appt) return redirectPage('notfound');
 
   // ── Λήψη .ics (κουμπί «iPhone / Apple» των emails) — δεν αγγίζει status,
   // απλώς σερβίρει το αρχείο ημερολογίου με το ίδιο περιεχόμενο του
   // συνημμένου. Ομαδοποιεί με τυχόν ραντεβού της ίδιας ημέρας, όπως το email.
+  // Content-Disposition: attachment αναγκάζει λήψη αρχείου ανεξαρτήτως
+  // Content-Type, οπότε δεν επηρεάζεται από τον παραπάνω περιορισμό.
   if (wantsIcs) {
     const { data: clinicRow } = await supabase.from('clinics').select('*').eq('id', appt.clinic_id).single();
     const cRow = (clinicRow || {}) as { address?: string; name?: string; settings?: { address?: string } };
@@ -121,20 +116,20 @@ Deno.serve(async (req: Request) => {
   // δεν ισχύει — θα σταλεί νέο αίτημα για τη νέα ώρα.
   const curTs = Math.floor(new Date(appt.start_time).getTime() / 1000);
   if (String(curTs) !== ts) {
-    return page('Ο σύνδεσμος έληξε', '🔄', 'Το ραντεβού σας έχει τροποποιηθεί. Θα λάβετε νέο email επιβεβαίωσης — ή επικοινωνήστε μαζί μας.', false);
+    return redirectPage('stale');
   }
 
   const whenStr = athensDT(appt.start_time);
   if (appt.status === 'confirmed') {
-    return page('Ήδη επιβεβαιωμένο', '✅', `Το ραντεβού σας για <b>${esc(appt.service_name || '')}</b> (${esc(whenStr)}) είναι ήδη επιβεβαιωμένο. Σας περιμένουμε! ✨`);
+    return redirectPage('already', { service: appt.service_name || '', when: whenStr });
   }
   if (appt.status !== 'booked') {
-    return page('Μη διαθέσιμο', '⚠️', 'Το ραντεβού δεν μπορεί να επιβεβαιωθεί από εδώ. Παρακαλούμε επικοινωνήστε μαζί μας τηλεφωνικά.', false);
+    return redirectPage('unavailable');
   }
 
   const { error } = await supabase.from('appointments')
     .update({ status: 'confirmed' }).eq('id', id).eq('status', 'booked');
-  if (error) return page('Σφάλμα', '⚠️', 'Κάτι πήγε στραβά. Παρακαλούμε δοκιμάστε ξανά ή τηλεφωνήστε μας.', false);
+  if (error) return redirectPage('error');
 
   await supabase.from('communication_log').insert({
     clinic_id: appt.clinic_id, appointment_id: appt.id, patient_id: appt.patient_id,
@@ -165,5 +160,5 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  return page('Το ραντεβού επιβεβαιώθηκε!', '🎉', `Ευχαριστούμε! Το ραντεβού σας για <b>${esc(appt.service_name || '')}</b> (${esc(whenStr)}) επιβεβαιώθηκε${extra ? ` — μαζί και ${extra === 1 ? 'το δεύτερο ραντεβού' : 'τα υπόλοιπα ' + extra + ' ραντεβού'} της ίδιας ημέρας` : ''}.<br/><br/>Θα λάβετε σύντομα email με χρήσιμες οδηγίες για τη θεραπεία σας. Σας περιμένουμε! ✨`);
+  return redirectPage('ok', { service: appt.service_name || '', when: whenStr, extra: String(extra) });
 });
