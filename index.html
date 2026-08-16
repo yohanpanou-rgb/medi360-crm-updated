@@ -1093,11 +1093,21 @@ async function loadPatientDetail(id, tab) {
     const {data:pkgs} = await sb.from('patient_packages').select('*').eq('patient_id',id).order('purchased_at',{ascending:false});
     S.patientPackages = pkgs||[];
 
-    // 🎁 Δώρο γενεθλίων: το πιο πρόσφατο, για banner στην καρτέλα
+    // 🎁 Δώρο γενεθλίων: το πιο πρόσφατο, για banner στην καρτέλα — και όλα, για το Timeline
     S.patientBirthdayGift = null;
+    S.patientBirthdayGifts = [];
     try {
-      const {data:bg} = await sb.from('birthday_gifts').select('*').eq('patient_id',id).order('sent_at',{ascending:false}).limit(1);
+      const {data:bg} = await sb.from('birthday_gifts').select('*').eq('patient_id',id).order('sent_at',{ascending:false});
+      S.patientBirthdayGifts = bg||[];
       S.patientBirthdayGift = (bg&&bg[0])||null;
+    } catch(e) {}
+
+    // 📬 Ιστορικό επικοινωνιών (email/Viber αργότερα) — αιτήματα επιβεβαίωσης,
+    // επιβεβαιώσεις/ακυρώσεις πελάτη, οδηγίες θεραπείας — για το Timeline.
+    S.patCommLog = [];
+    try {
+      const {data:cl} = await sb.from('communication_log').select('*').eq('patient_id',id).order('created_at',{ascending:false}).limit(300);
+      S.patCommLog = cl||[];
     } catch(e) {}
 
     // Φωτογραφίες ασθενή — μεταδεδομένα + signed URLs (private bucket)
@@ -2180,6 +2190,30 @@ function renderPatientDetail() {
           events.push({date:f.created_at,type:'laser',icon:'⚡',color:'#534AB7',bg:'#EEEDFE',
             title:'Laser Form — Συνεδρία #'+(f.session_number||1),
             desc:(f.body_parts||[]).slice(0,3).join(', ')});
+        });
+        // Consultation φόρμες
+        consultations.forEach(c=>{
+          events.push({date:c.signed_at||c.created_at,type:'consult',icon:'📝',color:'#185FA5',bg:'#E6F1FB',
+            title:'Consultation φόρμα συμπληρώθηκε',desc:'Skincare consultation'});
+        });
+        // 🎁 Emails γενεθλίων
+        (S.patientBirthdayGifts||[]).forEach(g=>{
+          if (g.channel!=='email') return; // 'call' = δεν έφυγε email, η γραμματεία τηλεφώνησε
+          events.push({date:g.sent_at||g.created_at,type:'comm',icon:'🎂',color:'#C4618A',bg:'#F6E4EC',
+            title:'Email δώρου γενεθλίων εστάλη',desc:g.redeemed_at?'Εξαργυρώθηκε':'Εκκρεμεί εξαργύρωση'});
+        });
+        // 📬 Αυτοματισμοί ραντεβού: αιτήματα/επιβεβαιώσεις/ακυρώσεις/οδηγίες
+        // (channel='email' τώρα — το ίδιο μπλοκ θα δείχνει και Viber μόλις ενεργοποιηθεί)
+        (S.patCommLog||[]).forEach(cl=>{
+          const manual = cl.channel==='manual' ? ' (χειροκίνητα)' : '';
+          if (cl.automation_type==='confirmation_request' && cl.status==='sent')
+            events.push({date:cl.created_at,type:'comm',icon:'📧',color:'#0F6E56',bg:'#E1F5EE',title:'Αίτημα επιβεβαίωσης ραντεβού εστάλη'+manual,desc:cl.channel==='manual'?'':'Email'});
+          else if (cl.automation_type==='confirmation_received')
+            events.push({date:cl.created_at,type:'comm',icon:'✅',color:'#0F6E56',bg:'#E1F5EE',title:'Ο πελάτης επιβεβαίωσε το ραντεβού'+manual});
+          else if (cl.automation_type==='cancellation_received')
+            events.push({date:cl.created_at,type:'comm',icon:'🚫',color:'#A32D2D',bg:'#FCEBEB',title:'Ο πελάτης ακύρωσε το ραντεβού'+manual});
+          else if (cl.automation_type==='instructions' && cl.status==='sent')
+            events.push({date:cl.created_at,type:'comm',icon:'📋',color:'#854F0B',bg:'#FAEEDA',title:'Οδηγίες θεραπείας εστάλησαν'+manual,desc:(cl.metadata&&cl.metadata.instruction_set)||''});
         });
         // Sort by date desc
         events.sort((a,b)=>new Date(b.date)-new Date(a.date));
