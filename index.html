@@ -598,8 +598,29 @@ async function loadProfile(user) {
     S.selectedClinicId = p.clinic_id;
   }
   // Μην επαναφέρεις στο dashboard αν ο χρήστης ήδη βρίσκεται σε κάποια σελίδα
+  // (π.χ. background auth event σε ήδη ανοιχτή συνεδρία)
   const keepPage = S.page && S.page !== 'login' && S.page !== 'loading';
-  set({page: keepPage ? S.page : 'dashboard', loading:false});
+  if (keepPage) { set({page: S.page, loading:false}); return; }
+
+  // Φρέσκο φόρτωμα (browser refresh) — γύρνα στη σελίδα/κάρτα όπου ήταν ο
+  // χρήστης πριν, αντί να τον πηγαίνεις πάντα στο Dashboard.
+  let restored = null;
+  try { restored = JSON.parse(localStorage.getItem('medi360_lastview')||'null'); } catch(e) {}
+  if (restored && restored.page && restored.page !== 'login') {
+    if (restored.page === 'patient-detail' && restored.patientId) {
+      S.loading = false;
+      await loadPatientDetail(restored.patientId, restored.patTab);
+      return;
+    }
+    if (restored.page === 'calendar') {
+      if (restored.calDate) S.calDate = restored.calDate;
+      if (restored.calView) S.calView = restored.calView;
+    }
+    set({page: restored.page, loading:false});
+    loadPageData();
+    return;
+  }
+  set({page: 'dashboard', loading:false});
 }
 
 async function login(email,pass) {
@@ -1207,6 +1228,25 @@ function render() {
       try { if (_selStart!==null && el.setSelectionRange) el.setSelectionRange(_selStart, _selEnd); } catch(e) {}
     }
   }
+  persistView();
+}
+
+// Θυμάται πού βρισκόταν ο χρήστης ώστε ένα browser refresh (F5) να τον
+// επαναφέρει εκεί αντί να τον πηγαίνει πάντα στο Dashboard — βλ. restoreView().
+function persistView() {
+  if (!S.user || !S.page || S.page==='login') return;
+  try {
+    const view = { page: S.page };
+    if (S.page === 'patient-detail' && S.patientDetail && S.patientDetail.id) {
+      view.patientId = S.patientDetail.id;
+      view.patTab = S.patTab || 'overview';
+    }
+    if (S.page === 'calendar') {
+      if (S.calDate) view.calDate = S.calDate;
+      if (S.calView) view.calView = S.calView;
+    }
+    localStorage.setItem('medi360_lastview', JSON.stringify(view));
+  } catch(e) {}
 }
 
 // ── LOGIN ──
