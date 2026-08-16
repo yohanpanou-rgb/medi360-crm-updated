@@ -246,9 +246,24 @@ function confirmationEmailHtml(name: string, appts: Appt[], confirmLink: string,
 }
 
 function instructionsEmailHtml(name: string, service: string, whenStr: string, pre: string, post: string, calBtn: string, brand: Brand): string {
-  const block = (title: string, text: string, color: string, bg: string) => text ? `
+  // Κάθε bullet («•» ή αλλαγή γραμμής, ανάλογα πώς το έγραψε ο διαχειριστής στο
+  // Instruction Set) σε ΔΙΚΗ ΤΟΥ γραμμή, ευθυγραμμισμένη αριστερά — σε
+  // white-space:pre-line παράγραφο τα bullets συνέχιζαν σαν μία πρόταση και
+  // τύλιγαν άσχημα σε κινητό.
+  const block = (title: string, text: string, color: string, bg: string) => {
+    if (!text) return '';
+    const items = text.split(/•|\r?\n/).map((s) => s.trim()).filter(Boolean);
+    const rows = items.map((item) => `
+              <tr>
+                <td style="padding:4px 8px 4px 0;font-size:13.5px;line-height:1.6;color:${color};-webkit-text-fill-color:${color};vertical-align:top;width:14px;">•</td>
+                <td style="padding:4px 0;font-size:13.5px;line-height:1.6;color:#333333;-webkit-text-fill-color:#333333;">${esc(item)}</td>
+              </tr>`).join('');
+    return `
         <div style="font-size:14px;font-weight:bold;color:${color};-webkit-text-fill-color:${color};margin:18px 0 8px;">${title}</div>
-        <div style="background-color:${bg};border-radius:12px;padding:14px 18px;font-size:13.5px;line-height:1.8;color:#333333;-webkit-text-fill-color:#333333;white-space:pre-line;">${esc(text)}</div>` : '';
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:${bg};border-radius:12px;"><tr><td style="padding:12px 18px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows}</table>
+        </td></tr></table>`;
+  };
   return shell(`
       ${headerBand(brand, '📋', 'Οδηγίες για το ραντεβού σας')}
       <tr><td style="padding:28px 30px;">
