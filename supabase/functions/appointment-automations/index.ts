@@ -116,9 +116,14 @@ function normalizeGreek(s: string): string {
   return (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
 }
 
+// Πολλά ονόματα είναι αποθηκευμένα ΚΕΦΑΛΑΙΑ χωρίς τόνους (παλιά δεδομένα) —
+// αν τα ξαναγράφαμε σε πεζά/κεφαλαίο-αρχικό δεν μπορούμε να «εφεύρουμε» τον
+// τόνο που λείπει, βγαίνει λάθος γραμμένη λέξη. Δείχνουμε το όνομα όπως
+// ακριβώς είναι αποθηκευμένο. Επίσης η «πρώτη λέξη» δεν είναι πάντα μικρό
+// όνομα (μερικοί πελάτες είναι αποθηκευμένοι Επώνυμο πρώτα) — το «κε/κα»
+// πριν το όνομα στα emails καλύπτει και τις δύο περιπτώσεις.
 function firstName(full: string): string {
-  const w = (full || '').trim().split(/\s+/)[0] || '';
-  return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+  return (full || '').trim().split(/\s+/)[0] || '';
 }
 
 function athensDT(iso: string): string {
@@ -230,7 +235,7 @@ function confirmationEmailHtml(name: string, appts: Appt[], confirmLink: string,
   return shell(`
       ${headerBand(brand, '📅', 'Επιβεβαίωση ' + (multi ? 'Ραντεβού Ημέρας' : 'Ραντεβού'))}
       <tr><td style="padding:28px 30px;">
-        <p style="font-size:15px;line-height:1.7;color:#333333;-webkit-text-fill-color:#333333;margin:0 0 16px;">Αγαπητή/έ <b>${esc(name)}</b>,</p>
+        <p style="font-size:15px;line-height:1.7;color:#333333;-webkit-text-fill-color:#333333;margin:0 0 16px;">Αγαπητή/έ κε/κα <b>${esc(name)}</b>,</p>
         <p style="font-size:15px;line-height:1.7;color:#333333;-webkit-text-fill-color:#333333;margin:0 0 18px;">${multi ? `Έχετε <b>${sorted.length} ραντεβού</b> την ίδια ημέρα:` : 'Έχετε προγραμματισμένο ραντεβού:'}</p>
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#FDF0F5;border-radius:14px;"><tr><td style="padding:18px 22px;text-align:center;">
           <div style="font-size:15px;font-weight:bold;color:${esc(brand.color)};-webkit-text-fill-color:${esc(brand.color)};">${esc(dayStr)}</div>
@@ -245,7 +250,12 @@ function confirmationEmailHtml(name: string, appts: Appt[], confirmLink: string,
       </td></tr>`, brand);
 }
 
-function instructionsEmailHtml(name: string, service: string, whenStr: string, pre: string, post: string, calBtn: string, brand: Brand): string {
+function instructionsEmailHtml(name: string, service: string, whenStr: string, status: string, pre: string, post: string, calBtn: string, brand: Brand): string {
+  // Οι οδηγίες φεύγουν αμέσως με το κλείσιμο, όχι μόνο μετά την επιβεβαίωση
+  // (βλ. σάρωση cron πιο κάτω) — το κείμενο πρέπει να ταιριάζει με την
+  // πραγματική κατάσταση, αλλιώς λέει «επιβεβαιώθηκε» σε ραντεβού που είναι
+  // ακόμα μόνο Κλεισμένο.
+  const statusVerb = status === 'confirmed' ? 'έχει επιβεβαιωθεί' : 'έχει κλειστεί';
   // Κάθε bullet («•» ή αλλαγή γραμμής, ανάλογα πώς το έγραψε ο διαχειριστής στο
   // Instruction Set) σε ΔΙΚΗ ΤΟΥ γραμμή, ευθυγραμμισμένη αριστερά — σε
   // white-space:pre-line παράγραφο τα bullets συνέχιζαν σαν μία πρόταση και
@@ -267,8 +277,8 @@ function instructionsEmailHtml(name: string, service: string, whenStr: string, p
   return shell(`
       ${headerBand(brand, '📋', 'Οδηγίες για το ραντεβού σας')}
       <tr><td style="padding:28px 30px;">
-        <p style="font-size:15px;line-height:1.7;color:#333333;-webkit-text-fill-color:#333333;margin:0 0 14px;">Αγαπητή/έ <b>${esc(name)}</b>,</p>
-        <p style="font-size:14.5px;line-height:1.7;color:#333333;-webkit-text-fill-color:#333333;margin:0 0 6px;">Το ραντεβού σας για <b>${esc(service)}</b> (${esc(whenStr)}) έχει επιβεβαιωθεί. Για την καλύτερη προετοιμασία και φροντίδα σας:</p>
+        <p style="font-size:15px;line-height:1.7;color:#333333;-webkit-text-fill-color:#333333;margin:0 0 14px;">Αγαπητή/έ κε/κα <b>${esc(name)}</b>,</p>
+        <p style="font-size:14.5px;line-height:1.7;color:#333333;-webkit-text-fill-color:#333333;margin:0 0 6px;">Το ραντεβού σας για <b>${esc(service)}</b> (${esc(whenStr)}) ${statusVerb}. Για την καλύτερη προετοιμασία και φροντίδα σας:</p>
         ${block('🌿 Πριν από τη θεραπεία', pre, '#0F6E56', '#E1F5EE')}
         ${block('💛 Μετά τη θεραπεία', post, '#854F0B', '#FAEEDA')}
         ${calBtn}
@@ -392,7 +402,7 @@ Deno.serve(async (req: Request) => {
       const insTs = Math.floor(new Date(a.start_time).getTime() / 1000);
       const insIcsUrl = `${CONFIRM_URL}?id=${a.id}&ts=${insTs}&ics=1`;
       const { gcal, outlook, ics } = buildCalendarBits([a], clinicAddress, brand);
-      const html = instructionsEmailHtml(firstName((a.patients && a.patients.full_name) || ''), a.service_name || '', athensDT(a.start_time), set.pre_instructions || '', set.post_instructions || '', calendarButtonHtml(gcal, outlook, insIcsUrl), brand);
+      const html = instructionsEmailHtml(firstName((a.patients && a.patients.full_name) || ''), a.service_name || '', athensDT(a.start_time), a.status, set.pre_instructions || '', set.post_instructions || '', calendarButtonHtml(gcal, outlook, insIcsUrl), brand);
       try {
         const msgId = await sendEmail(await gmail(), String(email), '📋 Οδηγίες για το ραντεβού σας — ' + brand.name, html, ics, brand.name);
         await log(a, 'instructions', channel, 'sent', { metadata: { gmail_id: msgId, instruction_set: set.name } });

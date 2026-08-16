@@ -64,10 +64,11 @@ function b64utf8(s: string): string {
   return btoa(bin);
 }
 
-// Μικρό όνομα (πρώτη λέξη, Τίτλος-Case) για πιο ζεστό χαιρετισμό
+// Πρώτη λέξη του ονόματος, ΟΠΩΣ ΕΙΝΑΙ αποθηκευμένη — πολλά ονόματα είναι
+// ΚΕΦΑΛΑΙΑ χωρίς τόνους (παλιά δεδομένα)· ξαναγράφοντάς τα σε πεζά δεν
+// μπορούμε να «εφεύρουμε» τον τόνο που λείπει, βγαίνει λάθος γραμμένη λέξη.
 function firstName(full: string): string {
-  const w = (full || '').trim().split(/\s+/)[0] || '';
-  return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+  return (full || '').trim().split(/\s+/)[0] || '';
 }
 
 interface Brand { name: string; color: string; logoUrl: string }
