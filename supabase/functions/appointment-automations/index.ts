@@ -220,7 +220,7 @@ function headerBand(brand: Brand, emoji: string, title: string): string {
 
 // Δέχεται 1+ ραντεβού ΤΗΣ ΙΔΙΑΣ ΗΜΕΡΑΣ — σε πολλαπλά, ένα email με «ώρα
 // προσέλευσης» του πρώτου και λίστα όλων, για να μην μπερδεύεται ο πελάτης.
-function confirmationEmailHtml(name: string, appts: Appt[], confirmLink: string, calBtn: string, brand: Brand): string {
+function confirmationEmailHtml(name: string, appts: Appt[], confirmLink: string, cancelLink: string, calBtn: string, brand: Brand): string {
   const sorted = [...appts].sort((a, b) => (a.start_time < b.start_time ? -1 : 1));
   const first = sorted[0];
   const multi = sorted.length > 1;
@@ -241,7 +241,7 @@ function confirmationEmailHtml(name: string, appts: Appt[], confirmLink: string,
           <a href="${esc(confirmLink)}" style="display:inline-block;background-color:#0F6E56;color:#FFFFFF;-webkit-text-fill-color:#FFFFFF;font-size:15px;font-weight:bold;text-decoration:none;padding:14px 34px;border-radius:30px;">✅ Επιβεβαιώνω ${multi ? 'τα ραντεβού' : 'το ραντεβού'}</a>
         </td></tr></table>
         ${calBtn}
-        <p style="font-size:13px;line-height:1.7;color:#8A6070;-webkit-text-fill-color:#8A6070;margin:14px 0 0;text-align:center;">Αν η ώρα δεν σας εξυπηρετεί ή θέλετε αλλαγή, απαντήστε σε αυτό το email ή τηλεφωνήστε μας.</p>
+        <p style="font-size:13px;line-height:1.7;color:#8A6070;-webkit-text-fill-color:#8A6070;margin:14px 0 0;text-align:center;">Αν η ώρα δεν σας εξυπηρετεί ή θέλετε αλλαγή, απαντήστε σε αυτό το email ή τηλεφωνήστε μας.<br/>Δεν μπορείτε να έρθετε; <a href="${esc(cancelLink)}" style="color:#8A6070;text-decoration:underline;">Ακυρώστε ${multi ? 'τα ραντεβού σας' : 'το ραντεβού σας'} εδώ</a>.</p>
       </td></tr>`, brand);
 }
 
@@ -370,9 +370,10 @@ Deno.serve(async (req: Request) => {
       }
       const ts = Math.floor(new Date(first.start_time).getTime() / 1000);
       const link = `${CONFIRM_URL}?id=${first.id}&ts=${ts}`;
+      const cancelLink = `${CONFIRM_URL}?id=${first.id}&ts=${ts}&cancel=1`;
       const icsUrl = `${CONFIRM_URL}?id=${first.id}&ts=${ts}&ics=1`;
       const { gcal, outlook, ics } = buildCalendarBits(sorted, clinicAddress, brand);
-      const html = confirmationEmailHtml(firstName((first.patients && first.patients.full_name) || ''), sorted, link, calendarButtonHtml(gcal, outlook, icsUrl), brand);
+      const html = confirmationEmailHtml(firstName((first.patients && first.patients.full_name) || ''), sorted, link, cancelLink, calendarButtonHtml(gcal, outlook, icsUrl), brand);
       try {
         const msgId = await sendEmail(await gmail(), String(email), (sorted.length > 1 ? '📅 Επιβεβαιώστε τα ραντεβού σας — ' : '📅 Επιβεβαιώστε το ραντεβού σας — ') + brand.name, html, ics, brand.name);
         for (const a of pending) await log(a, 'confirmation_request', channel, 'sent', { metadata: { gmail_id: msgId, grouped: sorted.length } });
@@ -439,12 +440,13 @@ Deno.serve(async (req: Request) => {
       await sendConfirmation(group, pending);
     }
 
-    // 2) ΕΠΙΒΕΒΑΙΩΜΕΝΑ μελλοντικά χωρίς οδηγίες στον κύκλο τους → οδηγίες
-    //    (πιάνει και τις χειροκίνητες επιβεβαιώσεις από τη γραμματεία και τα
-    //    ≤48h ραντεβού που μπήκαν κατευθείαν ΕΠΙΒΕΒΑΙΩΜΕΝΑ)
+    // 2) ΚΛΕΙΣΜΕΝΑ Ή ΕΠΙΒΕΒΑΙΩΜΕΝΑ μελλοντικά χωρίς οδηγίες στον κύκλο τους →
+    //    οδηγίες. Φεύγουν ΜΑΖΙ με το email κράτησης (δεν περιμένουν
+    //    επιβεβαίωση) — κάποιες οδηγίες θέλουν μέρες προετοιμασία πριν τη
+    //    θεραπεία, οπότε δεν έχει νόημα να φτάνουν 48ωρο πριν.
     const { data: confRows } = await supabase.from('appointments')
       .select('id,clinic_id,patient_id,status,start_time,service_name,duration_minutes,patients(full_name,email)')
-      .eq('status', 'confirmed').gte('start_time', now.toISOString()).lte('start_time', horizon.toISOString());
+      .in('status', ['booked', 'confirmed']).gte('start_time', now.toISOString()).lte('start_time', horizon.toISOString());
     for (const row of (confRows || []) as unknown as Appt[]) {
       if (await alreadyDone(row, 'instructions')) continue;
       await sendInstructions(row);

@@ -14,6 +14,7 @@
     </div>
     <div style="padding:26px;font-size:15px;line-height:1.7;color:#333;">
       <div id="msg"></div>
+      <div id="actions" style="margin-top:18px;"></div>
       <div id="footer" style="margin-top:18px;font-size:12px;color:#8A6070;">Beauty Line by Lina Panou</div>
     </div>
   </div>
@@ -45,7 +46,7 @@
     ok: ['🎉', 'Το ραντεβού επιβεβαιώθηκε!',
       'Ευχαριστούμε! Το ραντεβού σας για <b>' + service + '</b> (' + when + ') επιβεβαιώθηκε' +
       (extra ? (' — μαζί και ' + (extra === 1 ? 'το δεύτερο ραντεβού' : 'τα υπόλοιπα ' + extra + ' ραντεβού') + ' της ίδιας ημέρας') : '') +
-      '.<br/><br/>Θα λάβετε σύντομα email με χρήσιμες οδηγίες για τη θεραπεία σας. Σας περιμένουμε! ✨'],
+      '. Σας περιμένουμε! ✨'],
     already: ['✅', 'Ήδη επιβεβαιωμένο',
       'Το ραντεβού σας για <b>' + service + '</b> (' + when + ') είναι ήδη επιβεβαιωμένο. Σας περιμένουμε! ✨'],
     stale: ['🔄', 'Ο σύνδεσμος έληξε',
@@ -53,17 +54,75 @@
     notfound: ['⚠️', 'Δεν βρέθηκε',
       'Το ραντεβού δεν βρέθηκε. Παρακαλούμε επικοινωνήστε μαζί μας τηλεφωνικά.'],
     unavailable: ['⚠️', 'Μη διαθέσιμο',
-      'Το ραντεβού δεν μπορεί να επιβεβαιωθεί από εδώ. Παρακαλούμε επικοινωνήστε μαζί μας τηλεφωνικά.'],
+      'Το ραντεβού δεν μπορεί να διαχειριστεί από εδώ. Παρακαλούμε επικοινωνήστε μαζί μας τηλεφωνικά.'],
     error: ['⚠️', 'Σφάλμα',
       'Κάτι πήγε στραβά. Παρακαλούμε δοκιμάστε ξανά ή τηλεφωνήστε μας.'],
     invalid: ['⚠️', 'Μη έγκυρος σύνδεσμος',
-      'Ο σύνδεσμος δεν είναι έγκυρος. Παρακαλούμε επικοινωνήστε μαζί μας τηλεφωνικά.']
+      'Ο σύνδεσμος δεν είναι έγκυρος. Παρακαλούμε επικοινωνήστε μαζί μας τηλεφωνικά.'],
+    already_cancelled: ['🚫', 'Ήδη ακυρωμένο',
+      'Το ραντεβού σας για <b>' + service + '</b> (' + when + ') έχει ήδη ακυρωθεί.'],
+    cancelled: ['🚫', 'Το ραντεβού ακυρώθηκε',
+      'Ακυρώσαμε το ραντεβού σας για <b>' + service + '</b> (' + when + ')' +
+      (extra ? (' — μαζί και ' + (extra === 1 ? 'το δεύτερο ραντεβού' : 'τα υπόλοιπα ' + extra + ' ραντεβού') + ' της ίδιας ημέρας') : '') +
+      '. Όποτε θέλετε να κλείσετε νέο ραντεβού, επικοινωνήστε μαζί μας.']
   };
-  var e = MAP[status] || MAP.invalid;
-  document.getElementById('emoji').textContent = e[0];
-  document.getElementById('title').textContent = e[1];
-  document.getElementById('msg').innerHTML = e[2];
-  document.title = e[1] + ' — Beauty Line';
+
+  function renderStatic(key) {
+    var e = MAP[key] || MAP.invalid;
+    document.getElementById('emoji').textContent = e[0];
+    document.getElementById('title').textContent = e[1];
+    document.getElementById('msg').innerHTML = e[2];
+    document.getElementById('actions').innerHTML = '';
+    document.title = e[1] + ' — Beauty Line';
+  }
+
+  // Η ακύρωση θέλει ρητό δεύτερο κλικ εδώ — το link μέσα στο email ΔΕΝ
+  // ακυρώνει τίποτα από μόνο του (προστασία από email security scanners που
+  // "ανοίγουν" αυτόματα links για σάρωση).
+  function renderCancelConfirm() {
+    document.getElementById('emoji').textContent = '⚠️';
+    document.getElementById('title').textContent = 'Ακύρωση ραντεβού';
+    document.getElementById('msg').innerHTML = 'Είστε σίγουρος/η ότι θέλετε να ακυρώσετε το ραντεβού σας για <b>' + service + '</b> (' + when + ')' + (multiHint ? (' — και ' + (extra === 1 ? 'το άλλο ραντεβού σας' : 'τα άλλα ' + extra + ' ραντεβού σας') + ' της ίδιας ημέρας') : '') + ';';
+    document.title = 'Ακύρωση ραντεβού — Beauty Line';
+    var actions = document.getElementById('actions');
+    actions.innerHTML =
+      '<button id="btn-yes" style="display:inline-block;background-color:#C23B3B;color:#fff;border:none;font-size:14px;font-weight:bold;padding:12px 26px;border-radius:24px;margin:4px;cursor:pointer;">Ναι, ακύρωσε το ραντεβού μου</button>' +
+      '<button id="btn-no" style="display:inline-block;background-color:#F0E2E9;color:#333;border:none;font-size:14px;font-weight:bold;padding:12px 26px;border-radius:24px;margin:4px;cursor:pointer;">Όχι, άλλαξα γνώμη</button>';
+    document.getElementById('btn-no').onclick = function () {
+      document.getElementById('emoji').textContent = '👍';
+      document.getElementById('title').textContent = 'Δεν έγινε καμία αλλαγή';
+      document.getElementById('msg').innerHTML = 'Το ραντεβού σας παραμένει όπως ήταν. Σας περιμένουμε!';
+      actions.innerHTML = '';
+    };
+    document.getElementById('btn-yes').onclick = function () {
+      var btnYes = document.getElementById('btn-yes'), btnNo = document.getElementById('btn-no');
+      btnYes.disabled = true; btnNo.disabled = true; btnYes.textContent = 'Ακύρωση σε εξέλιξη…';
+      fetch('https://kfidxwqgsaisbdgucsok.supabase.co/functions/v1/appointment-confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: apptId, ts: apptTs }),
+      }).then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+        .then(function (res) {
+          if (res.ok && res.d && res.d.ok) {
+            service = esc(res.d.service || service);
+            when = esc(res.d.when || when);
+            extra = res.d.extra || 0;
+            renderStatic('cancelled');
+          } else {
+            var code = (res.d && res.d.error) || 'error';
+            renderStatic(code === 'already_cancelled' ? 'already_cancelled' : (code === 'stale' ? 'stale' : 'error'));
+          }
+        })
+        .catch(function () { renderStatic('error'); });
+    };
+  }
+
+  var apptId = p.get('id') || '';
+  var apptTs = p.get('ts') || '';
+  var multiHint = extra > 0;
+
+  if (status === 'cancel_confirm') renderCancelConfirm();
+  else renderStatic(status);
 </script>
 </body>
 </html>
