@@ -3120,7 +3120,7 @@ function renderCalendar() {
     </div>
 
     <!-- Appointment detail panel -->
-    <div id="appt-detail-panel" style="display:none;position:fixed;right:20px;top:80px;width:320px;background:var(--white);border-radius:14px;box-shadow:var(--shadow-lg);border:1px solid var(--border-2);z-index:500;padding:20px">
+    <div id="appt-detail-panel" style="display:none;position:fixed;right:20px;top:80px;width:320px;max-height:calc(100vh - 100px);overflow-y:auto;background:var(--white);border-radius:14px;box-shadow:var(--shadow-lg);border:1px solid var(--border-2);z-index:500;padding:20px">
       <div style="display:flex;justify-content:space-between;margin-bottom:14px">
         <span style="font-size:14px;font-weight:600">Ραντεβού</span>
         <button onclick="document.getElementById('appt-detail-panel').style.display='none'" style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-2)">×</button>
