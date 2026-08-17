@@ -156,3 +156,127 @@ function syncBooking247Emails() {
   });
   saveProcessedIds_(processedIds.concat(seededIds, newlyDone));
 }
+
+/**
+ * ── Φάκελος Εξετάσεων: αυτόματη εισαγωγή από emails πελατών ──────────────
+ *
+ * Ίδια λογική/λόγος ύπαρξης με το syncBooking247Emails παραπάνω (Apps
+ * Script αντί για Supabase OAuth function, ώστε να μη λήγει ποτέ) — απλά
+ * διαφορετικός στόχος: κάθε πόσο λεπτά ψάχνει ΟΛΟ το inbox για emails με
+ * συνημμένο· αν ο αποστολέας ταιριάζει με το email καταχωρημένου πελάτη στο
+ * CRM, τα συνημμένα (φωτογραφία/PDF) στέλνονται στο exam-ingest, που τα
+ * βάζει στον φάκελο "Εξετάσεις" της κάρτας του πελάτη και ζητάει AI
+ * ταξινόμηση. Ξεχωριστό label/ξεχωριστό tracking από το booking247 sync
+ * παραπάνω — δεν επηρεάζει το ένα το άλλο.
+ *
+ * Setup (one-time, ΞΕΧΩΡΙΣΤΟ από το installTrigger — τρέξε ΚΑΙ τα δύο):
+ *   1. Ενημέρωσε το EXAM_INGEST_SECRET παρακάτω ώστε να ταιριάζει με το
+ *      EXAM_INGEST_SECRET που έβαλες στο exam-ingest Supabase function.
+ *   2. Επίλεξε τη συνάρτηση "installExamTrigger" στο toolbar → ▶ Run.
+ *   3. Ίδιο permissions prompt με πριν αν δεν το έχεις ήδη εγκρίνει — Allow.
+ */
+
+const EXAM_INGEST_URL = 'https://kfidxwqgsaisbdgucsok.supabase.co/functions/v1/exam-ingest';
+const EXAM_INGEST_SECRET = 'PASTE_THE_SAME_VALUE_YOU_SET_FOR_EXAM_INGEST_SECRET';
+const EXAM_SYNCED_LABEL = 'medi360-exam-synced';
+const EXAM_ELIGIBLE_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
+const EXAM_MIN_BYTES = 4000; // αγνοεί μικρά inline λογότυπα/υπογραφές email
+
+function installExamTrigger() {
+  ScriptApp.getProjectTriggers().forEach(t => {
+    if (t.getHandlerFunction() === 'syncExamAttachments') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('syncExamAttachments').timeBased().everyMinutes(5).create();
+  syncExamAttachments(); // τρέξε μία φορά αμέσως
+}
+
+function getOrCreateExamLabel_() {
+  return GmailApp.getUserLabelByName(EXAM_SYNCED_LABEL) || GmailApp.createLabel(EXAM_SYNCED_LABEL);
+}
+
+function getProcessedExamIds_() {
+  const raw = PropertiesService.getScriptProperties().getProperty('PROCESSED_EXAM_IDS');
+  return raw ? JSON.parse(raw) : [];
+}
+function saveProcessedExamIds_(ids) {
+  PropertiesService.getScriptProperties().setProperty('PROCESSED_EXAM_IDS', JSON.stringify(ids.slice(-2000)));
+}
+
+// "Maria G" <maria@gmail.com>  →  maria@gmail.com
+function extractEmailAddress_(fromHeader) {
+  const m = /<([^>]+)>/.exec(fromHeader || '');
+  const addr = (m ? m[1] : (fromHeader || '')).trim().toLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr) ? addr : '';
+}
+
+function syncExamAttachments() {
+  const label = getOrCreateExamLabel_();
+  const processedIds = getProcessedExamIds_();
+  const processedSet = new Set(processedIds);
+
+  const threads = GmailApp.search('has:attachment newer_than:14d -label:' + EXAM_SYNCED_LABEL, 0, 50);
+  if (!threads.length) return;
+
+  const rows = [];
+  const messageIdsInBatch = new Set();
+  const seededIds = [];
+
+  threads.forEach(thread => {
+    thread.getMessages().forEach(message => {
+      const id = message.getId();
+      if (processedSet.has(id)) return;
+
+      const senderEmail = extractEmailAddress_(message.getFrom());
+      const atts = senderEmail ? message.getAttachments({ includeInlineImages: false, includeAttachments: true }) : [];
+      const eligible = atts.filter(a => EXAM_ELIGIBLE_TYPES.indexOf(a.getContentType()) !== -1 && a.getSize() >= EXAM_MIN_BYTES);
+
+      if (!senderEmail || !eligible.length) { seededIds.push(id); return; } // όχι πελάτης ή τίποτα αξιόλογο να εισαχθεί
+
+      const dateIso = Utilities.formatDate(message.getDate(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+      eligible.forEach(att => {
+        rows.push({
+          messageId: id, senderEmail: senderEmail, filename: att.getName(),
+          mimeType: att.getContentType(), dataBase64: Utilities.base64Encode(att.getBytes()), dateIso: dateIso,
+        });
+      });
+      messageIdsInBatch.add(id);
+    });
+  });
+
+  if (!rows.length) {
+    if (seededIds.length) saveProcessedExamIds_(processedIds.concat(seededIds));
+    return;
+  }
+
+  const resp = UrlFetchApp.fetch(EXAM_INGEST_URL, {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { 'x-ingest-secret': EXAM_INGEST_SECRET },
+    payload: JSON.stringify({ rows: rows }),
+    muteHttpExceptions: true,
+  });
+  if (resp.getResponseCode() !== 200) {
+    console.log('Exam ingest failed: ' + resp.getContentText());
+    if (seededIds.length) saveProcessedExamIds_(processedIds.concat(seededIds));
+    return; // τίποτα δεν καταγράφεται ως done — ξαναδοκιμάζονται όλα στο επόμενο τρέξιμο
+  }
+  const result = JSON.parse(resp.getContentText());
+
+  // Ένα μήνυμα σημειώνεται "done" ΜΟΝΟ αν ΟΛΑ τα συνημμένα του πέτυχαν (created
+  // ή duplicate) — αν κάποιο απέτυχε, ξαναδοκιμάζεται ολόκληρο το μήνυμα στο
+  // επόμενο τρέξιμο· τα ήδη επιτυχημένα απλά θα ξαναγυρίσουν ως "duplicate"
+  // χάρη στο dedup του exam-ingest, άρα είναι ασφαλές.
+  const okByMessage = {};
+  (result.results || []).forEach(r => {
+    if (!(r.messageId in okByMessage)) okByMessage[r.messageId] = true;
+    okByMessage[r.messageId] = okByMessage[r.messageId] && !!r.ok;
+  });
+  const newlyDone = [];
+  messageIdsInBatch.forEach(id => {
+    if (okByMessage[id]) {
+      newlyDone.push(id);
+      GmailApp.getMessageById(id).getThread().addLabel(label); // οπτική ένδειξη στο Gmail
+    }
+  });
+  saveProcessedExamIds_(processedIds.concat(seededIds, newlyDone));
+}
