@@ -2066,10 +2066,16 @@ function renderPatientExamsTab() {
   return `<div>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px">
       <span style="font-size:13px;color:var(--text-2)">${exams.length} εξετάσεις</span>
-      <label class="btn btn-primary btn-sm" style="cursor:pointer;margin:0">
-        📎 Ανέβασμα Εξέτασης
-        <input type="file" id="exam-upload-input" accept="image/*,application/pdf" multiple style="display:none"/>
-      </label>
+      <div style="display:flex;gap:8px">
+        <label class="btn btn-primary btn-sm" style="cursor:pointer;margin:0">
+          📷 Φωτογραφία Εξέτασης
+          <input type="file" id="exam-upload-input" accept="image/*" capture="environment" multiple style="display:none"/>
+        </label>
+        <label class="btn btn-ghost btn-sm" style="cursor:pointer;margin:0">
+          🖼 Από Βιβλιοθήκη / PDF
+          <input type="file" id="exam-library-input" accept="image/*,application/pdf" multiple style="display:none"/>
+        </label>
+      </div>
     </div>
     <div id="exam-upload-status" style="display:none;font-size:12px;color:var(--blue);margin-bottom:10px">Μεταφόρτωση...</div>
     ${exams.length?`
@@ -6339,9 +6345,7 @@ function bindEvents() {
 
   // 🩺 Εξετάσεις: ανέβασμα → αμέσως μετά, αυτόματη AI ταξινόμηση ανά αρχείο
   // (η θεραπεύτρια απλά επιβεβαιώνει/διορθώνει μετά, δεν περιμένει χειροκίνητο κλικ).
-  const _eui = document.getElementById('exam-upload-input');
-  if (_eui) _eui.addEventListener('change', async (e) => {
-    const files = Array.from(e.target.files||[]);
+  const handlePatientExamFiles = async (files) => {
     if (!files.length) return;
     const statusEl = document.getElementById('exam-upload-status');
     if (statusEl) statusEl.style.display = 'block';
@@ -6362,7 +6366,11 @@ function bindEvents() {
     await loadPatientDetail(pid, 'exams');
     render();
     for (const id of newIds) classifyExam(id);
-  });
+  };
+  const _eui = document.getElementById('exam-upload-input');
+  if (_eui) _eui.addEventListener('change', (e) => handlePatientExamFiles(Array.from(e.target.files||[])));
+  const _eli = document.getElementById('exam-library-input');
+  if (_eli) _eli.addEventListener('change', (e) => handlePatientExamFiles(Array.from(e.target.files||[])));
   document.querySelectorAll('[data-classify-exam]').forEach(el => {
     el.onclick = () => classifyExam(el.dataset.classifyExam);
   });

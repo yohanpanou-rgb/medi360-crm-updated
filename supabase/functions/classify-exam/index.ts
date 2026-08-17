@@ -11,9 +11,16 @@
 //   sb.functions.invoke('classify-exam', { body: { exam_id } })
 // Returns: { ai_type, ai_summary } ή { error }
 //
+// Καλείται ΕΠΙΣΗΣ αυτόματα από το gmail-exam-sync (εισαγωγή εξέτασης από
+// email πελάτη) με το ίδιο x-cron-secret header που χρησιμοποιούν όλες οι
+// αυτοματοποιημένες λειτουργίες — τότε δεν υπάρχει συνδεδεμένος χρήστης,
+// οπότε χρησιμοποιείται service-role client (bypass RLS) αντί για το
+// RLS-scoped client του χρήστη.
+//
 // Deploy with:
 //   supabase functions deploy classify-exam
-// Required secret (ίδιο με το ai-fix-text): ANTHROPIC_API_KEY
+// Required secrets: ANTHROPIC_API_KEY (ίδιο με το ai-fix-text),
+//   BIRTHDAY_CRON_SECRET (ίδιο κοινό cron secret με τα υπόλοιπα automations)
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -53,23 +60,33 @@ Deno.serve(async (req: Request) => {
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
 
   try {
-    const authHeader = req.headers.get('Authorization');
-    if (!authHeader) return json({ error: 'Missing Authorization header' }, 401);
+    const secret = Deno.env.get('BIRTHDAY_CRON_SECRET');
+    const isCron = !!secret && req.headers.get('x-cron-secret') === secret;
 
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_ANON_KEY')!,
-      { global: { headers: { Authorization: authHeader } } },
-    );
+    let supabase;
+    if (isCron) {
+      // Αυτόματη κλήση (gmail-exam-sync) — service role, καμία έννοια
+      // συνδεδεμένου χρήστη/RLS εδώ.
+      supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+    } else {
+      const authHeader = req.headers.get('Authorization');
+      if (!authHeader) return json({ error: 'Missing Authorization header' }, 401);
 
-    const { data: { user }, error: userErr } = await supabase.auth.getUser();
-    if (userErr || !user) return json({ error: 'Not authenticated' }, 401);
+      supabase = createClient(
+        Deno.env.get('SUPABASE_URL')!,
+        Deno.env.get('SUPABASE_ANON_KEY')!,
+        { global: { headers: { Authorization: authHeader } } },
+      );
 
-    const { data: profile, error: profileErr } = await supabase
-      .from('profiles').select('role').eq('id', user.id).single();
-    if (profileErr || !profile) return json({ error: 'Profile not found' }, 403);
-    if (!['super_admin', 'clinic_admin', 'therapist'].includes(profile.role)) {
-      return json({ error: 'Δεν έχεις δικαίωμα ταξινόμησης εξετάσεων' }, 403);
+      const { data: { user }, error: userErr } = await supabase.auth.getUser();
+      if (userErr || !user) return json({ error: 'Not authenticated' }, 401);
+
+      const { data: profile, error: profileErr } = await supabase
+        .from('profiles').select('role').eq('id', user.id).single();
+      if (profileErr || !profile) return json({ error: 'Profile not found' }, 403);
+      if (!['super_admin', 'clinic_admin', 'therapist'].includes(profile.role)) {
+        return json({ error: 'Δεν έχεις δικαίωμα ταξινόμησης εξετάσεων' }, 403);
+      }
     }
 
     const body = await req.json().catch(() => null);
