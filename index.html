@@ -1143,6 +1143,20 @@ async function loadPatientDetail(id, tab) {
       S.patientPhotos = signed;
     }
 
+    // 🩺 Εξετάσεις ασθενή — μεταδεδομένα + signed URLs (private bucket, ίδιο
+    // μοτίβο με τις φωτογραφίες), ταξινομημένες ανά ημερομηνία εξέτασης.
+    S.patientExams = [];
+    try {
+      const {data:exams} = await sb.from('patient_exams').select('*').eq('patient_id',id).order('exam_date',{ascending:false});
+      if (exams && exams.length) {
+        const signedExams = await Promise.all(exams.map(async ex => {
+          const {data:su} = await sb.storage.from('patient-exams').createSignedUrl(ex.storage_path, 3600);
+          return {...ex, url: su ? su.signedUrl : ''};
+        }));
+        S.patientExams = signedExams;
+      }
+    } catch(e) {}
+
     // Load consultations from Supabase by patient_id (αξιόπιστο — ο patient έχει ήδη phone)
     const phone = normalizePhone(p&&p.phone||'');
     let consultData = [];
@@ -2047,6 +2061,59 @@ function renderPatientPhotosTab() {
   </div>`;
 }
 
+function renderPatientExamsTab() {
+  const exams = S.patientExams||[];
+  return `<div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+      <span style="font-size:13px;color:var(--text-2)">${exams.length} εξετάσεις</span>
+      <label class="btn btn-primary btn-sm" style="cursor:pointer;margin:0">
+        📎 Ανέβασμα Εξέτασης
+        <input type="file" id="exam-upload-input" accept="image/*,application/pdf" multiple style="display:none"/>
+      </label>
+    </div>
+    <div id="exam-upload-status" style="display:none;font-size:12px;color:var(--blue);margin-bottom:10px">Μεταφόρτωση...</div>
+    ${exams.length?`
+    <div style="display:flex;flex-direction:column;gap:10px">
+      ${exams.map(ex=>{
+        const isPdf = /\.pdf$/i.test(ex.file_name||'');
+        return `<div class="card" style="padding:12px 16px">
+          <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">
+            <div style="font-size:22px;flex-shrink:0">${isPdf?'📄':'🖼'}</div>
+            <div style="flex:1;min-width:180px">
+              <a href="${ex.url}" target="_blank" rel="noopener" style="font-size:13px;font-weight:600;color:var(--blue);text-decoration:none">${esc(ex.file_name)}</a>
+              <div style="margin-top:4px">
+                <input type="date" value="${ex.exam_date}" data-exam-date="${ex.id}" style="font-size:11.5px;padding:3px 6px;border:1px solid var(--border);border-radius:6px;font-family:var(--font)"/>
+              </div>
+              ${ex.ai_status==='pending'?`
+              <div style="margin-top:8px;font-size:12px;color:var(--text-2)">
+                🤖 <button class="btn btn-ghost btn-sm" style="padding:2px 8px" data-classify-exam="${ex.id}">Ταξινόμηση με AI</button>
+              </div>`:''}
+              ${ex.ai_status==='failed'?`
+              <div style="margin-top:8px;font-size:12px;color:#A32D2D">
+                ⚠️ Απέτυχε η ταξινόμηση — <button class="btn btn-ghost btn-sm" style="padding:2px 8px" data-classify-exam="${ex.id}">Δοκιμή ξανά</button>
+              </div>`:''}
+              ${ex.ai_status==='done'?`
+              <div style="margin-top:8px;padding:8px 10px;background:var(--surface-2);border-radius:8px;font-size:12px">
+                <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                  <span style="font-weight:700;color:#534AB7">🤖 ${esc(ex.ai_type||'—')}</span>
+                  ${ex.confirmed?`<span style="font-size:10px;font-weight:700;color:#0F6E56;background:#E1F5EE;padding:2px 7px;border-radius:8px">✓ Επιβεβαιωμένο</span>`
+                    :`<button class="btn btn-sm" style="padding:2px 8px;background:#0F6E56;color:#fff;font-weight:700;font-size:10.5px" data-confirm-exam="${ex.id}">✓ Επιβεβαίωση</button>`}
+                </div>
+                ${ex.ai_summary?`<div style="margin-top:4px;color:var(--text-2);line-height:1.5">${esc(ex.ai_summary)}</div>`:''}
+              </div>`:''}
+            </div>
+            <button onclick="deletePatientExam('${ex.id}','${esc(ex.storage_path)}')" class="btn btn-ghost btn-sm" style="color:var(--red,#A32D2D);flex-shrink:0">🗑</button>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`:`
+    <div class="empty-state">
+      <div class="empty-icon">🩺</div>
+      <div style="margin-bottom:12px">Δεν υπάρχουν εξετάσεις</div>
+    </div>`}
+  </div>`;
+}
+
 function renderPatientConsentsTab() {
   const p = S.patientDetail;
   // Ποιες κατηγορίες συναίνεσης αφορούν πραγματικά αυτόν τον ασθενή, με βάση τα
@@ -2198,6 +2265,7 @@ function renderPatientDetail() {
         {id:'medical',l:`Ιατρικό Ιστορικό${hasMedicalHistoryData(p)?' ✓':''}`},
         {id:'laser',l:`Laser Forms (${laserForms.length})`},
         {id:'photos',l:`Φωτογραφίες (${(S.patientPhotos||[]).length})`},
+        {id:'exams',l:`Εξετάσεις (${(S.patientExams||[]).length})`},
         {id:'patconsents',l:'Συναινέσεις'},
         {id:'consultation',l:`Consultation (${consultations.length})`},
       ].map(t=>`<button class="btn" style="border-radius:0;border-bottom:2px solid ${patTab===t.id?'var(--blue)':'transparent'};color:${patTab===t.id?'var(--blue)':'var(--text-2)'};background:transparent;padding:8px 14px;font-size:12px;white-space:nowrap" data-pat-tab="${t.id}">${t.l}</button>`).join('')}
@@ -2539,6 +2607,7 @@ function renderPatientDetail() {
 
     <!-- ΦΩΤΟΓΡΑΦΙΕΣ TAB -->
     ${patTab==='photos'?renderPatientPhotosTab():''}
+    ${patTab==='exams'?renderPatientExamsTab():''}
 
     <!-- ΣΥΝΑΙΝΕΣΕΙΣ TAB -->
     ${patTab==='patconsents'?renderPatientConsentsTab():''}
@@ -6268,6 +6337,50 @@ function bindEvents() {
   const _pli = document.getElementById('photo-library-input');
   if (_pli) _pli.addEventListener('change', (e) => handlePatientPhotoFiles(Array.from(e.target.files||[])));
 
+  // 🩺 Εξετάσεις: ανέβασμα → αμέσως μετά, αυτόματη AI ταξινόμηση ανά αρχείο
+  // (η θεραπεύτρια απλά επιβεβαιώνει/διορθώνει μετά, δεν περιμένει χειροκίνητο κλικ).
+  const _eui = document.getElementById('exam-upload-input');
+  if (_eui) _eui.addEventListener('change', async (e) => {
+    const files = Array.from(e.target.files||[]);
+    if (!files.length) return;
+    const statusEl = document.getElementById('exam-upload-status');
+    if (statusEl) statusEl.style.display = 'block';
+    const pid = S.patientDetail.id, cid = clinicId();
+    const newIds = [];
+    for (const file of files) {
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g,'_');
+      const path = `${cid}/${pid}/${Date.now()}_${safeName}`;
+      const {error: upErr} = await sb.storage.from('patient-exams').upload(path, file);
+      if (upErr) { alert('Σφάλμα μεταφόρτωσης: '+upErr.message); continue; }
+      const {data: row, error: insErr} = await sb.from('patient_exams').insert({
+        clinic_id: cid, patient_id: pid, storage_path: path, file_name: file.name,
+        exam_date: new Date().toISOString().slice(0,10),
+        uploaded_by: (S.profile&&S.profile.id)||null,
+      }).select('id').single();
+      if (!insErr && row) newIds.push(row.id);
+    }
+    await loadPatientDetail(pid, 'exams');
+    render();
+    for (const id of newIds) classifyExam(id);
+  });
+  document.querySelectorAll('[data-classify-exam]').forEach(el => {
+    el.onclick = () => classifyExam(el.dataset.classifyExam);
+  });
+  document.querySelectorAll('[data-confirm-exam]').forEach(el => {
+    el.onclick = async () => {
+      await sb.from('patient_exams').update({confirmed:true}).eq('id', el.dataset.confirmExam);
+      await loadPatientDetail(S.patientDetail.id, 'exams');
+      render();
+    };
+  });
+  document.querySelectorAll('[data-exam-date]').forEach(el => {
+    el.onchange = async () => {
+      await sb.from('patient_exams').update({exam_date: el.value}).eq('id', el.dataset.examDate);
+      await loadPatientDetail(S.patientDetail.id, 'exams');
+      render();
+    };
+  });
+
   // Sortable επικεφαλίδες πίνακα Ασθενών
   document.querySelectorAll('th[data-sort]').forEach(th => {
     th.addEventListener('click', () => {
@@ -8159,7 +8272,7 @@ async function findDuplicatePatientByPhone(phone) {
 }
 
 // ── ΣΥΓΧΩΝΕΥΣΗ ΔΙΠΛΟΤΥΠΩΝ ΑΣΘΕΝΩΝ ──
-const MERGE_REASSIGN_TABLES = ['appointments','laser_forms','laser_consents','service_consents','gdpr_consents','patient_photos','sms_log'];
+const MERGE_REASSIGN_TABLES = ['appointments','laser_forms','laser_consents','service_consents','gdpr_consents','patient_photos','patient_exams','sms_log'];
 const MERGE_FILL_FIELDS = ['email','dob','city','source','medical_history','allergies','medications','previous_treatments','avoid_body_areas','gdpr_signed_at'];
 
 function detectDuplicatePatientGroups() {
@@ -10286,6 +10399,22 @@ async function deletePatientPhoto(id, path) {
   await sb.from('patient_photos').delete().eq('id', id);
   _selectedPhotoIds.delete(id);
   await loadPatientDetail(S.patientDetail.id);
+  render();
+}
+
+async function deletePatientExam(id, path) {
+  if (!confirm('Διαγραφή αυτής της εξέτασης; Η ενέργεια δεν αναιρείται.')) return;
+  await sb.storage.from('patient-exams').remove([path]);
+  await sb.from('patient_exams').delete().eq('id', id);
+  await loadPatientDetail(S.patientDetail.id, 'exams');
+  render();
+}
+
+async function classifyExam(examId) {
+  const {data, error} = await sb.functions.invoke('classify-exam', { body: { exam_id: examId } });
+  if (error) { alert('Σφάλμα ταξινόμησης: ' + await extractInvokeErrorMessage(error)); }
+  else if (data && data.error) { alert('Σφάλμα ταξινόμησης: ' + data.error); }
+  await loadPatientDetail(S.patientDetail.id, 'exams');
   render();
 }
 

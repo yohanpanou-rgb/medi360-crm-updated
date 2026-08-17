@@ -130,7 +130,7 @@ do $$
 declare
   t text;
 begin
-  foreach t in array array['profiles','clinics','patients','appointments','laser_forms','pipeline_deals','sms_log','service_consent_templates','gdpr_consents','laser_consents','service_consents','unmatched_consultations','patient_photos','medical_history_consents','patient_relationships','services','staff_services','staff_schedules','staff_schedule_overrides','staff_time_off','patient_packages','birthday_gifts','instruction_sets','service_instruction_map','communication_log']
+  foreach t in array array['profiles','clinics','patients','appointments','laser_forms','pipeline_deals','sms_log','service_consent_templates','gdpr_consents','laser_consents','service_consents','unmatched_consultations','patient_photos','medical_history_consents','patient_relationships','services','staff_services','staff_schedules','staff_schedule_overrides','staff_time_off','patient_packages','birthday_gifts','instruction_sets','service_instruction_map','communication_log','patient_exams']
   loop
     if to_regclass('public.' || t) is null then
       raise notice 'SKIPPED (table does not exist): %', t;
@@ -239,7 +239,7 @@ do $$
 declare
   t text;
 begin
-  foreach t in array array['patients','appointments','laser_forms','pipeline_deals','sms_log','service_consent_templates','gdpr_consents','laser_consents','service_consents','unmatched_consultations','patient_photos','medical_history_consents','patient_relationships','services','staff_services','staff_schedules','staff_schedule_overrides','staff_time_off','patient_packages','birthday_gifts','instruction_sets','service_instruction_map','communication_log']
+  foreach t in array array['patients','appointments','laser_forms','pipeline_deals','sms_log','service_consent_templates','gdpr_consents','laser_consents','service_consents','unmatched_consultations','patient_photos','medical_history_consents','patient_relationships','services','staff_services','staff_schedules','staff_schedule_overrides','staff_time_off','patient_packages','birthday_gifts','instruction_sets','service_instruction_map','communication_log','patient_exams']
   loop
     if to_regclass('public.' || t) is null then
       raise notice 'SKIPPED (table does not exist): %', t;
@@ -351,6 +351,40 @@ begin
     for delete
     using (
       bucket_id = 'patient-photos'
+      and (
+        public.is_super_admin()
+        or (storage.foldername(name))[1] = public.current_user_clinic_id()::text
+      )
+    );
+
+  -- 'patient-exams' bucket — ίδιο μοτίβο, δες supabase/create_patient_exams.sql
+  drop policy if exists "patient_exams_storage_select" on storage.objects;
+  create policy "patient_exams_storage_select" on storage.objects
+    for select
+    using (
+      bucket_id = 'patient-exams'
+      and (
+        public.is_super_admin()
+        or (storage.foldername(name))[1] = public.current_user_clinic_id()::text
+      )
+    );
+
+  drop policy if exists "patient_exams_storage_insert" on storage.objects;
+  create policy "patient_exams_storage_insert" on storage.objects
+    for insert
+    with check (
+      bucket_id = 'patient-exams'
+      and (
+        public.is_super_admin()
+        or (storage.foldername(name))[1] = public.current_user_clinic_id()::text
+      )
+    );
+
+  drop policy if exists "patient_exams_storage_delete" on storage.objects;
+  create policy "patient_exams_storage_delete" on storage.objects
+    for delete
+    using (
+      bucket_id = 'patient-exams'
       and (
         public.is_super_admin()
         or (storage.foldername(name))[1] = public.current_user_clinic_id()::text
