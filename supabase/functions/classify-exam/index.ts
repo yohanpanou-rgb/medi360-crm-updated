@@ -59,6 +59,10 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS });
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
 
+  // deno-lint-ignore no-explicit-any
+  let supabaseForFailure: any = null;
+  let examIdForFailure: string | undefined;
+
   try {
     const secret = Deno.env.get('BIRTHDAY_CRON_SECRET');
     const isCron = !!secret && req.headers.get('x-cron-secret') === secret;
@@ -68,6 +72,7 @@ Deno.serve(async (req: Request) => {
       // Αυτόματη κλήση (gmail-exam-sync) — service role, καμία έννοια
       // συνδεδεμένου χρήστη/RLS εδώ.
       supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+      supabaseForFailure = supabase;
     } else {
       const authHeader = req.headers.get('Authorization');
       if (!authHeader) return json({ error: 'Missing Authorization header' }, 401);
@@ -77,6 +82,7 @@ Deno.serve(async (req: Request) => {
         Deno.env.get('SUPABASE_ANON_KEY')!,
         { global: { headers: { Authorization: authHeader } } },
       );
+      supabaseForFailure = supabase;
 
       const { data: { user }, error: userErr } = await supabase.auth.getUser();
       if (userErr || !user) return json({ error: 'Not authenticated' }, 401);
@@ -92,6 +98,7 @@ Deno.serve(async (req: Request) => {
     const body = await req.json().catch(() => null);
     const examId = body?.exam_id;
     if (!examId) return json({ error: 'Λείπει το exam_id' }, 400);
+    examIdForFailure = examId;
 
     // Το SELECT/UPDATE περνάει μέσα από το RLS του χρήστη — αν η εξέταση
     // ανήκει σε άλλη κλινική, το exam απλά δεν βρίσκεται (δεν χρειάζεται
@@ -101,7 +108,12 @@ Deno.serve(async (req: Request) => {
     if (examErr || !exam) return json({ error: 'Η εξέταση δεν βρέθηκε' }, 404);
 
     const { data: blob, error: dlErr } = await supabase.storage.from('patient-exams').download(exam.storage_path);
-    if (dlErr || !blob) return json({ error: 'Αποτυχία λήψης αρχείου: ' + (dlErr ? dlErr.message : '') }, 500);
+    if (dlErr || !blob) {
+      const reason = 'Αποτυχία λήψης αρχείου: ' + (dlErr ? dlErr.message : '');
+      console.error('classify-exam', examId, reason);
+      await supabase.from('patient_exams').update({ ai_status: 'failed', ai_error: reason }).eq('id', examId);
+      return json({ error: reason }, 500);
+    }
 
     const mediaType = guessMediaType(exam.file_name, blob.type);
     const dataB64 = toBase64(await blob.arrayBuffer());
@@ -138,8 +150,10 @@ Deno.serve(async (req: Request) => {
     });
     const aiData = await aiRes.json();
     if (aiData.error) {
-      await supabase.from('patient_exams').update({ ai_status: 'failed' }).eq('id', examId);
-      return json({ error: 'AI error: ' + (aiData.error.message || JSON.stringify(aiData.error)) }, 502);
+      const reason = 'AI error: ' + (aiData.error.message || JSON.stringify(aiData.error));
+      console.error('classify-exam', examId, reason);
+      await supabase.from('patient_exams').update({ ai_status: 'failed', ai_error: reason }).eq('id', examId);
+      return json({ error: reason }, 502);
     }
 
     const text = (aiData.content || []).map((c: { text?: string }) => c.text || '').join('');
@@ -149,16 +163,23 @@ Deno.serve(async (req: Request) => {
     const aiSummary = summaryMatch ? summaryMatch[1].trim() : '';
 
     if (!aiType && !aiSummary) {
-      await supabase.from('patient_exams').update({ ai_status: 'failed' }).eq('id', examId);
-      return json({ error: 'Δεν ήταν δυνατή η ανάλυση της απάντησης του AI' }, 502);
+      const reason = 'Δεν ήταν δυνατή η ανάλυση της απάντησης του AI. Ωμή απάντηση: ' + text.slice(0, 300);
+      console.error('classify-exam', examId, reason);
+      await supabase.from('patient_exams').update({ ai_status: 'failed', ai_error: reason }).eq('id', examId);
+      return json({ error: reason }, 502);
     }
 
     await supabase.from('patient_exams').update({
-      ai_type: aiType || null, ai_summary: aiSummary || null, ai_status: 'done',
+      ai_type: aiType || null, ai_summary: aiSummary || null, ai_status: 'done', ai_error: null,
     }).eq('id', examId);
 
     return json({ ai_type: aiType, ai_summary: aiSummary });
   } catch (e) {
-    return json({ error: e instanceof Error ? e.message : 'Άγνωστο σφάλμα' }, 500);
+    const reason = e instanceof Error ? e.message : String(e);
+    console.error('classify-exam', examIdForFailure, reason);
+    if (supabaseForFailure && examIdForFailure) {
+      await supabaseForFailure.from('patient_exams').update({ ai_status: 'failed', ai_error: reason }).eq('id', examIdForFailure).catch(() => {});
+    }
+    return json({ error: reason }, 500);
   }
 });

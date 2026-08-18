@@ -2096,7 +2096,7 @@ function renderPatientExamsTab() {
               </div>`:''}
               ${ex.ai_status==='failed'?`
               <div style="margin-top:8px;font-size:12px;color:#A32D2D">
-                ⚠️ Απέτυχε η ταξινόμηση — <button class="btn btn-ghost btn-sm" style="padding:2px 8px" data-classify-exam="${ex.id}">Δοκιμή ξανά</button>
+                ⚠️ Απέτυχε η ταξινόμηση${ex.ai_error?': '+esc(ex.ai_error.slice(0,200)):''} — <button class="btn btn-ghost btn-sm" style="padding:2px 8px" data-classify-exam="${ex.id}">Δοκιμή ξανά</button>
               </div>`:''}
               ${ex.ai_status==='done'?`
               <div style="margin-top:8px;padding:8px 10px;background:var(--surface-2);border-radius:8px;font-size:12px">
@@ -9148,6 +9148,15 @@ function viewGdprConsent() {
   ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9000;display:flex;align-items:center;justify-content:center;padding:12px';
 
   const src = hc ? hc.snapshot||{} : p;
+  const regFields = [
+    ['Ονοματεπώνυμο', src.full_name],
+    ['Ημ. Γέννησης', src.dob ? new Date(src.dob+'T00:00:00').toLocaleDateString('el-GR') : ''],
+    ['Τηλέφωνο', src.phone],
+    ['Email', src.email],
+    ['Πόλη', src.city],
+    ['Πηγή', src.source],
+    ['Συναίνεση Marketing', src.marketing_opt_in === true ? 'Ναι' : (src.marketing_opt_in === false ? 'Όχι' : '')],
+  ].filter(([,v]) => v && String(v).trim());
   const fields = [
     ['Ιατρικό Ιστορικό', hc ? [].concat(src.conditions||[], src.condition_other?['Other: '+src.condition_other]:[]).join(', ') : p.medical_history],
     ['Αλλεργίες', src.allergies],
@@ -9168,6 +9177,15 @@ function viewGdprConsent() {
       </div>
       <div style="font-size:12px;font-weight:600;margin-bottom:6px;color:${p.gdpr_signed?'#0F6E56':'var(--red)'}">${p.gdpr_signed?'✓ GDPR Υπογεγραμμένο':'⚠ Χωρίς υπογεγραμμένο GDPR'}</div>
       ${isStale?`<div style="font-size:11px;font-weight:600;color:#854F0B;background:#FAEEDA;display:inline-block;padding:3px 10px;border-radius:10px;margin-bottom:14px">🔄 Προτείνεται ανανέωση — πάνω από 1 έτος από την τελευταία υπογραφή</div>`:''}
+      ${regFields.length ? `
+        <div style="font-size:11px;font-weight:700;color:#0E2757;text-transform:uppercase;letter-spacing:.5px;margin:14px 0 8px">Στοιχεία Εγγραφής</div>
+        ${regFields.map(([k,v])=>`
+        <div style="margin-bottom:14px">
+          <div style="font-size:10px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">${esc(k)}</div>
+          <div style="font-size:13px;line-height:1.6;white-space:pre-wrap">${esc(v)}</div>
+        </div>`).join('')}
+        <div style="font-size:11px;font-weight:700;color:#0E2757;text-transform:uppercase;letter-spacing:.5px;margin:14px 0 8px">Ιατρικό Ιστορικό</div>
+      ` : ''}
       ${fields.length ? fields.map(([k,v])=>`
         <div style="margin-bottom:14px">
           <div style="font-size:10px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">${esc(k)}</div>
