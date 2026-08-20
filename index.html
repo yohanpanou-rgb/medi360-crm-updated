@@ -3048,6 +3048,31 @@ function renderCalendar() {
     const bS=new Date(b.start_time).getTime(), bE=bS+(b.duration_minutes||60)*60000;
     return aS<bE && bS<aE;
   };
+  // Πακετάρισμα επικαλυπτόμενων ραντεβού ΜΕΣΑ ΣΤΗΝ ΙΔΙΑ στήλη θεραπεύτριας (π.χ.
+  // ένα ραντεβού που τραβάει πέρα από την προγραμματισμένη ώρα λήξης του και
+  // καλύπτει το επόμενο) — χωρίς αυτό, δύο κάρτες στην ίδια ώρα ζωγραφίζονται
+  // η μία ακριβώς πάνω στην άλλη (πλήρες πλάτος και οι δύο) και η μία κρύβει
+  // εντελώς την άλλη ανάλογα με το z-index, χωρίς καμία ένδειξη ότι υπάρχει.
+  const packOverlaps = (list) => {
+    const sorted = [...list].sort((a,b)=>new Date(a.start_time)-new Date(b.start_time));
+    const active = [];
+    const out = {};
+    let cluster = null;
+    sorted.forEach(a => {
+      const aStart = new Date(a.start_time).getTime();
+      const aEnd = aStart + (a.duration_minutes||60)*60000;
+      for (let i=active.length-1;i>=0;i--) if (active[i].end<=aStart) active.splice(i,1);
+      if (!active.length) cluster = {maxCols:1};
+      const usedCols = new Set(active.map(x=>x.col));
+      let col=0; while(usedCols.has(col)) col++;
+      active.push({col, end:aEnd});
+      cluster.maxCols = Math.max(cluster.maxCols, active.length);
+      out[a.id] = {col, cluster};
+    });
+    const result = {};
+    Object.keys(out).forEach(id => { result[id] = {col:out[id].col, count:out[id].cluster.maxCols}; });
+    return result;
+  };
   // Facials overflow: αν το Facials 1 είναι κατειλημμένο την ίδια ώρα → Facials 2
   const roomMap = {};
   const f1Busy = [];
@@ -3094,6 +3119,7 @@ function renderCalendar() {
               return col.id==='unassigned' ? !t : ('t:'+canonTherapist(t))===col.id;
             })
           : dayAppts.filter(a=>roomMap[a.id]===col.id);
+        const overlapPack = packOverlaps(colAppts);
 
         return `<div style="flex:1;min-width:160px;border-right:1px solid var(--border-2);position:relative" ${calMode==='therapist'&&col.id!=='unassigned'?`data-drop-col="${esc(col.full_name)}"`:''}>
           <!-- Header -->
@@ -3126,11 +3152,17 @@ function renderCalendar() {
               const hasConflict = laserConflictIds.has(a.id);
               const missingGrp = missingConsent(a);
               const hasNoConsent = !!missingGrp;
+              // Αν επικαλύπτεται χρονικά με άλλο ραντεβού στην ίδια στήλη, μοίρασε το
+              // πλάτος δίπλα-δίπλα αντί να καλύψει το ένα εντελώς το άλλο (βλ. packOverlaps).
+              const pack = overlapPack[a.id] || {col:0, count:1};
+              const posStyle = pack.count>1
+                ? `left:calc(${(pack.col*100/pack.count).toFixed(4)}% + ${pack.col===0?3:1}px);width:calc(${(100/pack.count).toFixed(4)}% - ${pack.col===0||pack.col===pack.count-1?4:2}px)`
+                : 'left:3px;right:3px';
               return `<div
                 data-appt-cal="${a.id}"
                 data-drag-appt="${a.id}"
                 draggable="true"
-                style="position:absolute;left:3px;right:3px;top:${topPx}px;height:${heightPx}px;
+                style="position:absolute;${posStyle};top:${topPx}px;height:${heightPx}px;
                   background:${hasConflict?'rgba(239,68,68,0.15)':c.bg};border-left:3px solid ${hasConflict?'#DC2626':c.border};${hasConflict?'outline:2px solid #DC2626;':''}border-radius:6px;
                   padding:3px 6px;cursor:pointer;overflow:hidden;z-index:${hasConflict||hasNoConsent?6:5};transition:.15s"
                 onmouseover="showCalTooltip(this, event)"
