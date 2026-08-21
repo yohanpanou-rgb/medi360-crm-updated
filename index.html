@@ -4328,6 +4328,42 @@ async function apptStatusUpdatePayload(appt, newStatus) {
   return upd;
 }
 
+// Κουμπί/κατάσταση έκδοσης myDATA απόδειξης μέσα στο appointment detail panel —
+// φαίνεται μόνο για ολοκληρωμένα ραντεβού. Χειροκίνητο ΠΑΝΤΑ (όχι αυτόματο στο
+// completed) γιατί μια λάθος εκδομένη απόδειξη χρειάζεται πιστωτικό/ακυρωτικό
+// για διόρθωση, όχι απλό undo.
+function apptReceiptAreaHtml(a, canReceipt) {
+  if (!canReceipt || a.status !== 'completed') return '';
+  if (a.receipt_mark) return `<div style="padding:8px 10px;background:#EAF7F1;border-radius:8px;font-size:12px;font-weight:600;color:#0F6E56">✓ Απόδειξη εκδόθηκε #${esc(a.receipt_mark)}</div>`;
+  if (a.receipt_error) return `<div style="padding:8px 10px;background:#FDEDED;border-radius:8px;font-size:11px;color:var(--red)">✗ Αποτυχία έκδοσης: ${esc(a.receipt_error)}</div><button class="btn btn-sm" style="margin-top:6px;width:100%;justify-content:center" id="appt-receipt-btn">🧾 Δοκιμή ξανά</button>`;
+  return `<button class="btn btn-sm" style="width:100%;justify-content:center" id="appt-receipt-btn">🧾 Έκδοση Απόδειξης</button>`;
+}
+
+function bindApptReceiptButton(a, canReceipt) {
+  const areaEl = document.getElementById('appt-receipt-area'); if (!areaEl) return;
+  const btn = areaEl.querySelector('#appt-receipt-btn'); if (!btn) return;
+  btn.addEventListener('click', async () => {
+    const amountStr = prompt('Ποσό απόδειξης (€):', a.price ? String(a.price) : '');
+    if (amountStr===null) return;
+    const amount = parseFloat(String(amountStr).replace(',','.'));
+    if (isNaN(amount) || amount<0) { alert('Μη έγκυρο ποσό.'); return; }
+    const pmStr = prompt('Τρόπος πληρωμής — γράψε "μετρητά" ή "κάρτα":', 'μετρητά');
+    if (pmStr===null) return;
+    const payment_method = /καρτ/i.test(pmStr) ? 'card' : 'cash';
+    btn.textContent = 'Έκδοση...'; btn.disabled = true;
+    try {
+      const {data, error} = await sb.functions.invoke('issue-receipt', {body:{appointment_id:a.id, amount, payment_method}});
+      if (error) throw new Error(await extractInvokeErrorMessage(error));
+      if (data && data.error) throw new Error(data.error);
+      Object.assign(a, {receipt_mark: data.receipt_mark||null, receipt_error:null, receipt_amount:amount, receipt_payment_method:payment_method});
+    } catch(e) {
+      Object.assign(a, {receipt_error: e.message||String(e)});
+    }
+    areaEl.innerHTML = apptReceiptAreaHtml(a, canReceipt);
+    bindApptReceiptButton(a, canReceipt);
+  });
+}
+
 // Ίδια σύμβαση εμφάνισης delta με το widget "Από πού μας βρήκαν" του Dashboard
 function reportDeltaLabel(diff, pct) {
   const color = diff>0?'#0F6E56':diff<0?'var(--red)':'var(--text-3)';
@@ -5739,6 +5775,25 @@ function renderSettings() {
           </div>
         </div>
       </div>
+
+      <!-- myDATA (Wrapp) — ηλεκτρονική απόδειξη -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <span class="card-title">🧾 myDATA — Ηλεκτρονική Απόδειξη (Wrapp)</span>
+            <div style="font-size:11px;color:var(--text-2);margin-top:2px">Έκδοση απόδειξης λιανικής απευθείας από ολοκληρωμένο ραντεβού</div>
+          </div>
+          ${integrations.mydata_enabled?'<span class="badge badge-green">✓ Ενεργό</span>':'<span class="badge badge-gray">Ανενεργό</span>'}
+        </div>
+        <div style="padding:16px">
+          <div style="font-size:11px;color:var(--text-2);margin-bottom:12px">Το κλειδί σύνδεσης με το Wrapp ρυθμίζεται από εμάς με ασφάλεια στον server — εδώ ενεργοποιείς/απενεργοποιείς μόνο αν το κουμπί «Έκδοση Απόδειξης» φαίνεται στα ραντεβού.</div>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:12px">
+            <input type="checkbox" id="mydata-enabled" ${integrations.mydata_enabled?'checked':''} style="width:16px;height:16px"/>
+            <span style="font-size:12px;font-weight:500">Ενεργή έκδοση αποδείξεων μέσω myDATA</span>
+          </label>
+          <button class="btn btn-primary btn-sm" id="save-mydata">Αποθήκευση</button>
+        </div>
+      </div>
     </div>`:''}
 
     <!-- IMPORT TAB -->
@@ -6822,6 +6877,7 @@ function bindEvents() {
       const a = (S.appointments||[]).find(x=>x.id===id||x.id==id);
       if (!a) return;
       const canFin = canSee(['super_admin','clinic_admin']);
+      const canReceipt = canSee(['super_admin','clinic_admin','receptionist']);
       const c = globalApptColor(a);
       const start = new Date(a.start_time);
       const end = new Date(start.getTime()+(a.duration_minutes||60)*60000);
@@ -6849,6 +6905,7 @@ function bindEvents() {
           ['GDPR', a.patients&&a.patients.gdpr_signed ? '✅ Υπογεγραμμένο' : '❌ Χωρίς GDPR'],
           ...(canFin && a.price ? [['Τιμή', euro(a.price)]] : []),
         ].map(([k,v])=>`<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border-2);font-size:12px"><span style="color:var(--text-2)">${k}</span><span style="font-weight:500;text-align:right;max-width:180px">${esc(v||'—')}</span></div>`).join('')}
+        <div id="appt-receipt-area">${apptReceiptAreaHtml(a, canReceipt)}</div>
         ${(()=>{
           // Θεραπευτής: δικό του πεδίο — η αλλαγή εδώ ισοδυναμεί με drag & drop
           // (ενημερώνει therapist_id + notes και μετακινεί την κάρτα στη στήλη του).
@@ -6890,6 +6947,7 @@ function bindEvents() {
         panel.style.display='none';
         loadPatientDetail(a.patient_id);
       });
+      bindApptReceiptButton(a, canReceipt);
       const _cs=content.querySelector('[data-appt-status]');if(_cs)_cs.addEventListener('change', async (ev) => {
         const prevValue = a.status;
         const upd = await apptStatusUpdatePayload(a, ev.target.value);
@@ -7208,6 +7266,17 @@ function bindEvents() {
     const {data, error} = await sb.functions.invoke('booking247-api-sync', {body:{clinic_id: clinicId(), mode:'test'}});
     if (error) { result.innerHTML = `<span style="color:var(--red)">✗ ${esc(await extractInvokeErrorMessage(error))}</span>`; return; }
     result.innerHTML = `<span style="color:${data&&data.ready?'var(--green)':'#D97706'}">${esc((data&&data.message)||'Το κλειδί αποθηκεύτηκε — περιμένει τα στοιχεία του πραγματικού Booking247 API')}</span>`;
+  });
+
+  const _smd = document.getElementById('save-mydata');
+  if (_smd) _smd.addEventListener('click', async () => {
+    const mydata_enabled = document.getElementById('mydata-enabled').checked;
+    const integrations = Object.assign({}, (S.clinic&&S.clinic.integrations)||{}, {mydata_enabled});
+    const {error} = await sb.from('clinics').update({integrations}).eq('id',clinicId());
+    if (error) { alert(error.message); return; }
+    if (S.clinic) S.clinic.integrations = integrations;
+    _smd.textContent='✓ Αποθηκεύτηκε!';
+    setTimeout(()=>{ _smd.textContent='Αποθήκευση'; loadPageData(); }, 1200);
   });
 
   // CSV Patients upload
