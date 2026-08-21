@@ -40,7 +40,8 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS });
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
 
-  let appointmentIdForFailure: string | undefined;
+  let entityIdForFailure: string | undefined;
+  let entityTableForFailure: string | undefined;
   // deno-lint-ignore no-explicit-any
   let supabaseSvc: any = null;
 
@@ -65,26 +66,49 @@ Deno.serve(async (req: Request) => {
       const { data: profile, error: profileErr } = await supabaseSvc
         .from('profiles').select('role').eq('id', user.id).single();
       if (profileErr || !profile) return json({ error: 'Profile not found' }, 403);
-      // Οικονομική/φορολογική ενέργεια — όχι θεραπεύτριες.
-      if (!['super_admin', 'clinic_admin', 'receptionist'].includes(profile.role)) {
+      // Οικονομική/φορολογική ενέργεια. Θεραπεύτριες περιλαμβάνονται ΜΟΝΟ γιατί
+      // η Πώληση Καλλυντικού (index.html, renderProductSale) επιτρέπεται και σε
+      // αυτές — πουλάνε προϊόντα απευθείας στον πελάτη.
+      if (!['super_admin', 'clinic_admin', 'receptionist', 'therapist'].includes(profile.role)) {
         return json({ error: 'Δεν έχεις δικαίωμα έκδοσης αποδείξεων' }, 403);
       }
     }
 
     const body = await req.json().catch(() => null);
-    const appointmentId = body?.appointment_id;
     const amount = typeof body?.amount === 'number' ? body.amount : parseFloat(body?.amount);
     const paymentMethod = body?.payment_method === 'card' ? 'card' : 'cash';
-    if (!appointmentId) return json({ error: 'Λείπει το appointment_id' }, 400);
-    appointmentIdForFailure = appointmentId;
     if (isNaN(amount) || amount < 0) return json({ error: 'Μη έγκυρο ποσό' }, 400);
 
-    const { data: appt, error: apptErr } = await supabaseSvc
-      .from('appointments').select('id,clinic_id,service_name').eq('id', appointmentId).single();
-    if (apptErr || !appt) return json({ error: 'Το ραντεβού δεν βρέθηκε' }, 404);
+    // Ένα από τα τρία — ραντεβού, πακέτο, ή μεμονωμένη πώληση καλλυντικού.
+    // Ίδια λογική και για τα τρία: SELECT (με receipt_mark), idempotency guard,
+    // UPDATE receipt_* πάνω στην ίδια γραμμή.
+    let table: string; let entityId: string; let clinicId: string;
+    if (body?.appointment_id) {
+      table = 'appointments'; entityId = body.appointment_id;
+      const { data, error: e } = await supabaseSvc.from('appointments').select('id,clinic_id,receipt_mark').eq('id', entityId).single();
+      if (e || !data) return json({ error: 'Το ραντεβού δεν βρέθηκε' }, 404);
+      if (data.receipt_mark) return json({ error: `Έχει ήδη εκδοθεί απόδειξη (#${data.receipt_mark}) για αυτό το ραντεβού` }, 409);
+      clinicId = data.clinic_id;
+    } else if (body?.package_id) {
+      table = 'patient_packages'; entityId = body.package_id;
+      const { data, error: e } = await supabaseSvc.from('patient_packages').select('id,clinic_id,receipt_mark').eq('id', entityId).single();
+      if (e || !data) return json({ error: 'Το πακέτο δεν βρέθηκε' }, 404);
+      if (data.receipt_mark) return json({ error: `Έχει ήδη εκδοθεί απόδειξη (#${data.receipt_mark}) για αυτό το πακέτο` }, 409);
+      clinicId = data.clinic_id;
+    } else if (body?.product_sale_id) {
+      table = 'product_sales'; entityId = body.product_sale_id;
+      const { data, error: e } = await supabaseSvc.from('product_sales').select('id,clinic_id,receipt_mark').eq('id', entityId).single();
+      if (e || !data) return json({ error: 'Η πώληση δεν βρέθηκε' }, 404);
+      if (data.receipt_mark) return json({ error: `Έχει ήδη εκδοθεί απόδειξη (#${data.receipt_mark}) για αυτή την πώληση` }, 409);
+      clinicId = data.clinic_id;
+    } else {
+      return json({ error: 'Λείπει appointment_id, package_id ή product_sale_id' }, 400);
+    }
+    entityIdForFailure = entityId;
+    entityTableForFailure = table;
 
     const { data: clinic, error: clinicErr } = await supabaseSvc
-      .from('clinics').select('id,integrations').eq('id', appt.clinic_id).single();
+      .from('clinics').select('id,integrations').eq('id', clinicId).single();
     if (clinicErr || !clinic) return json({ error: 'Η κλινική δεν βρέθηκε' }, 404);
 
     if (!clinic.integrations?.mydata_enabled) {
@@ -94,7 +118,7 @@ Deno.serve(async (req: Request) => {
     const apiKey = Deno.env.get('WRAPP_API_KEY');
     if (!apiKey) {
       const reason = 'Δεν έχει ρυθμιστεί ακόμα το κλειδί σύνδεσης με το Wrapp (WRAPP_API_KEY) — χρειάζεται πρώτα λογαριασμός Wrapp.';
-      await supabaseSvc.from('appointments').update({ receipt_error: reason }).eq('id', appointmentId);
+      await supabaseSvc.from(table).update({ receipt_error: reason }).eq('id', entityId);
       return json({ error: reason }, 501);
     }
 
@@ -104,25 +128,25 @@ Deno.serve(async (req: Request) => {
     //   const res = await fetch(`${WRAPP_API_BASE_URL}/receipts`, {
     //     method: 'POST',
     //     headers: { Authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
-    //     body: JSON.stringify({ amount, payment_method: paymentMethod, description: appt.service_name, /* + κωδικός κατηγορίας ΑΑΔΕ/ΦΠΑ όταν μας τα δώσει ο λογιστής */ }),
+    //     body: JSON.stringify({ amount, payment_method: paymentMethod, /* + κωδικός κατηγορίας ΑΑΔΕ/ΦΠΑ όταν μας τα δώσει ο λογιστής */ }),
     //   });
     //   const data = await res.json();
     //   if (!res.ok || data.error) throw new Error(data.error || `Wrapp API error (${res.status})`);
     //   const receiptMark = data.mark || data.invoiceMark;
     const reason = 'Η πραγματική έκδοση μέσω Wrapp δεν έχει ενεργοποιηθεί ακόμα (λείπει λογαριασμός/API docs) — δες τα TODO στην αρχή του αρχείου.';
-    await supabaseSvc.from('appointments').update({ receipt_error: reason }).eq('id', appointmentId);
+    await supabaseSvc.from(table).update({ receipt_error: reason }).eq('id', entityId);
     return json({ error: reason }, 501);
 
     // Όταν ενεργοποιηθεί το πραγματικό API call, το επιτυχές branch θα κάνει:
-    //   await supabaseSvc.from('appointments').update({
+    //   await supabaseSvc.from(table).update({
     //     receipt_mark: receiptMark, receipt_issued_at: new Date().toISOString(),
     //     receipt_amount: amount, receipt_payment_method: paymentMethod, receipt_error: null,
-    //   }).eq('id', appointmentId);
+    //   }).eq('id', entityId);
     //   return json({ receipt_mark: receiptMark });
   } catch (e) {
     const reason = e instanceof Error ? e.message : String(e);
-    if (supabaseSvc && appointmentIdForFailure) {
-      await supabaseSvc.from('appointments').update({ receipt_error: reason }).eq('id', appointmentIdForFailure).catch(() => {});
+    if (supabaseSvc && entityIdForFailure && entityTableForFailure) {
+      await supabaseSvc.from(entityTableForFailure).update({ receipt_error: reason }).eq('id', entityIdForFailure).catch(() => {});
     }
     return json({ error: reason }, 500);
   }
