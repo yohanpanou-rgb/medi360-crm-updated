@@ -69,13 +69,6 @@ function b64utf8(s: string): string {
   return btoa(bin);
 }
 
-// Πρώτη λέξη του ονόματος, ΟΠΩΣ ΕΙΝΑΙ αποθηκευμένη — πολλά ονόματα είναι
-// ΚΕΦΑΛΑΙΑ χωρίς τόνους (παλιά δεδομένα)· ξαναγράφοντάς τα σε πεζά δεν
-// μπορούμε να «εφεύρουμε» τον τόνο που λείπει, βγαίνει λάθος γραμμένη λέξη.
-function firstName(full: string): string {
-  return (full || '').trim().split(/\s+/)[0] || '';
-}
-
 interface Brand { name: string; color: string; logoUrl: string }
 
 function birthdayEmailHtml(name: string, expiresStr: string, bookingLink: string | undefined, brand: Brand): string {
@@ -131,8 +124,13 @@ function birthdayEmailHtml(name: string, expiresStr: string, bookingLink: string
 async function sendGmailBirthdayEmail(
   token: string, toEmail: string, patientName: string, expiresStr: string, bookingLink: string, brand: Brand,
 ) {
-  const subject = `🎂 Χρόνια Πολλά, ${firstName(patientName)}! Ένα δώρο σας περιμένει 🎁`;
-  const html = birthdayEmailHtml(firstName(patientName), expiresStr, bookingLink, brand);
+  // Πλήρες όνομα, όχι μόνο η πρώτη λέξη — δεν έχουμε ξεχωριστά πεδία
+  // Όνομα/Επώνυμο στη βάση, και πολλές καρτέλες είναι γραμμένες "Επώνυμο
+  // Όνομα" (π.χ. "ΚΥΡΙΑΖΗ ΕΦΗ"), οπότε η πρώτη λέξη δεν είναι πάντα το μικρό
+  // όνομα — «Χρόνια Πολλά, ΚΥΡΙΑΖΗ!» έμοιαζε λάθος/ξερό. Το πλήρες όνομα
+  // είναι πάντα σωστό, ό,τι σειρά κι αν έχει αποθηκευτεί.
+  const subject = `🎂 Χρόνια Πολλά, ${patientName}! Ένα δώρο σας περιμένει 🎁`;
+  const html = birthdayEmailHtml(patientName, expiresStr, bookingLink, brand);
   const headerLines = [
     `From: ${brand.name.replace(/[\r\n]/g, '')} <yourbeautyline@gmail.com>`,
     `To: ${toEmail}`,
