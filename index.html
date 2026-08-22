@@ -537,6 +537,26 @@ function findServiceMatch(appointments, afterDateStr, treatmentText) {
   }
   return null;
 }
+// Ίδια λογική ταιριάσματος με το findServiceMatch, αλλά για προϊόντα Homecare
+// ↔ πραγματικές πωλήσεις (product_sales) — ώστε το tab Consultation να δείχνει
+// ✓ Αγοράστηκε δίπλα σε κάθε προτεινόμενο προϊόν που όντως πωλήθηκε ΜΕΤΑ την
+// ημερομηνία αυτού του consultation.
+function findProductSaleMatch(productSales, afterDateStr, productText) {
+  const afterDate = new Date(afterDateStr);
+  const normProduct = normalizeGreek(productText);
+  const prodWords = normProduct.split(' ').filter(w=>w.length>=4);
+  if (!prodWords.length) return null;
+  const candidates = (productSales||[]).filter(s => s.created_at && new Date(s.created_at) > afterDate);
+  candidates.sort((a,b)=>new Date(a.created_at)-new Date(b.created_at)); // πιο κοντινή πώληση πρώτα
+  for (const s of candidates) {
+    const normName = normalizeGreek(s.product_name||'');
+    if (!normName) continue;
+    if (normName.includes(normProduct) || normProduct.includes(normName)) return s;
+    const overlap = prodWords.filter(w => normName.includes(w));
+    if (overlap.length >= Math.min(2, prodWords.length)) return s;
+  }
+  return null;
+}
 // Εξάγει τα βήματα (μία γραμμή = ένα βήμα) του IN-CLINIC μέρους ενός consultation
 // consent_text — ίδια κοκκομετρία/regex με το progress badge της καρτέλας ασθενή
 // (tab Consultation), ώστε ο αριθμός "X/Y έγιναν" να είναι ίδιος παντού στο CRM.
@@ -1084,6 +1104,10 @@ async function loadPatientDetail(id, tab) {
     const {data:p, error:pErr} = await sb.from('patients').select('*').eq('id',id).single();
     if (pErr) throw new Error('Ασθενής: '+pErr.message);
     const {data:a} = await sb.from('appointments').select('*').eq('patient_id',id).order('start_time',{ascending:true}).limit(500);
+    // Πωλήσεις καλλυντικών του ασθενή — για να δείχνει το tab Consultation ✓
+    // «Αγοράστηκε» δίπλα σε κάθε προτεινόμενο Homecare προϊόν που έχει όντως
+    // πωληθεί (βλ. findProductSaleMatch, ίδια λογική με τα in-clinic ραντεβού).
+    const {data:ps} = await sb.from('product_sales').select('*').eq('patient_id',id).order('created_at',{ascending:false});
     const {data:lf} = await sb.from('laser_forms').select('*').eq('patient_id',id).order('created_at',{ascending:false});
     // Συναίνεση Laser (γενική, ανεξάρτητη από συγκεκριμένη φόρμα) — για tab Συναινέσεις
     const {data:lc} = await sb.from('laser_consents').select('*').eq('patient_id',id).order('signed_at',{ascending:false}).limit(1);
@@ -1114,7 +1138,7 @@ async function loadPatientDetail(id, tab) {
       relationship_type: r.relationship_type,
       other: (r.patient_a && r.patient_a.id === id) ? r.patient_b : r.patient_a,
     })).filter(r => r.other);
-    S.patientDetail = {...p, appointments: a||[]};
+    S.patientDetail = {...p, appointments: a||[], productSales: ps||[]};
     S.laserForms = lf||[];
     S.patTab = tab || 'overview';
 
@@ -2678,9 +2702,21 @@ function renderPatientDetail() {
               const treatmentText = l.replace(/^[•\-]\s*/,'');
               return `<div style="padding-left:8px;margin-bottom:6px;line-height:1.9">• ${esc(treatmentText)}${inClinicStatusBadge(treatmentText)}</div>`;
             }).join('');
-          // Μορφοποίηση Homecare (χωρίς status — αφορά προϊόντα, όχι υπηρεσίες)
+          // Μορφοποίηση Homecare: κάθε προτεινόμενο προϊόν ελέγχεται αν έχει όντως
+          // πωληθεί (Πώληση Καλλυντικού) μετά την ημερομηνία του consultation —
+          // ίδιο μοτίβο ✓/ημερομηνία με τα in-clinic ραντεβού παραπάνω.
+          const homecareStatusBadge = (productText) => {
+            const match = findProductSaleMatch(p.productSales, signedAt, productText);
+            return match
+              ? `<span style="display:inline-flex;align-items:center;gap:5px;margin-left:8px;font-size:12px;font-weight:700;color:#0F6E56;background:#E1F5EE;padding:4px 12px;border-radius:12px;white-space:nowrap;vertical-align:middle"><span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:#0F6E56;color:#fff;font-size:12px;line-height:1;flex-shrink:0">✓</span>Αγοράστηκε ${new Date(match.created_at).toLocaleDateString('el-GR',{day:'2-digit',month:'2-digit',year:'numeric'})}</span>`
+              : '';
+          };
           const formatSteps = (raw) => raw.split('\n').map(l=>l.trim()).filter(Boolean)
-            .map(l => l.match(/^\d\)/) ? `<div style="font-weight:600;margin-top:6px">${esc(l)}</div>` : `<div style="padding-left:8px">• ${esc(l.replace(/^[•\-]\s*/,''))}</div>`)
+            .map(l => {
+              if (l.match(/^\d\)/)) return `<div style="font-weight:600;margin-top:6px">${esc(l)}</div>`;
+              const productText = l.replace(/^[•\-]\s*/,'');
+              return `<div style="padding-left:8px;margin-bottom:6px;line-height:1.9">• ${esc(productText)}${homecareStatusBadge(productText)}</div>`;
+            })
             .join('');
           const inClinic = inClinicRaw;
           const homecare = homecareRaw;
