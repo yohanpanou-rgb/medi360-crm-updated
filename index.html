@@ -537,6 +537,26 @@ function findServiceMatch(appointments, afterDateStr, treatmentText) {
   }
   return null;
 }
+// Ίδια λογική ταιριάσματος με το findServiceMatch, αλλά για προϊόντα Homecare
+// ↔ πραγματικές πωλήσεις (product_sales) — ώστε το tab Consultation να δείχνει
+// ✓ Αγοράστηκε δίπλα σε κάθε προτεινόμενο προϊόν που όντως πωλήθηκε ΜΕΤΑ την
+// ημερομηνία αυτού του consultation.
+function findProductSaleMatch(productSales, afterDateStr, productText) {
+  const afterDate = new Date(afterDateStr);
+  const normProduct = normalizeGreek(productText);
+  const prodWords = normProduct.split(' ').filter(w=>w.length>=4);
+  if (!prodWords.length) return null;
+  const candidates = (productSales||[]).filter(s => s.created_at && new Date(s.created_at) > afterDate);
+  candidates.sort((a,b)=>new Date(a.created_at)-new Date(b.created_at)); // πιο κοντινή πώληση πρώτα
+  for (const s of candidates) {
+    const normName = normalizeGreek(s.product_name||'');
+    if (!normName) continue;
+    if (normName.includes(normProduct) || normProduct.includes(normName)) return s;
+    const overlap = prodWords.filter(w => normName.includes(w));
+    if (overlap.length >= Math.min(2, prodWords.length)) return s;
+  }
+  return null;
+}
 // Εξάγει τα βήματα (μία γραμμή = ένα βήμα) του IN-CLINIC μέρους ενός consultation
 // consent_text — ίδια κοκκομετρία/regex με το progress badge της καρτέλας ασθενή
 // (tab Consultation), ώστε ο αριθμός "X/Y έγιναν" να είναι ίδιος παντού στο CRM.
@@ -1084,6 +1104,10 @@ async function loadPatientDetail(id, tab) {
     const {data:p, error:pErr} = await sb.from('patients').select('*').eq('id',id).single();
     if (pErr) throw new Error('Ασθενής: '+pErr.message);
     const {data:a} = await sb.from('appointments').select('*').eq('patient_id',id).order('start_time',{ascending:true}).limit(500);
+    // Πωλήσεις καλλυντικών του ασθενή — για να δείχνει το tab Consultation ✓
+    // «Αγοράστηκε» δίπλα σε κάθε προτεινόμενο Homecare προϊόν που έχει όντως
+    // πωληθεί (βλ. findProductSaleMatch, ίδια λογική με τα in-clinic ραντεβού).
+    const {data:ps} = await sb.from('product_sales').select('*').eq('patient_id',id).order('created_at',{ascending:false});
     const {data:lf} = await sb.from('laser_forms').select('*').eq('patient_id',id).order('created_at',{ascending:false});
     // Συναίνεση Laser (γενική, ανεξάρτητη από συγκεκριμένη φόρμα) — για tab Συναινέσεις
     const {data:lc} = await sb.from('laser_consents').select('*').eq('patient_id',id).order('signed_at',{ascending:false}).limit(1);
@@ -1114,7 +1138,7 @@ async function loadPatientDetail(id, tab) {
       relationship_type: r.relationship_type,
       other: (r.patient_a && r.patient_a.id === id) ? r.patient_b : r.patient_a,
     })).filter(r => r.other);
-    S.patientDetail = {...p, appointments: a||[]};
+    S.patientDetail = {...p, appointments: a||[], productSales: ps||[]};
     S.laserForms = lf||[];
     S.patTab = tab || 'overview';
 
@@ -2678,9 +2702,21 @@ function renderPatientDetail() {
               const treatmentText = l.replace(/^[•\-]\s*/,'');
               return `<div style="padding-left:8px;margin-bottom:6px;line-height:1.9">• ${esc(treatmentText)}${inClinicStatusBadge(treatmentText)}</div>`;
             }).join('');
-          // Μορφοποίηση Homecare (χωρίς status — αφορά προϊόντα, όχι υπηρεσίες)
+          // Μορφοποίηση Homecare: κάθε προτεινόμενο προϊόν ελέγχεται αν έχει όντως
+          // πωληθεί (Πώληση Καλλυντικού) μετά την ημερομηνία του consultation —
+          // ίδιο μοτίβο ✓/ημερομηνία με τα in-clinic ραντεβού παραπάνω.
+          const homecareStatusBadge = (productText) => {
+            const match = findProductSaleMatch(p.productSales, signedAt, productText);
+            return match
+              ? `<span style="display:inline-flex;align-items:center;gap:5px;margin-left:8px;font-size:12px;font-weight:700;color:#0F6E56;background:#E1F5EE;padding:4px 12px;border-radius:12px;white-space:nowrap;vertical-align:middle"><span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:#0F6E56;color:#fff;font-size:12px;line-height:1;flex-shrink:0">✓</span>Αγοράστηκε ${new Date(match.created_at).toLocaleDateString('el-GR',{day:'2-digit',month:'2-digit',year:'numeric'})}</span>`
+              : '';
+          };
           const formatSteps = (raw) => raw.split('\n').map(l=>l.trim()).filter(Boolean)
-            .map(l => l.match(/^\d\)/) ? `<div style="font-weight:600;margin-top:6px">${esc(l)}</div>` : `<div style="padding-left:8px">• ${esc(l.replace(/^[•\-]\s*/,''))}</div>`)
+            .map(l => {
+              if (l.match(/^\d\)/)) return `<div style="font-weight:600;margin-top:6px">${esc(l)}</div>`;
+              const productText = l.replace(/^[•\-]\s*/,'');
+              return `<div style="padding-left:8px;margin-bottom:6px;line-height:1.9">• ${esc(productText)}${homecareStatusBadge(productText)}</div>`;
+            })
             .join('');
           const inClinic = inClinicRaw;
           const homecare = homecareRaw;
@@ -4365,25 +4401,56 @@ function apptReceiptAreaHtml(a, canReceipt) {
 function bindApptReceiptButton(a, canReceipt) {
   const areaEl = document.getElementById('appt-receipt-area'); if (!areaEl) return;
   const btn = areaEl.querySelector('#appt-receipt-btn'); if (!btn) return;
-  btn.addEventListener('click', async () => {
-    const amountStr = prompt('Ποσό απόδειξης (€):', a.price ? String(a.price) : '');
-    if (amountStr===null) return;
-    const amount = parseFloat(String(amountStr).replace(',','.'));
-    if (isNaN(amount) || amount<0) { alert('Μη έγκυρο ποσό.'); return; }
-    const pmStr = prompt('Τρόπος πληρωμής — γράψε "μετρητά" ή "κάρτα":', 'μετρητά');
-    if (pmStr===null) return;
-    const payment_method = /καρτ/i.test(pmStr) ? 'card' : 'cash';
-    btn.textContent = 'Έκδοση...'; btn.disabled = true;
+  btn.addEventListener('click', () => openApptReceiptModal(a, canReceipt));
+}
+
+// Μικρό modal έκδοσης απόδειξης για ραντεβού — ποσό προσυμπληρωμένο από την
+// τιμή του ραντεβού (επεξεργάσιμο) + dropdown τρόπου πληρωμής, ίδιο σύνολο
+// επιλογών με το πακέτο (#pkg-payment-method) και την Πώληση Καλλυντικού
+// (#ps-payment-method) — Μετρητά / Κάρτα / Τραπεζική μεταφορά.
+function openApptReceiptModal(a, canReceipt) {
+  const old = document.getElementById('rcpt-overlay'); if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'rcpt-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9000;display:flex;align-items:center;justify-content:center;padding:12px';
+  ov.innerHTML = `
+    <div style="background:var(--white);border-radius:16px;max-width:380px;width:100%;padding:20px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div style="font-size:15px;font-weight:700">🧾 Έκδοση Απόδειξης</div>
+        <button onclick="document.getElementById('rcpt-overlay').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-2)">×</button>
+      </div>
+      <div class="form-group"><label class="form-label">Ποσό (€)</label>
+        <input class="form-control" type="number" step="0.01" min="0" id="rcpt-amount" value="${a.price?a.price:''}"/></div>
+      <div class="form-group"><label class="form-label">Τρόπος πληρωμής</label>
+        <select class="form-control" id="rcpt-payment-method">
+          <option value="cash">Μετρητά</option>
+          <option value="card">Κάρτα</option>
+          <option value="bank_transfer">Τραπεζική μεταφορά</option>
+        </select></div>
+      <div id="rcpt-result" style="font-size:12px;margin-bottom:8px"></div>
+      <button class="btn btn-primary" id="rcpt-submit" style="width:100%;justify-content:center">Έκδοση</button>
+    </div>`;
+  document.body.appendChild(ov);
+  document.getElementById('rcpt-submit').addEventListener('click', async () => {
+    const submitBtn = document.getElementById('rcpt-submit');
+    const result = document.getElementById('rcpt-result');
+    const amount = parseFloat(document.getElementById('rcpt-amount').value);
+    if (isNaN(amount) || amount < 0) { result.innerHTML = '<span style="color:var(--red)">Μη έγκυρο ποσό.</span>'; return; }
+    const payment_method = document.getElementById('rcpt-payment-method').value;
+    submitBtn.textContent = 'Έκδοση...'; submitBtn.disabled = true;
     try {
       const {data, error} = await sb.functions.invoke('issue-receipt', {body:{appointment_id:a.id, amount, payment_method}});
       if (error) throw new Error(await extractInvokeErrorMessage(error));
       if (data && data.error) throw new Error(data.error);
       Object.assign(a, {receipt_mark: data.receipt_mark||null, receipt_error:null, receipt_amount:amount, receipt_payment_method:payment_method});
+      ov.remove();
+      const areaEl = document.getElementById('appt-receipt-area');
+      if (areaEl) { areaEl.innerHTML = apptReceiptAreaHtml(a, canReceipt); bindApptReceiptButton(a, canReceipt); }
     } catch(e) {
       Object.assign(a, {receipt_error: e.message||String(e)});
+      result.innerHTML = '<span style="color:var(--red)">✗ '+esc(e.message||String(e))+'</span>';
+      submitBtn.textContent = 'Έκδοση'; submitBtn.disabled = false;
     }
-    areaEl.innerHTML = apptReceiptAreaHtml(a, canReceipt);
-    bindApptReceiptButton(a, canReceipt);
   });
 }
 
@@ -4445,6 +4512,7 @@ function renderProductSale() {
           <select class="form-control" id="ps-payment-method">
             <option value="cash">Μετρητά</option>
             <option value="card">Κάρτα</option>
+            <option value="bank_transfer">Τραπεζική μεταφορά</option>
           </select>
         </div>
         <button class="btn btn-primary" id="ps-submit" style="width:100%;justify-content:center">🧾 Έκδοση Απόδειξης</button>
@@ -4761,6 +4829,7 @@ function openPackageModal(opts) {
         <select class="form-control" id="pkg-payment-method" style="font-size:12px">
           <option value="cash">Μετρητά</option>
           <option value="card">Κάρτα</option>
+          <option value="bank_transfer">Τραπεζική μεταφορά</option>
         </select>
       </div>`:''}
       ${(forms&&forms.length)?`
