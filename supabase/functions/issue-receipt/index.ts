@@ -76,8 +76,20 @@ Deno.serve(async (req: Request) => {
 
     const body = await req.json().catch(() => null);
     const amount = typeof body?.amount === 'number' ? body.amount : parseFloat(body?.amount);
-    const paymentMethod = body?.payment_method === 'card' ? 'card' : 'cash';
+    const allowedPaymentMethods = ['cash', 'card', 'bank_transfer'];
+    const paymentMethod = allowedPaymentMethods.includes(body?.payment_method) ? body.payment_method : 'cash';
     if (isNaN(amount) || amount < 0) return json({ error: 'Μη έγκυρο ποσό' }, 400);
+
+    // Μετατρέπει ένα PostgREST select(...).single() αποτέλεσμα στην κατάλληλη
+    // απάντηση — ΞΕΧΩΡΙΖΕΙ "πραγματικά δεν βρέθηκε" (0 γραμμές, κωδικός
+    // PGRST116) από οποιοδήποτε άλλο σφάλμα βάσης (π.χ. στήλη που δεν υπάρχει
+    // ακόμα γιατί δεν έτρεξε το migration) — πριν αυτό το bug έδειχνε πάντα
+    // "δεν βρέθηκε" ό,τι κι αν πήγαινε στραβά, κρύβοντας το πραγματικό σφάλμα.
+    function selectErrorResponse(e: { code?: string; message?: string } | null, notFoundLabel: string) {
+      if (e && e.code === 'PGRST116') return json({ error: notFoundLabel }, 404);
+      if (e) return json({ error: 'Σφάλμα βάσης: ' + e.message }, 500);
+      return json({ error: notFoundLabel }, 404);
+    }
 
     // Ένα από τα τρία — ραντεβού, πακέτο, ή μεμονωμένη πώληση καλλυντικού.
     // Ίδια λογική και για τα τρία: SELECT (με receipt_mark), idempotency guard,
@@ -86,19 +98,19 @@ Deno.serve(async (req: Request) => {
     if (body?.appointment_id) {
       table = 'appointments'; entityId = body.appointment_id;
       const { data, error: e } = await supabaseSvc.from('appointments').select('id,clinic_id,receipt_mark').eq('id', entityId).single();
-      if (e || !data) return json({ error: 'Το ραντεβού δεν βρέθηκε' }, 404);
+      if (e || !data) return selectErrorResponse(e, 'Το ραντεβού δεν βρέθηκε');
       if (data.receipt_mark) return json({ error: `Έχει ήδη εκδοθεί απόδειξη (#${data.receipt_mark}) για αυτό το ραντεβού` }, 409);
       clinicId = data.clinic_id;
     } else if (body?.package_id) {
       table = 'patient_packages'; entityId = body.package_id;
       const { data, error: e } = await supabaseSvc.from('patient_packages').select('id,clinic_id,receipt_mark').eq('id', entityId).single();
-      if (e || !data) return json({ error: 'Το πακέτο δεν βρέθηκε' }, 404);
+      if (e || !data) return selectErrorResponse(e, 'Το πακέτο δεν βρέθηκε');
       if (data.receipt_mark) return json({ error: `Έχει ήδη εκδοθεί απόδειξη (#${data.receipt_mark}) για αυτό το πακέτο` }, 409);
       clinicId = data.clinic_id;
     } else if (body?.product_sale_id) {
       table = 'product_sales'; entityId = body.product_sale_id;
       const { data, error: e } = await supabaseSvc.from('product_sales').select('id,clinic_id,receipt_mark').eq('id', entityId).single();
-      if (e || !data) return json({ error: 'Η πώληση δεν βρέθηκε' }, 404);
+      if (e || !data) return selectErrorResponse(e, 'Η πώληση δεν βρέθηκε');
       if (data.receipt_mark) return json({ error: `Έχει ήδη εκδοθεί απόδειξη (#${data.receipt_mark}) για αυτή την πώληση` }, 409);
       clinicId = data.clinic_id;
     } else {
