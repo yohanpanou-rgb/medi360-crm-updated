@@ -11,6 +11,11 @@
 //    ειδοποίηση στο Dashboard ώστε η γραμματεία να τους καλέσει.
 // Κάθε πελάτης παίρνει ΕΝΑ δώρο ανά έτος (unique patient_id+year).
 //
+// Καλείται ΕΠΙΣΗΣ χειροκίνητα (κουμπί «📧 Αποστολή Email τώρα» στην καρτέλα
+// ασθενή, όταν channel='call' και μόλις διορθώθηκε το email) με
+// {patient_id: "..."} στο body — τότε ΔΕΝ ξαναφτιάχνει δώρο, στέλνει με τους
+// όρους του ήδη υπάρχοντος δώρου φέτος και μαρκάρει channel='email'.
+//
 // Deploy with:
 //   supabase functions deploy birthday-emails --no-verify-jwt
 // Required secrets:
@@ -21,7 +26,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'content-type, x-cron-secret',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret',
 };
 
 // Μέγιστη αξία της δωρεάν θεραπείας προσώπου για ΝΕΑ δώρα (από 06/08/2026: 60€).
@@ -120,20 +125,68 @@ function birthdayEmailHtml(name: string, expiresStr: string, bookingLink: string
 </body></html>`;
 }
 
+// Χτίζει και στέλνει το ΙΔΙΟ email γενεθλίων μέσω Gmail API, είτε από το
+// καθημερινό αυτόματο πέρασμα είτε από τη χειροκίνητη επαναποστολή σε
+// συγκεκριμένο ασθενή (π.χ. διορθώθηκε λάθος email μετά τα γενέθλιά του).
+async function sendGmailBirthdayEmail(
+  token: string, toEmail: string, patientName: string, expiresStr: string, bookingLink: string, brand: Brand,
+) {
+  const subject = `🎂 Χρόνια Πολλά, ${firstName(patientName)}! Ένα δώρο σας περιμένει 🎁`;
+  const html = birthdayEmailHtml(firstName(patientName), expiresStr, bookingLink, brand);
+  const headerLines = [
+    `From: ${brand.name.replace(/[\r\n]/g, '')} <yourbeautyline@gmail.com>`,
+    `To: ${toEmail}`,
+    `Subject: =?UTF-8?B?${b64utf8(subject)}?=`,
+    `MIME-Version: 1.0`,
+    `Content-Type: text/html; charset="UTF-8"`,
+    `Content-Transfer-Encoding: base64`,
+  ];
+  const message = headerLines.join('\r\n') + '\r\n\r\n' + b64utf8(html);
+  const raw = b64utf8(message).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const gmailRes = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ raw }),
+  });
+  const out = await gmailRes.json();
+  if (out.error) throw new Error(JSON.stringify(out.error));
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS });
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
 
   const secret = Deno.env.get('BIRTHDAY_CRON_SECRET');
-  if (secret && req.headers.get('x-cron-secret') !== secret) {
-    return json({ error: 'Unauthorized' }, 401);
+  const isCron = !!secret && req.headers.get('x-cron-secret') === secret;
+
+  const supabase = createClient(
+    Deno.env.get('SUPABASE_URL')!,
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+  );
+
+  // Χειροκίνητη κλήση (κουμπί «📧 Αποστολή Email τώρα» στην καρτέλα ασθενή) —
+  // ίδιο dual-auth pattern με τα υπόλοιπα automations: x-cron-secret ΓΙΑ το
+  // pg_cron, αλλιώς user JWT + έλεγχος ρόλου.
+  if (!isCron) {
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader) return json({ error: 'Missing Authorization header' }, 401);
+    const userClient = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_ANON_KEY')!,
+      { global: { headers: { Authorization: authHeader } } },
+    );
+    const { data: { user }, error: userErr } = await userClient.auth.getUser();
+    if (userErr || !user) return json({ error: 'Not authenticated' }, 401);
+    const { data: profile, error: profileErr } = await supabase
+      .from('profiles').select('role').eq('id', user.id).single();
+    if (profileErr || !profile) return json({ error: 'Profile not found' }, 403);
+    if (!['super_admin', 'clinic_admin', 'receptionist', 'therapist'].includes(profile.role)) {
+      return json({ error: 'Δεν έχεις δικαίωμα αποστολής' }, 403);
+    }
   }
 
   try {
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
-    );
+    const body = await req.json().catch(() => ({}));
 
     // select('*') αντί για ρητές στήλες: αν το booking_link δεν υπάρχει ως
     // στήλη (ή μπει αργότερα), το function δεν πρέπει να σκάει ολόκληρο.
@@ -149,6 +202,35 @@ Deno.serve(async (req: Request) => {
       logoUrl: (c.settings && c.settings.brand_logo_url) || '',
     };
 
+    // ── Χειροκίνητη επαναποστολή σε ΣΥΓΚΕΚΡΙΜΕΝΟ ασθενή ──
+    // Για όταν το δώρο καταγράφηκε channel='call' (π.χ. λάθος/κενό email τη
+    // μέρα των γενεθλίων) και μόλις διορθώθηκε το email στην καρτέλα του.
+    // ΔΕΝ ξαναφτιάχνει νέο δώρο/λήξη — στέλνει με τους ίδιους όρους
+    // (expires_at, gift_value) του ήδη υπάρχοντος δώρου φέτος.
+    if (body?.patient_id) {
+      const { data: p, error: pErr } = await supabase
+        .from('patients').select('id,full_name,email,gdpr_signed')
+        .eq('id', body.patient_id).eq('clinic_id', cid).single();
+      if (pErr || !p) return json({ error: 'Ο ασθενής δεν βρέθηκε' }, 404);
+      if (!p.email || !String(p.email).includes('@') || !p.gdpr_signed) {
+        return json({ error: 'Ο ασθενής δεν έχει έγκυρο email ή υπογεγραμμένο GDPR' }, 400);
+      }
+      const nowAthens = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Athens' }));
+      const { data: gift, error: giftErr } = await supabase
+        .from('birthday_gifts').select('*').eq('patient_id', p.id).eq('year', nowAthens.getFullYear()).single();
+      if (giftErr || !gift) return json({ error: 'Δεν βρέθηκε δώρο γενεθλίων φέτος για αυτόν τον ασθενή' }, 404);
+      const expiresStr = new Date(gift.expires_at + 'T00:00:00').toLocaleDateString('el-GR', { day: 'numeric', month: 'long', year: 'numeric' });
+      try {
+        const token = await getGmailAccessToken();
+        await sendGmailBirthdayEmail(token, p.email, p.full_name, expiresStr, bookingLink, brand);
+        await supabase.from('birthday_gifts').update({ channel: 'email' }).eq('id', gift.id);
+        return json({ ok: true, sent: 1 });
+      } catch (e) {
+        return json({ error: e instanceof Error ? e.message : String(e) }, 502);
+      }
+    }
+
+    // ── Αυτόματο καθημερινό πέρασμα (pg_cron) ──
     // Σημερινή ημερομηνία ΩΡΑΣ ΕΛΛΑΔΑΣ (το function τρέχει σε UTC)
     const nowAthens = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Athens' }));
     const todayMonth = nowAthens.getMonth();
@@ -187,25 +269,7 @@ Deno.serve(async (req: Request) => {
       if (canEmail) {
         try {
           if (!token) token = await getGmailAccessToken();
-          const subject = `🎂 Χρόνια Πολλά, ${firstName(p.full_name)}! Ένα δώρο σας περιμένει 🎁`;
-          const html = birthdayEmailHtml(firstName(p.full_name), expiresStr, bookingLink, brand);
-          const headerLines = [
-            `From: ${brand.name.replace(/[\r\n]/g, '')} <yourbeautyline@gmail.com>`,
-            `To: ${p.email}`,
-            `Subject: =?UTF-8?B?${b64utf8(subject)}?=`,
-            `MIME-Version: 1.0`,
-            `Content-Type: text/html; charset="UTF-8"`,
-            `Content-Transfer-Encoding: base64`,
-          ];
-          const message = headerLines.join('\r\n') + '\r\n\r\n' + b64utf8(html);
-          const raw = b64utf8(message).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-          const gmailRes = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
-            method: 'POST',
-            headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ raw }),
-          });
-          const out = await gmailRes.json();
-          if (out.error) throw new Error(JSON.stringify(out.error));
+          await sendGmailBirthdayEmail(token, p.email, p.full_name, expiresStr, bookingLink, brand);
           sent++;
         } catch (e) {
           // Αποτυχία αποστολής → καταγράφεται ως 'call' ώστε η γραμματεία να
