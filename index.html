@@ -931,6 +931,15 @@ async function loadPageData() {
     S.serviceConsentMap = (S.clinic&&S.clinic.settings&&S.clinic.settings.service_consent_groups)||{};
     S._consultServicesDraft = [...((S.clinic&&S.clinic.settings&&S.clinic.settings.consultation_services)||[])];
     S._consultProductsDraft = JSON.parse(JSON.stringify((S.clinic&&S.clinic.settings&&S.clinic.settings.consultation_products)||{cleaning:[],care:[],protection:[],body:[]}));
+    // Τιμές καλλυντικών — ΞΕΧΩΡΙΣΤΟ, εσωτερικό key→price map (όνομα προϊόντος →
+    // τιμή), για τη νέα σελίδα "Πώληση Καλλυντικού" ΜΟΝΟ. Σκόπιμα δεν αγγίζει
+    // το consultation_products/consultation flow παραπάνω — καμία τιμή δεν
+    // πρέπει ποτέ να εμφανιστεί στο έγγραφο/email που λαμβάνει ο πελάτης.
+    S._consultProductPricesDraft = JSON.parse(JSON.stringify((S.clinic&&S.clinic.settings&&S.clinic.settings.consultation_product_prices)||{}));
+  }
+  if (S.page==='product-sale') {
+    const {data} = await sb.from('product_sales').select('*, patients(full_name)').eq('clinic_id',cid).order('created_at',{ascending:false}).limit(20);
+    S.recentProductSales = data||[];
   }
   if (S.page==='reports') {
     if (!S.reportRange) {
@@ -1226,6 +1235,7 @@ function render() {
       S.page==='sms' ? renderSms() :
       S.page==='consents' ? renderConsents() :
       S.page==='consultations' ? renderConsultations() :
+      S.page==='product-sale' ? renderProductSale() :
       S.page==='reports' ? renderReports() :
       S.page==='staff-services' ? renderStaffServices() :
       S.page==='settings' ? renderSettings() :
@@ -1315,13 +1325,14 @@ function renderShell(content) {
     {page:'laser',icon:'⚡',label:'Laser Forms',roles:['super_admin','clinic_admin','therapist']},
     {page:'consultations',icon:'📋',label:'Consultation',roles:['super_admin','clinic_admin','therapist']},
     {page:'consents',icon:'✓',label:'Συναινέσεις',roles:['super_admin','clinic_admin','therapist']},
+    {page:'product-sale',icon:'🧴',label:'Πώληση Καλλυντικού',roles:['super_admin','clinic_admin','receptionist','therapist']},
     {page:'reports',icon:'▤',label:'Αναφορές',roles:['super_admin','clinic_admin']},
     {page:'staff-services',icon:'🗂',label:'Προσωπικό & Υπηρεσίες',roles:['super_admin','clinic_admin']},
     {page:'clinics',icon:'⊞',label:'Κλινικές',roles:['super_admin']},
     {page:'settings',icon:'⚙',label:'Ρυθμίσεις',roles:['super_admin','clinic_admin']},
   ].filter(n => n.roles.includes(role) && (isSuperAdmin() && !cid ? ['dashboard','clinics'].includes(n.page) : true));
 
-  const PAGE_TITLES = {dashboard:'Dashboard',patients:'Ασθενείς','patient-detail':'Ασθενής',appointments:'Ραντεβού',calendar:'Πρόγραμμα',pipeline:'Pipeline',clinics:'Κλινικές',sms:'SMS & Αυτοματισμοί',laser:'Laser Forms',consultations:'Consultation',consents:'Συναινέσεις',reports:'Αναφορές','staff-services':'Προσωπικό & Υπηρεσίες',settings:'Ρυθμίσεις'};
+  const PAGE_TITLES = {dashboard:'Dashboard',patients:'Ασθενείς','patient-detail':'Ασθενής',appointments:'Ραντεβού',calendar:'Πρόγραμμα',pipeline:'Pipeline',clinics:'Κλινικές',sms:'SMS & Αυτοματισμοί',laser:'Laser Forms',consultations:'Consultation',consents:'Συναινέσεις','product-sale':'Πώληση Καλλυντικού',reports:'Αναφορές','staff-services':'Προσωπικό & Υπηρεσίες',settings:'Ρυθμίσεις'};
 
   return `
   <div class="overlay ${S.sidebarOpen?'open':''}" id="overlay"></div>
@@ -4039,6 +4050,17 @@ function renderConsents() {
       const chipList = (items, removeAttr, cat) => (items&&items.length)
         ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">${items.map((v,i)=>`<span style="display:inline-flex;align-items:center;gap:6px;background:var(--surface-2);border-radius:20px;padding:5px 6px 5px 12px;font-size:12px">${esc(v)}<span style="cursor:pointer;color:var(--red);font-weight:700;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%" ${removeAttr}="${i}"${cat?` data-cat="${esc(cat)}"`:''}>×</span></span>`).join('')}</div>`
         : `<div style="font-size:12px;color:var(--text-2);margin-bottom:12px">Δεν έχει προστεθεί τίποτα ακόμα — χωρίς λίστα, η φόρμα Consultation θα δείχνει αυτόματα ό,τι έχει χρησιμοποιηθεί ξανά.</div>`;
+      // Ίδιο με το chipList, ΣΥΝ ένα πεδίο τιμής ανά προϊόν (μόνο εσωτερική
+      // χρήση — για την Πώληση Καλλυντικού· ΔΕΝ φαίνεται ποτέ στο consultation
+      // picker ή στο έγγραφο/email που λαμβάνει ο πελάτης).
+      const chipListWithPrice = (items, removeAttr, cat, prices) => (items&&items.length)
+        ? `<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">${items.map((v,i)=>`
+          <div style="display:flex;align-items:center;gap:8px;background:var(--surface-2);border-radius:10px;padding:6px 6px 6px 12px;font-size:12px">
+            <span style="flex:1">${esc(v)}</span>
+            <input type="number" step="0.01" min="0" class="consult-product-price" data-cat="${esc(cat)}" data-idx="${i}" value="${prices&&prices[v]!=null?prices[v]:''}" placeholder="τιμή €" style="width:80px;font-size:12px;padding:3px 6px"/>
+            <span style="cursor:pointer;color:var(--red);font-weight:700;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%" ${removeAttr}="${i}" data-cat="${esc(cat)}">×</span>
+          </div>`).join('')}</div>`
+        : `<div style="font-size:12px;color:var(--text-2);margin-bottom:12px">Δεν έχει προστεθεί τίποτα ακόμα — χωρίς λίστα, η φόρμα Consultation θα δείχνει αυτόματα ό,τι έχει χρησιμοποιηθεί ξανά.</div>`;
       const addRow = (inputId, btnAttr, placeholder) => `
         <div style="display:flex;gap:8px">
           <input class="form-control" id="${inputId}" placeholder="${esc(placeholder)}" style="max-width:320px"/>
@@ -4059,9 +4081,10 @@ function renderConsents() {
       <div class="card" style="margin-bottom:16px">
         <div style="padding:16px 20px;border-bottom:1px solid var(--border-2)">
           <div style="font-size:13px;font-weight:600;color:var(--navy)">${esc(label)}</div>
+          <div style="font-size:11px;color:var(--text-2);margin-top:2px">Η τιμή είναι μόνο για εσωτερική χρήση (Πώληση Καλλυντικού) — ο πελάτης δεν τη βλέπει ποτέ στο consultation.</div>
         </div>
         <div style="padding:16px 20px">
-          ${chipList((S._consultProductsDraft||{})[cat], 'data-remove-consult-product', cat)}
+          ${chipListWithPrice((S._consultProductsDraft||{})[cat], 'data-remove-consult-product', cat, S._consultProductPricesDraft)}
           ${addRow('new-consult-product-'+cat, `data-add-consult-product="${cat}"`, 'όνομα προϊόντος')}
         </div>
       </div>`).join('')}
@@ -4364,6 +4387,89 @@ function bindApptReceiptButton(a, canReceipt) {
   });
 }
 
+// Επίπεδη λίστα καλλυντικών από τον ήδη υπάρχοντα κατάλογο Consultation
+// (clinics.settings.consultation_products), με τιμή από το ξεχωριστό, καθαρά
+// εσωτερικό clinics.settings.consultation_product_prices — βλ. σχόλιο στο
+// loadPageData(). Χρησιμοποιείται ΜΟΝΟ από τη σελίδα Πώληση Καλλυντικού.
+function getProductCatalog() {
+  const cats = [['cleaning','Καθημερινός Καθαρισμός'],['care','Ενεργή Περιποίηση'],['protection','Προστασία'],['body','Περιποίηση Σώματος']];
+  const products = (S.clinic&&S.clinic.settings&&S.clinic.settings.consultation_products)||{};
+  const prices = (S.clinic&&S.clinic.settings&&S.clinic.settings.consultation_product_prices)||{};
+  const out = [];
+  cats.forEach(([cat,label]) => {
+    (products[cat]||[]).forEach(name => out.push({name, category:label, price: prices[name]!=null?prices[name]:null}));
+  });
+  return out;
+}
+
+// Ανεξάρτητη σελίδα πώλησης καλλυντικού — δεν απαιτεί συγκεκριμένο πελάτη
+// (περαστικός πελάτης επιτρέπεται, patient_id μένει null). Ίδιο 2-βημα μοτίβο
+// με τα υπόλοιπα (insert γραμμή → issue-receipt με το id της), απλά με
+// product_sale_id — βλ. supabase/functions/issue-receipt/index.ts.
+function renderProductSale() {
+  const cid = clinicId();
+  if (!cid) return '<div class="page"><div class="empty-state"><div class="empty-icon">🧴</div><div>Επίλεξε κλινική</div></div></div>';
+  const catalog = getProductCatalog();
+  const patient = S.productSalePatient;
+  const sales = S.recentProductSales||[];
+  return `
+  <div class="page">
+    <div class="page-header"><div><h1 class="page-title">Πώληση Καλλυντικού</h1><p class="page-sub">Έκδοση απόδειξης λιανικής για πώληση προϊόντος</p></div></div>
+    <div class="card" style="max-width:520px;margin-bottom:20px">
+      <div style="padding:16px 20px">
+        <div class="form-group">
+          <label class="form-label">Πελάτης (προαιρετικό)</label>
+          ${patient ? `
+          <div style="display:flex;align-items:center;gap:8px;background:var(--surface-2);border-radius:8px;padding:8px 12px">
+            <span style="flex:1;font-size:13px;font-weight:500">${esc(patient.full_name)}${patient.phone?' · '+esc(patient.phone):''}</span>
+            <span style="cursor:pointer;color:var(--red);font-size:12px" id="ps-clear-patient">✕ Αφαίρεση</span>
+          </div>` : `
+          <div style="position:relative">
+            <input class="form-control" id="ps-patient-search" placeholder="Αναζήτηση ασθενή (όνομα/τηλέφωνο) — ή άφησέ το κενό για περαστικό πελάτη" autocomplete="off"/>
+            <div id="ps-patient-results" style="display:none;position:absolute;z-index:20;background:var(--white);border:1px solid var(--border-2);border-radius:8px;width:100%;max-height:220px;overflow-y:auto;box-shadow:0 4px 14px rgba(0,0,0,.08)"></div>
+          </div>`}
+        </div>
+        <div class="form-group">
+          <label class="form-label">Προϊόν *</label>
+          <select class="form-control" id="ps-product">
+            <option value="">— Επίλεξε προϊόν —</option>
+            ${catalog.map((p,i)=>`<option value="${i}">${esc(p.category)}: ${esc(p.name)}${p.price!=null?' — '+euro(p.price):''}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">Ποσότητα</label><input class="form-control" type="number" id="ps-qty" value="1" min="1"/></div>
+          <div class="form-group"><label class="form-label">Ποσό (€)</label><input class="form-control" type="number" step="0.01" min="0" id="ps-amount" placeholder="0.00"/></div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Τρόπος πληρωμής</label>
+          <select class="form-control" id="ps-payment-method">
+            <option value="cash">Μετρητά</option>
+            <option value="card">Κάρτα</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" id="ps-submit" style="width:100%;justify-content:center">🧾 Έκδοση Απόδειξης</button>
+        <div id="ps-result" style="margin-top:10px;font-size:12px"></div>
+      </div>
+    </div>
+    <div class="card" style="max-width:640px">
+      <div class="card-header"><span class="card-title">Πρόσφατες Πωλήσεις</span></div>
+      <div style="padding:8px 0">
+        ${sales.length ? sales.map(s=>`
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 20px;border-bottom:1px solid var(--border-2);font-size:12px">
+          <div>
+            <div style="font-weight:500">${esc(s.product_name)}${s.quantity>1?' × '+s.quantity:''}</div>
+            <div style="color:var(--text-2)">${s.patients&&s.patients.full_name?esc(s.patients.full_name):'Περαστικός πελάτης'} · ${new Date(s.created_at).toLocaleDateString('el-GR')}</div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-weight:600">${euro(s.amount)}</div>
+            ${s.receipt_mark?`<div style="color:#0F6E56;font-size:11px">✓ #${esc(s.receipt_mark)}</div>`:s.receipt_error?`<div style="color:var(--red);font-size:11px">✗ εκκρεμεί</div>`:''}
+          </div>
+        </div>`).join('') : `<div class="empty-state"><div class="empty-icon">🧴</div><div>Καμία πώληση ακόμα</div></div>`}
+      </div>
+    </div>
+  </div>`;
+}
+
 // Ίδια σύμβαση εμφάνισης delta με το widget "Από πού μας βρήκαν" του Dashboard
 function reportDeltaLabel(diff, pct) {
   const color = diff>0?'#0F6E56':diff<0?'var(--red)':'var(--text-3)';
@@ -4646,6 +4752,17 @@ function openPackageModal(opts) {
         <div class="form-group" ${canSee(['super_admin','clinic_admin'])?'':'style="display:none"'}><label class="form-label">Τιμή πακέτου (€)</label><input class="form-control" type="number" id="pkg-price" placeholder="προαιρετικό"/></div>
       </div>
       <div class="form-group"><label class="form-label">Ημ/νία αγοράς</label><input class="form-control" type="date" id="pkg-date" value="${new Date().toISOString().slice(0,10)}"/></div>
+      ${canSee(['super_admin','clinic_admin'])?`
+      <div class="form-group" style="background:var(--surface);border-radius:10px;padding:10px 12px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:8px">
+          <input type="checkbox" id="pkg-issue-receipt" style="width:16px;height:16px"/>
+          <span style="font-size:12px;font-weight:600">🧾 Έκδοση απόδειξης για αυτό το πακέτο</span>
+        </label>
+        <select class="form-control" id="pkg-payment-method" style="font-size:12px">
+          <option value="cash">Μετρητά</option>
+          <option value="card">Κάρτα</option>
+        </select>
+      </div>`:''}
       ${(forms&&forms.length)?`
       <div class="form-group"><label class="form-label">Σύνδεση με Φόρμα Laser</label>
         <select class="form-control" id="pkg-laser-form">
@@ -4776,6 +4893,24 @@ async function savePackage(patientId) {
     body_parts: (()=>{ const parts = Array.from(document.querySelectorAll('.pkg-part:checked')).map(cb=>cb.value); return parts.length ? parts : null; })(),
   }).select('id').single();
   if (error) { alert('Σφάλμα: '+error.message); return; }
+  // Έκδοση απόδειξης για το πακέτο, αν επιλέχθηκε — ίδιο δίδυμο ID/ποσό/τρόπος
+  // πληρωμής με το issue-receipt των ραντεβού, απλά με package_id αντί για
+  // appointment_id (βλ. supabase/functions/issue-receipt/index.ts).
+  const issueRcpt = document.getElementById('pkg-issue-receipt');
+  if (issueRcpt && issueRcpt.checked && newPkg) {
+    const amount = parseFloat(document.getElementById('pkg-price').value)||0;
+    const payment_method = document.getElementById('pkg-payment-method').value||'cash';
+    if (amount > 0) {
+      try {
+        const {data:rd, error:rerr} = await sb.functions.invoke('issue-receipt', {body:{package_id:newPkg.id, amount, payment_method}});
+        if (rerr) throw new Error(await extractInvokeErrorMessage(rerr));
+        if (rd && rd.error) throw new Error(rd.error);
+        alert('✓ Απόδειξη: '+(rd&&rd.receipt_mark?('εκδόθηκε #'+rd.receipt_mark):'εκδόθηκε'));
+      } catch(e) { alert('✗ Η έκδοση απόδειξης απέτυχε: '+(e.message||e)); }
+    } else {
+      alert('Δεν εκδόθηκε απόδειξη — συμπλήρωσε τιμή πακέτου πάνω από 0€.');
+    }
+  }
   // Μετατροπή: τα τσεκαρισμένα υπάρχοντα ραντεβού συνδέονται με το νέο πακέτο
   // ώστε να μετρήσουν ως συνεδρίες του. Οι τιμές τους μένουν ως έχουν.
   const convIds = Array.from(document.querySelectorAll('.pkg-conv:checked')).map(cb=>cb.value);
@@ -7820,7 +7955,9 @@ function bindEvents() {
     el.addEventListener('click', () => {
       const cat = el.dataset.cat;
       const i = Number(el.dataset.removeConsultProduct);
+      const removedName = S._consultProductsDraft[cat][i];
       S._consultProductsDraft[cat].splice(i,1);
+      if (S._consultProductPricesDraft && removedName) delete S._consultProductPricesDraft[removedName];
       render();
     });
   });
@@ -7828,9 +7965,22 @@ function bindEvents() {
   if (_scl) _scl.addEventListener('click', async () => {
     const result = document.getElementById('save-consult-lists-result');
     _scl.textContent = 'Αποθήκευση...'; _scl.disabled = true;
+    // Διαβάζει τα πεδία τιμής (ένα ανά chip προϊόντος) στο ίδιο draft map
+    // πριν την αποθήκευση — key = όνομα προϊόντος, ώστε να μην εξαρτάται από
+    // τη σειρά/index του chip.
+    S._consultProductPricesDraft = S._consultProductPricesDraft||{};
+    document.querySelectorAll('.consult-product-price').forEach(inp => {
+      const cat = inp.dataset.cat, idx = Number(inp.dataset.idx);
+      const name = S._consultProductsDraft && S._consultProductsDraft[cat] && S._consultProductsDraft[cat][idx];
+      if (!name) return;
+      const v = parseFloat(inp.value);
+      if (!isNaN(v) && v >= 0) S._consultProductPricesDraft[name] = v;
+      else delete S._consultProductPricesDraft[name];
+    });
     const settings = Object.assign({}, (S.clinic&&S.clinic.settings)||{}, {
       consultation_services: S._consultServicesDraft||[],
-      consultation_products: S._consultProductsDraft||{cleaning:[],care:[],protection:[],body:[]}
+      consultation_products: S._consultProductsDraft||{cleaning:[],care:[],protection:[],body:[]},
+      consultation_product_prices: S._consultProductPricesDraft||{}
     });
     const {error} = await sb.from('clinics').update({settings}).eq('id', clinicId());
     _scl.textContent = 'Αποθήκευση Λιστών'; _scl.disabled = false;
@@ -7931,6 +8081,80 @@ function bindEvents() {
     } finally {
       _rse.textContent = '📧 Αποστολή με Email'; _rse.disabled = false;
     }
+  });
+
+  // ── Πώληση Καλλυντικού ──
+  const _psCatalog = getProductCatalog();
+  const _psProduct = document.getElementById('ps-product');
+  const _psQty = document.getElementById('ps-qty');
+  const _psAmount = document.getElementById('ps-amount');
+  const _psRecalc = () => {
+    if (!_psProduct || !_psAmount || _psProduct.value==='') return;
+    const p = _psCatalog[Number(_psProduct.value)];
+    if (!p || p.price==null) return;
+    const qty = parseFloat(_psQty.value)||1;
+    _psAmount.value = (p.price*qty).toFixed(2);
+  };
+  if (_psProduct) _psProduct.addEventListener('change', _psRecalc);
+  if (_psQty) _psQty.addEventListener('input', _psRecalc);
+
+  const _psClear = document.getElementById('ps-clear-patient');
+  if (_psClear) _psClear.addEventListener('click', () => { S.productSalePatient = null; render(); });
+
+  const _psSearch = document.getElementById('ps-patient-search');
+  if (_psSearch) {
+    let psTimer = null;
+    const showPsResults = async () => {
+      const q = _psSearch.value.trim().replace(/[,()]/g,' ');
+      const res = document.getElementById('ps-patient-results');
+      if (!res) return;
+      if (!q.length) { res.style.display='none'; return; }
+      const {data} = await sb.from('patients').select('id,full_name,phone').eq('clinic_id',clinicId())
+        .or(`full_name.ilike.%${q}%,phone.ilike.%${q}%`).order('full_name').limit(8);
+      res.innerHTML = (data||[]).map(pt=>`<div class="ps-pt-opt" style="padding:9px 12px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--border-2)" data-pid="${pt.id}">${esc(pt.full_name)} · ${esc(pt.phone||'')}</div>`).join('')
+        || `<div style="padding:9px 12px;font-size:12px;color:var(--text-3)">Κανένα αποτέλεσμα</div>`;
+      res.style.display = 'block';
+      res.querySelectorAll('.ps-pt-opt').forEach(el => {
+        el.onclick = () => {
+          const pt = (data||[]).find(x=>x.id===el.dataset.pid);
+          S.productSalePatient = pt||null;
+          render();
+        };
+      });
+    };
+    _psSearch.onfocus = showPsResults;
+    _psSearch.oninput = () => { clearTimeout(psTimer); psTimer = setTimeout(showPsResults, 200); };
+    document.addEventListener('click', (e) => {
+      const res = document.getElementById('ps-patient-results');
+      if (res && !e.target.closest('#ps-patient-search') && !e.target.closest('#ps-patient-results')) res.style.display='none';
+    });
+  }
+
+  const _psSubmit = document.getElementById('ps-submit');
+  if (_psSubmit) _psSubmit.addEventListener('click', async () => {
+    const result = document.getElementById('ps-result');
+    if (!_psProduct || _psProduct.value==='') { if(result) result.innerHTML='<span style="color:var(--red)">Επίλεξε προϊόν.</span>'; return; }
+    const p = _psCatalog[Number(_psProduct.value)];
+    const qty = parseFloat(_psQty.value)||1;
+    const amount = parseFloat(_psAmount.value);
+    if (isNaN(amount) || amount<0) { if(result) result.innerHTML='<span style="color:var(--red)">Μη έγκυρο ποσό.</span>'; return; }
+    const payment_method = document.getElementById('ps-payment-method').value||'cash';
+    _psSubmit.textContent = 'Έκδοση...'; _psSubmit.disabled = true;
+    try {
+      const {data:sale, error} = await sb.from('product_sales').insert({
+        clinic_id: clinicId(), patient_id: (S.productSalePatient&&S.productSalePatient.id)||null,
+        product_name: p.name, quantity: qty, unit_price: p.price!=null?p.price:null, amount, payment_method,
+      }).select('id').single();
+      if (error) throw new Error(error.message);
+      const {data:rd, error:rerr} = await sb.functions.invoke('issue-receipt', {body:{product_sale_id:sale.id, amount, payment_method}});
+      if (rerr) throw new Error(await extractInvokeErrorMessage(rerr));
+      if (rd && rd.error) throw new Error(rd.error);
+      if (result) result.innerHTML = '<span style="color:var(--green)">✓ Απόδειξη '+(rd&&rd.receipt_mark?('εκδόθηκε #'+esc(rd.receipt_mark)):'καταχωρήθηκε')+'</span>';
+    } catch(e) {
+      if (result) result.innerHTML = '<span style="color:var(--red)">✗ '+esc(e.message||String(e))+'</span>';
+    }
+    _psSubmit.textContent = '🧾 Έκδοση Απόδειξης'; _psSubmit.disabled = false;
+    await loadPageData(); render();
   });
 }
 
