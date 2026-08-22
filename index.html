@@ -2285,7 +2285,7 @@ function renderPatientDetail() {
         return `<div style="background:#FDF0F5;border:1.5px solid #C4618A;border-radius:12px;padding:10px 16px;margin-bottom:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
           <span style="font-size:18px">🎁</span>
           <div style="flex:1;min-width:200px;font-size:12.5px;color:#8A3B5E"><b>Δώρο γενεθλίων ενεργό έως ${new Date(g.expires_at+'T00:00:00').toLocaleDateString('el-GR')}</b> — Δωροεπιταγή ${g.gift_value||80}€ για θεραπεία προσώπου + 10% έκπτωση στα καλλυντικά${g.channel==='call'?' · <span style="color:#A32D2D;font-weight:700">δεν έχει email — ενημέρωσέ τον τηλεφωνικά!</span>':''}</div>
-          ${g.channel==='call'&&p.email&&p.gdpr_signed?`<button class="btn btn-sm" id="resend-birthday-email-btn" data-gift-id="${g.id}" style="background:#0344F2;color:#fff;font-weight:700">📧 Αποστολή Email τώρα</button>`:''}
+          ${p.email&&p.gdpr_signed?`<button class="btn btn-sm" id="resend-birthday-email-btn" data-gift-id="${g.id}" style="background:#0344F2;color:#fff;font-weight:700">📧 ${g.channel==='call'?'Αποστολή Email τώρα':'Επαναποστολή Email'}</button>`:''}
           <button class="btn btn-sm" onclick="redeemBirthdayGift('${g.id}')" style="background:#C4618A;color:#fff;font-weight:700">✓ Εξαργύρωση</button>
         </div>`;
       }
