@@ -8,8 +8,8 @@
 //  2. ΟΔΗΓΙΕΣ ΠΡΙΝ/ΜΕΤΑ: ραντεβού ΕΠΙΒΕΒΑΙΩΜΕΝΑ (confirmed) μελλοντικά που
 //     δεν έχουν πάρει οδηγίες στον τρέχοντα κύκλο → email με τις οδηγίες του
 //     Instruction Set της υπηρεσίας (πίνακες instruction_sets +
-//     service_instruction_map). Υπηρεσία χωρίς σετ → log 'no_set' (άκυρο noise
-//     δεν στέλνεται).
+//     service_instruction_map). Υπηρεσία χωρίς σετ → φεύγει ΚΑΙ ΤΟΤΕ email,
+//     απλό κλεισίματος ραντεβού χωρίς τμήματα πριν/μετά (όχι σιωπή).
 //
 // Idempotency: μοναδικό (appointment_id, automation_type, cycle) με
 // cycle = start_time — αλλαγή ώρας ραντεβού ξεκινά αυτόματα νέο κύκλο.
@@ -264,11 +264,15 @@ function instructionsEmailHtml(name: string, service: string, whenStr: string, s
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows}</table>
         </td></tr></table>`;
   };
+  // Υπηρεσία χωρίς Instruction Set (κανένα pre/post) → απλό email κλεισίματος
+  // ραντεβού, χωρίς την πλαισίωση «οδηγιών» που δεν υπάρχουν.
+  const hasInstructions = !!(pre || post);
+  const introTail = hasInstructions ? ' Για την καλύτερη προετοιμασία και φροντίδα σας:' : '';
   return shell(`
-      ${headerBand(brand, '📋', 'Οδηγίες για το ραντεβού σας')}
+      ${headerBand(brand, hasInstructions ? '📋' : '✅', hasInstructions ? 'Οδηγίες για το ραντεβού σας' : 'Το ραντεβού σας')}
       <tr><td style="padding:28px 30px;">
         <p style="font-size:15px;line-height:1.7;color:#333333;-webkit-text-fill-color:#333333;margin:0 0 14px;">Αγαπητή/έ κε/κα <b>${esc(name)}</b>,</p>
-        <p style="font-size:14.5px;line-height:1.7;color:#333333;-webkit-text-fill-color:#333333;margin:0 0 6px;">Το ραντεβού σας για <b>${esc(service)}</b> (${esc(whenStr)}) ${statusVerb}. Για την καλύτερη προετοιμασία και φροντίδα σας:</p>
+        <p style="font-size:14.5px;line-height:1.7;color:#333333;-webkit-text-fill-color:#333333;margin:0 0 6px;">Το ραντεβού σας για <b>${esc(service)}</b> (${esc(whenStr)}) ${statusVerb}.${introTail}</p>
         ${block('🌿 Πριν από τη θεραπεία', pre, '#0F6E56', '#E1F5EE')}
         ${block('💛 Μετά τη θεραπεία', post, '#854F0B', '#FAEEDA')}
         ${calBtn}
@@ -384,18 +388,21 @@ Deno.serve(async (req: Request) => {
       }
     };
 
+    // Υπηρεσία χωρίς Instruction Set: στέλνεται ΚΑΙ ΤΟΤΕ email, απλό
+    // κλεισίματος ραντεβού χωρίς τμήματα πριν/μετά (βλ. instructionsEmailHtml) —
+    // ο πελάτης δεν πρέπει να μένει χωρίς καμία ενημέρωση επειδή λείπει σετ.
     const sendInstructions = async (a: Appt, channel = 'email') => {
       const set = setForService(a.service_name || '');
-      if (!set) { await log(a, 'instructions', channel, 'no_set'); results.no_set++; return; }
       const email = a.patients && a.patients.email;
-      if (!email || !String(email).includes('@')) { await log(a, 'instructions', channel, 'no_email', { metadata: { instruction_set: set.name } }); results.no_email++; return; }
+      if (!email || !String(email).includes('@')) { await log(a, 'instructions', channel, 'no_email', set ? { metadata: { instruction_set: set.name } } : undefined); results.no_email++; return; }
       const insTs = Math.floor(new Date(a.start_time).getTime() / 1000);
       const insIcsUrl = `${CONFIRM_URL}?id=${a.id}&ts=${insTs}&ics=1`;
       const { gcal, outlook, ics } = buildCalendarBits([a], clinicAddress, brand);
-      const html = instructionsEmailHtml((a.patients && a.patients.full_name) || '', a.service_name || '', athensDT(a.start_time), a.status, set.pre_instructions || '', set.post_instructions || '', calendarButtonHtml(gcal, outlook, insIcsUrl), brand);
+      const html = instructionsEmailHtml((a.patients && a.patients.full_name) || '', a.service_name || '', athensDT(a.start_time), a.status, (set && set.pre_instructions) || '', (set && set.post_instructions) || '', calendarButtonHtml(gcal, outlook, insIcsUrl), brand);
+      const subject = set ? '📋 Οδηγίες για το ραντεβού σας — ' + brand.name : '✅ Το ραντεβού σας — ' + brand.name;
       try {
-        const msgId = await sendEmail(await gmail(), String(email), '📋 Οδηγίες για το ραντεβού σας — ' + brand.name, html, ics, brand.name);
-        await log(a, 'instructions', channel, 'sent', { metadata: { gmail_id: msgId, instruction_set: set.name } });
+        const msgId = await sendEmail(await gmail(), String(email), subject, html, ics, brand.name);
+        await log(a, 'instructions', channel, 'sent', { metadata: { gmail_id: msgId, instruction_set: set ? set.name : null } });
         results.instructions++;
       } catch (e) {
         await log(a, 'instructions', channel, 'failed', { error: e instanceof Error ? e.message : String(e) });
