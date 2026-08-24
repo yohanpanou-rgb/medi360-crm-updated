@@ -10353,7 +10353,14 @@ async function openEditPatientModal() {
           </select>
         </div>
         <div class="form-group" style="grid-column:1/-1"><label class="form-label">Πόλη / Περιοχή</label>${cityFieldHtml('ep', p.city, canonicalCities)}</div>
-        <div class="form-group" style="grid-column:1/-1"><label class="form-label">Πηγή (πού μας βρήκε)</label><input class="form-control" id="ep-source" value="${esc(p.source||'')}"/></div>
+        <div class="form-group" style="grid-column:1/-1"><label class="form-label">Πηγή (πού μας βρήκε)</label>
+          <select class="form-control" id="ep-source">
+            <option value="" ${!p.source?'selected':''}>—</option>
+            ${HISTORY_FORM_SOURCES.map(s=>`<option value="${esc(s)}" ${p.source===s?'selected':''}>${esc(s)}</option>`).join('')}
+            <option value="__other__" ${p.source && !HISTORY_FORM_SOURCES.includes(p.source)?'selected':''}>Άλλο</option>
+          </select>
+          <input class="form-control" id="ep-source-other" placeholder="Προσδιορίστε..." style="margin-top:6px;display:${p.source && !HISTORY_FORM_SOURCES.includes(p.source)?'block':'none'}" value="${esc(p.source && !HISTORY_FORM_SOURCES.includes(p.source)?p.source:'')}"/>
+        </div>
         <div class="form-group" style="grid-column:1/-1">
           <label class="form-label">Κατάσταση</label>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -10372,12 +10379,17 @@ async function openEditPatientModal() {
     </div>`;
   document.body.appendChild(ov);
   wireCityField('ep');
+  document.getElementById('ep-source').addEventListener('change', (e) => {
+    document.getElementById('ep-source-other').style.display = e.target.value==='__other__' ? 'block' : 'none';
+  });
 
   document.getElementById('ep-save').addEventListener('click', async () => {
     const name = document.getElementById('ep-name').value.trim();
     const phone = document.getElementById('ep-phone').value.trim();
     if (!name) { alert('Το ονοματεπώνυμο είναι υποχρεωτικό.'); return; }
     const statusEl = document.querySelector('input[name="ep-status"]:checked');
+    const sourceSel = document.getElementById('ep-source').value;
+    const source = sourceSel==='__other__' ? document.getElementById('ep-source-other').value.trim() : sourceSel;
     const patch = {
       full_name: normalizePatientName(name),
       phone: phone,
@@ -10385,7 +10397,7 @@ async function openEditPatientModal() {
       dob: document.getElementById('ep-dob').value || null,
       gender: document.getElementById('ep-gender').value || null,
       city: getCityFieldValue('ep') || null,
-      source: document.getElementById('ep-source').value.trim() || null,
+      source: source || null,
       status: statusEl ? statusEl.value : p.status,
       notes: document.getElementById('ep-notes').value.trim() || null,
     };
