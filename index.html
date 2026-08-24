@@ -10353,6 +10353,7 @@ async function openEditPatientModal() {
           </select>
         </div>
         <div class="form-group" style="grid-column:1/-1"><label class="form-label">Πόλη / Περιοχή</label>${cityFieldHtml('ep', p.city, canonicalCities)}</div>
+        <div class="form-group" style="grid-column:1/-1"><label class="form-label">Πηγή (πού μας βρήκε)</label><input class="form-control" id="ep-source" value="${esc(p.source||'')}"/></div>
         <div class="form-group" style="grid-column:1/-1">
           <label class="form-label">Κατάσταση</label>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -10384,6 +10385,7 @@ async function openEditPatientModal() {
       dob: document.getElementById('ep-dob').value || null,
       gender: document.getElementById('ep-gender').value || null,
       city: getCityFieldValue('ep') || null,
+      source: document.getElementById('ep-source').value.trim() || null,
       status: statusEl ? statusEl.value : p.status,
       notes: document.getElementById('ep-notes').value.trim() || null,
     };
