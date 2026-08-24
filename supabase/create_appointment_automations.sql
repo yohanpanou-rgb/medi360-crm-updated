@@ -56,11 +56,21 @@ create unique index if not exists communication_log_once
   on public.communication_log(appointment_id, automation_type, cycle)
   where status = 'sent';
 
--- 4. Καθημερινός/ωριαίος έλεγχος: ποια ΚΛΕΙΣΜΕΝΑ μπαίνουν στο 48ωρο →
+-- 4. Έλεγχος κάθε 15 λεπτά: ποια ΚΛΕΙΣΜΕΝΑ μπαίνουν στο 48ωρο →
 --    αίτημα επιβεβαίωσης · ποια ΕΠΙΒΕΒΑΙΩΜΕΝΑ δεν έχουν πάρει οδηγίες → οδηγίες.
+-- Πριν έτρεχε 1 φορά την ώρα (στο :15) — ένα ραντεβού λίγο μετά το :15
+-- περίμενε έως ~1 ώρα για το email κράτησης. Τώρα τρέχει κάθε 15 λεπτά,
+-- ίδια συχνότητα με το Booking247 sync.
+--
+-- Αν το job υπάρχει ΗΔΗ (πρώτη εγκατάσταση έγινε παλιότερα) και θέλεις ΜΟΝΟ
+-- να αλλάξεις τη συχνότητα ΧΩΡΙΣ να ξαναγράψεις το μυστικό (x-cron-secret),
+-- τρέξε ΜΟΝΟ αυτή τη γραμμή αντί για το cron.schedule παρακάτω:
+--   select cron.alter_job(job_id := (select jobid from cron.job where jobname='appointment-automations-hourly'), schedule := '*/15 * * * *');
+-- Το cron.schedule παρακάτω χρειάζεται μόνο για ΝΕΑ εγκατάσταση από το μηδέν.
+select cron.unschedule('appointment-automations-hourly') where exists (select 1 from cron.job where jobname='appointment-automations-hourly');
 select cron.schedule(
   'appointment-automations-hourly',
-  '15 * * * *',
+  '*/15 * * * *',
   $$
   select net.http_post(
     url := 'https://kfidxwqgsaisbdgucsok.supabase.co/functions/v1/appointment-automations',
