@@ -116,16 +116,6 @@ function normalizeGreek(s: string): string {
   return (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
 }
 
-// Πολλά ονόματα είναι αποθηκευμένα ΚΕΦΑΛΑΙΑ χωρίς τόνους (παλιά δεδομένα) —
-// αν τα ξαναγράφαμε σε πεζά/κεφαλαίο-αρχικό δεν μπορούμε να «εφεύρουμε» τον
-// τόνο που λείπει, βγαίνει λάθος γραμμένη λέξη. Δείχνουμε το όνομα όπως
-// ακριβώς είναι αποθηκευμένο. Επίσης η «πρώτη λέξη» δεν είναι πάντα μικρό
-// όνομα (μερικοί πελάτες είναι αποθηκευμένοι Επώνυμο πρώτα) — το «κε/κα»
-// πριν το όνομα στα emails καλύπτει και τις δύο περιπτώσεις.
-function firstName(full: string): string {
-  return (full || '').trim().split(/\s+/)[0] || '';
-}
-
 function athensDT(iso: string): string {
   const d = new Date(iso);
   return d.toLocaleDateString('el-GR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Athens' })
@@ -383,7 +373,7 @@ Deno.serve(async (req: Request) => {
       const cancelLink = `${CONFIRM_URL}?id=${first.id}&ts=${ts}&cancel=1`;
       const icsUrl = `${CONFIRM_URL}?id=${first.id}&ts=${ts}&ics=1`;
       const { gcal, outlook, ics } = buildCalendarBits(sorted, clinicAddress, brand);
-      const html = confirmationEmailHtml(firstName((first.patients && first.patients.full_name) || ''), sorted, link, cancelLink, calendarButtonHtml(gcal, outlook, icsUrl), brand);
+      const html = confirmationEmailHtml((first.patients && first.patients.full_name) || '', sorted, link, cancelLink, calendarButtonHtml(gcal, outlook, icsUrl), brand);
       try {
         const msgId = await sendEmail(await gmail(), String(email), (sorted.length > 1 ? '📅 Επιβεβαιώστε τα ραντεβού σας — ' : '📅 Επιβεβαιώστε το ραντεβού σας — ') + brand.name, html, ics, brand.name);
         for (const a of pending) await log(a, 'confirmation_request', channel, 'sent', { metadata: { gmail_id: msgId, grouped: sorted.length } });
@@ -402,7 +392,7 @@ Deno.serve(async (req: Request) => {
       const insTs = Math.floor(new Date(a.start_time).getTime() / 1000);
       const insIcsUrl = `${CONFIRM_URL}?id=${a.id}&ts=${insTs}&ics=1`;
       const { gcal, outlook, ics } = buildCalendarBits([a], clinicAddress, brand);
-      const html = instructionsEmailHtml(firstName((a.patients && a.patients.full_name) || ''), a.service_name || '', athensDT(a.start_time), a.status, set.pre_instructions || '', set.post_instructions || '', calendarButtonHtml(gcal, outlook, insIcsUrl), brand);
+      const html = instructionsEmailHtml((a.patients && a.patients.full_name) || '', a.service_name || '', athensDT(a.start_time), a.status, set.pre_instructions || '', set.post_instructions || '', calendarButtonHtml(gcal, outlook, insIcsUrl), brand);
       try {
         const msgId = await sendEmail(await gmail(), String(email), '📋 Οδηγίες για το ραντεβού σας — ' + brand.name, html, ics, brand.name);
         await log(a, 'instructions', channel, 'sent', { metadata: { gmail_id: msgId, instruction_set: set.name } });
