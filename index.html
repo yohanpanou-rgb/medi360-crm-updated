@@ -452,6 +452,32 @@ function apptStaffName(a, staffList) {
   return m2 ? m2[1].trim() : null;
 }
 
+// Ωράριο εργασίας ενός μέλους προσωπικού για συγκεκριμένη ημερομηνία, από
+// staff_schedules (εβδομαδιαίο) + staff_schedule_overrides (εξαίρεση για
+// συγκεκριμένη ημέρα, έχει προτεραιότητα). null = δεν έχει οριστεί καθόλου
+// ωράριο για αυτό το άτομο/ημέρα — τότε δεν δείχνουμε ούτε σκίαση ούτε προειδοποίηση.
+function staffWorkWindow(staffFullName, dateObj, scheduleRows, overrideRows, staffList) {
+  const st = (staffList||[]).find(s => sameStaffName(s.full_name, staffFullName));
+  if (!st) return null;
+  const dateStr = dateObj.getFullYear()+'-'+String(dateObj.getMonth()+1).padStart(2,'0')+'-'+String(dateObj.getDate()).padStart(2,'0');
+  const ovr = (overrideRows||[]).find(o => o.staff_id===st.id && o.date===dateStr);
+  const row = ovr || (scheduleRows||[]).find(r => r.staff_id===st.id && r.day_of_week===dateObj.getDay());
+  if (!row) return null;
+  if (!row.is_working) return {working:false};
+  return {working:true, start:row.start_time, end:row.end_time};
+}
+// Αν το ραντεβού (ώρα έναρξης + διάρκεια) πέφτει εκτός του προγραμματισμένου
+// ωραρίου του ατόμου εκείνη την ημέρα — false όταν δεν υπάρχει καθόλου ωράριο ορισμένο.
+function isOutsideStaffHours(staffFullName, startDate, durationMinutes, scheduleRows, overrideRows, staffList) {
+  const ww = staffWorkWindow(staffFullName, startDate, scheduleRows, overrideRows, staffList);
+  if (!ww) return false;
+  if (!ww.working) return true;
+  const t2m = (t) => { const [h,m] = String(t).split(':').map(Number); return (h||0)*60+(m||0); };
+  const startMin = startDate.getHours()*60 + startDate.getMinutes();
+  const endMin = startMin + (durationMinutes||60);
+  return startMin < t2m(ww.start) || endMin > t2m(ww.end);
+}
+
 // Η ομάδα συναίνεσης είναι σχετική με τον ασθενή μόνο αν έχει κλεισμένο (μη ακυρωμένο)
 // ή ολοκληρωμένο ραντεβού σε αυτή την κατηγορία υπηρεσίας — αλλιώς δεν έχει νόημα
 // να δείχνουμε προειδοποίηση για συναίνεση υπηρεσίας που ποτέ δεν έκανε/έκλεισε.
@@ -864,6 +890,12 @@ async function loadPageData() {
     // ΔΕΝ μπλοκάρει τη δημιουργία ραντεβού.
     const {data:toffRows} = await sb.from('staff_time_off').select('staff_id,start_date,end_date').eq('clinic_id',cid);
     S.staffTimeOffAll = toffRows||[];
+    // Εβδομαδιαίο ωράριο + ημερήσιες εξαιρέσεις προσωπικού — για να «αχνώσουν»
+    // οι ώρες εκτός ωραρίου στο πλέγμα και για προειδοποίηση σε ραντεβού εκτός ωραρίου.
+    const {data:schedRows} = await sb.from('staff_schedules').select('*').eq('clinic_id',cid);
+    S.calStaffSchedules = schedRows||[];
+    const {data:ovrRows} = await sb.from('staff_schedule_overrides').select('*').eq('clinic_id',cid);
+    S.calScheduleOverrides = ovrRows||[];
   }
   if (S.page==='dashboard' || S.page==='appointments') {
     // Ίδιο set συναινέσεων, χρειάζεται και το Dashboard (KPI) και το Ραντεβού (badges ανά ραντεβού)
@@ -2999,10 +3031,10 @@ function renderCalendar() {
   weekStart.setDate(calDate.getDate() + (calDay===0?-6:1-calDay)); // Monday
 
   // Clinic hours (configurable per clinic, default 09:00-20:00)
-  // Ωράριο ημερολογίου: πάντα τουλάχιστον 08:00–21:00 (καλύπτει και 20:30 ραντεβού).
-  // Αν οι ρυθμίσεις κλινικής ορίζουν ευρύτερο ωράριο, επεκτείνεται αντίστοιχα.
-  const startHour = Math.min(8, (S.clinic&&S.clinic.settings&&S.clinic.settings.start_hour) || 8);
-  const endHour = Math.max(20, (S.clinic&&S.clinic.settings&&S.clinic.settings.end_hour) || 20);
+  // Ωράριο ημερολογίου: πάντα τουλάχιστον 09:00–20:00. Αν οι ρυθμίσεις κλινικής
+  // ορίζουν ευρύτερο ωράριο (νωρίτερο άνοιγμα/αργότερο κλείσιμο), επεκτείνεται αντίστοιχα.
+  const startHour = Math.min(9, (S.clinic&&S.clinic.settings&&S.clinic.settings.start_hour) || 9);
+  const endHour = Math.max(19, ((S.clinic&&S.clinic.settings&&S.clinic.settings.end_hour) || 20) - 1);
   const hours = [];
   for (let h = startHour; h <= endHour; h++) hours.push(h);
 
@@ -3168,6 +3200,13 @@ function renderCalendar() {
             })
           : dayAppts.filter(a=>roomMap[a.id]===col.id);
         const overlapPack = packOverlaps(colAppts);
+        // Ωράριο εργασίας αυτού του ατόμου σήμερα (μόνο σε στήλες θεραπευτή) —
+        // χρησιμοποιείται για να «αχνώσουν» οπτικά οι ώρες εκτός ωραρίου.
+        const colWW = calMode==='therapist' && col.id!=='unassigned'
+          ? staffWorkWindow(col.full_name, calDate, S.calStaffSchedules, S.calScheduleOverrides, staff)
+          : null;
+        const t2h = (t) => { const [hh,mm] = String(t).split(':').map(Number); return hh+(mm||0)/60; };
+        const hourIsOutside = (h) => colWW && (!colWW.working || (h+1<=t2h(colWW.start) || h>=t2h(colWW.end)));
 
         return `<div style="flex:1;min-width:160px;border-right:1px solid var(--border-2);position:relative" ${calMode==='therapist'&&col.id!=='unassigned'?`data-drop-col="${esc(col.full_name)}"`:''}>
           <!-- Header -->
@@ -3181,7 +3220,7 @@ function renderCalendar() {
           <!-- Hour grid -->
           <div style="position:relative;height:${hours.length*HOUR_H}px" data-hour-grid="${startHour}" data-ppm="${PX_PER_MIN}" data-total-min="${hours.length*60}">
             ${hours.map(h=>`
-              <div style="position:absolute;left:0;right:0;top:${(h-startHour)*HOUR_H}px;height:${HOUR_H}px;border-bottom:1px solid var(--border-2)">
+              <div style="position:absolute;left:0;right:0;top:${(h-startHour)*HOUR_H}px;height:${HOUR_H}px;border-bottom:1px solid var(--border-2);${hourIsOutside(h)?'background:rgba(148,163,184,0.16)':''}">
                 <div style="position:absolute;left:0;right:0;top:50%;height:1px;background:rgba(0,0,0,0.03)"></div>
               </div>`).join('')}
             <!-- Appointments -->
@@ -5033,12 +5072,15 @@ function gotoCalendarDay(startTime) {
 async function openNewApptAt(datetimeLocal, therapistName) {
   if (!S._apptRefsLoaded) {
     const cid = clinicId();
-    const [{data:svc},{data:staffRows},{data:ss}] = await Promise.all([
+    const [{data:svc},{data:staffRows},{data:ss},{data:schedRows},{data:ovrRows}] = await Promise.all([
       sb.from('services').select('*').eq('clinic_id',cid).eq('active',true).order('category').order('name'),
       sb.from('profiles').select('*').eq('clinic_id',cid).in('role',['therapist','clinic_admin']).order('full_name'),
       sb.from('staff_services').select('*').eq('clinic_id',cid),
+      sb.from('staff_schedules').select('*').eq('clinic_id',cid),
+      sb.from('staff_schedule_overrides').select('*').eq('clinic_id',cid),
     ]);
     S.apptServicesCatalog = svc||[]; S.apptStaffList = staffRows||[]; S.apptStaffServices = ss||[];
+    S.apptStaffSchedules = schedRows||[]; S.apptScheduleOverrides = ovrRows||[];
     S._apptRefsLoaded = true;
   }
   S.modal = 'new-appt'; S.modalData = {}; render();
@@ -6510,12 +6552,15 @@ function bindEvents() {
       const modal = el.dataset.modal;
       if (modal==='new-appt' && !S._apptRefsLoaded) {
         const cid = clinicId();
-        const [{data:svc}, {data:staffRows}, {data:ss}] = await Promise.all([
+        const [{data:svc}, {data:staffRows}, {data:ss}, {data:schedRows}, {data:ovrRows}] = await Promise.all([
           sb.from('services').select('*').eq('clinic_id',cid).eq('active',true).order('category').order('name'),
           sb.from('profiles').select('*').eq('clinic_id',cid).in('role',['therapist','clinic_admin']).order('full_name'),
           sb.from('staff_services').select('*').eq('clinic_id',cid),
+          sb.from('staff_schedules').select('*').eq('clinic_id',cid),
+          sb.from('staff_schedule_overrides').select('*').eq('clinic_id',cid),
         ]);
         S.apptServicesCatalog = svc||[]; S.apptStaffList = staffRows||[]; S.apptStaffServices = ss||[];
+        S.apptStaffSchedules = schedRows||[]; S.apptScheduleOverrides = ovrRows||[];
         S._apptRefsLoaded = true;
       }
       S.modal=modal; S.modalData = el.dataset.clinicId ? {clinicId: el.dataset.clinicId} : {}; render();
@@ -6950,6 +6995,13 @@ function bindEvents() {
     // επιβεβαίωσης· εντός 48h → ΕΠΙΒΕΒΑΙΩΜΕΝΟ). Ολοκληρωμένα/ακυρωμένα ανέγγιχτα.
     if (upd.start_time && (appt.status==='booked' || appt.status==='confirmed')) {
       upd.status = (new Date(upd.start_time).getTime() - Date.now() > 48*3600*1000) ? 'booked' : 'confirmed';
+    }
+    // Προειδοποίηση (όχι μπλοκάρισμα) αν η νέα ώρα/άτομο πέφτει εκτός του
+    // προγραμματισμένου ωραρίου εργασίας — μόνο όταν υπάρχει ρητά ορισμένο ωράριο.
+    const dropStart = upd.start_time ? new Date(upd.start_time) : new Date(appt.start_time);
+    if (isOutsideStaffHours(newTherapist, dropStart, appt.duration_minutes||60, S.calStaffSchedules, S.calScheduleOverrides, S.staff)) {
+      const when = dropStart.toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'});
+      if (!confirm(`⚠ Η ${when} είναι εκτός ωραρίου εργασίας της/του ${newTherapist} αυτή την ημέρα.\n\nΝα μεταφερθεί παρόλα αυτά;`)) return;
     }
     const {error} = await sb.from('appointments').update(upd).eq('id', aid);
     if (error) { alert('Σφάλμα μεταφοράς: '+error.message); return; }
@@ -8443,6 +8495,14 @@ function bindModalEvents() {
         const therName = ((S.apptStaffList||[]).find(s=>s.id===newTherId)||{}).full_name || 'Ο θεραπευτής';
         const when = new Date(clash.start_time).toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'});
         if (!confirm(`⚠ ${therName} έχει ήδη ραντεβού στις ${when} (${clash.patients&&clash.patients.full_name||'—'} · ${clash.service_name||''}).\n\nΝα κλειστεί παρόλα αυτά;`)) return;
+      }
+      // Προειδοποίηση (όχι μπλοκάρισμα) αν η ώρα πέφτει εκτός του προγραμματισμένου
+      // ωραρίου εργασίας του ατόμου — μόνο όταν υπάρχει ρητά ορισμένο ωράριο.
+      const therName2 = ((S.apptStaffList||[]).find(s=>s.id===newTherId)||{}).full_name;
+      const durMin = parseInt(document.getElementById('a-duration').value)||60;
+      if (therName2 && isOutsideStaffHours(therName2, new Date(time), durMin, S.apptStaffSchedules, S.apptScheduleOverrides, S.apptStaffList)) {
+        const when2 = new Date(time).toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'});
+        if (!confirm(`⚠ Η ${when2} είναι εκτός ωραρίου εργασίας της/του ${therName2} αυτή την ημέρα.\n\nΝα κλειστεί παρόλα αυτά;`)) return;
       }
     }
     const btn = document.getElementById('save-appt');
