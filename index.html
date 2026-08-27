@@ -628,6 +628,29 @@ const STATUS_APPT = {booked:{bg:'#FAEEDA',c:'#D97706',l:'Κλεισμένο'},co
 const PIPELINE_STAGES = ['new_lead','contacted','interested','offer_sent','won','lost'];
 const STAGE_LABELS = {new_lead:'Νέο Lead',contacted:'Επαφή',interested:'Ενδιαφέρον',offer_sent:'Προσφορά',won:'✓ Κλείσιμο',lost:'✗ Απώλεια'};
 
+// Modules που ο Super Admin μπορεί να ενεργοποιεί/απενεργοποιεί ανά κλινική
+// (clinics.settings.enabled_modules — undefined/απόν = ενεργό, ώστε καμία
+// υπάρχουσα κλινική να μη χάσει τίποτα από μόνη της). Dashboard/Ασθενείς/
+// Ραντεβού/Πρόγραμμα/Ρυθμίσεις/Κλινικές είναι πυρήνας — πάντα ενεργά.
+const TOGGLEABLE_MODULES = [
+  {key:'sms', label:'SMS & Αυτοματισμοί'},
+  {key:'laser', label:'Laser Forms'},
+  {key:'consultations', label:'Consultation'},
+  {key:'consents', label:'Συναινέσεις'},
+  {key:'product-sale', label:'Πώληση Καλλυντικού'},
+  {key:'reports', label:'Αναφορές'},
+  {key:'staff-services', label:'Προσωπικό & Υπηρεσίες'},
+];
+// Υποσελίδες που ανήκουν σε ένα module αλλά δεν είναι οι ίδιες nav items
+// (π.χ. η λεπτομέρεια μιας φόρμας laser) — πρέπει να μπλοκάρονται μαζί του.
+const MODULE_PAGE_ALIASES = {'laser-detail':'laser'};
+function isModuleEnabled(page) {
+  const key = MODULE_PAGE_ALIASES[page] || page;
+  if (!TOGGLEABLE_MODULES.some(m=>m.key===key)) return true;
+  const em = (S.clinic && S.clinic.settings && S.clinic.settings.enabled_modules) || {};
+  return em[key] !== false;
+}
+
 function badge(label,bg,c){return `<span class="badge" style="background:${bg};color:${c}">${esc(label)}</span>`}
 function patBadge(status){const s=STATUS_PAT[status]||STATUS_PAT.lead;return badge(s.l,s.bg,s.c)}
 // Το medical_history_completed σημαίνει "υπέβαλε τη φόρμα Ιατρικού Ιστορικού/GDPR" —
@@ -1291,6 +1314,10 @@ function globalApptColor(a) {
 
 // ── RENDER ──
 function render() {
+  // Αν το τρέχον page είναι module απενεργοποιημένο για αυτή την κλινική
+  // (π.χ. ο χρήστης ήταν ήδη εκεί όταν ο Super Admin το έκλεισε, ή έφτασε
+  // εκεί με φωνητική εντολή) — γύρνα στο Dashboard αντί να μείνει «κολλημένος».
+  if (S.user && !isModuleEnabled(S.page)) S.page = 'dashboard';
   // Διατήρηση focus/cursor σε input που είναι ενεργό κατά το re-render
   // (αλλιώς το πεδίο αναζήτησης χάνει το focus σε κάθε πληκτρολόγηση)
   const _act = document.activeElement;
@@ -1408,7 +1435,7 @@ function renderShell(content) {
     {page:'staff-services',icon:'🗂',label:'Προσωπικό & Υπηρεσίες',roles:['super_admin','clinic_admin']},
     {page:'clinics',icon:'⊞',label:'Κλινικές',roles:['super_admin']},
     {page:'settings',icon:'⚙',label:'Ρυθμίσεις',roles:['super_admin','clinic_admin']},
-  ].filter(n => n.roles.includes(role) && (isSuperAdmin() && !cid ? ['dashboard','clinics'].includes(n.page) : true));
+  ].filter(n => n.roles.includes(role) && (isSuperAdmin() && !cid ? ['dashboard','clinics'].includes(n.page) : true) && isModuleEnabled(n.page));
 
   const PAGE_TITLES = {dashboard:'Dashboard',patients:'Ασθενείς','patient-detail':'Ασθενής',appointments:'Ραντεβού',calendar:'Πρόγραμμα',pipeline:'Pipeline',clinics:'Κλινικές',sms:'SMS & Αυτοματισμοί',laser:'Laser Forms',consultations:'Consultation',consents:'Συναινέσεις','product-sale':'Πώληση Καλλυντικού',reports:'Αναφορές','staff-services':'Προσωπικό & Υπηρεσίες',settings:'Ρυθμίσεις'};
 
@@ -6430,6 +6457,19 @@ function modalNewClinic() {
         <div class="form-group"><label class="form-label">Διεύθυνση</label><input class="form-control" id="c-address" placeholder="Διεύθυνση" value="${esc((c&&c.address)||'')}"/></div>
       </div>
       ${c?`<label style="display:flex;align-items:center;gap:8px;margin-top:4px;cursor:pointer"><input type="checkbox" id="c-active" ${c.active?'checked':''}/> <span style="font-size:13px">Ενεργή κλινική</span></label>`:''}
+      ${c?`
+      <div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--border-2)">
+        <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Ενεργά Modules</div>
+        <div style="font-size:11px;color:var(--text-2);margin-bottom:10px">Ένα απενεργοποιημένο module εξαφανίζεται από το μενού για το προσωπικό αυτής της κλινικής — τα δεδομένα του δεν χάνονται, μόνο κρύβεται.</div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          ${TOGGLEABLE_MODULES.map(m=>{
+            const enabled = !c.settings || c.settings.enabled_modules===undefined || c.settings.enabled_modules[m.key]!==false;
+            return `<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+              <input type="checkbox" class="c-module-toggle" data-module="${m.key}" ${enabled?'checked':''}/> ${esc(m.label)}
+            </label>`;
+          }).join('')}
+        </div>
+      </div>`:''}
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Ακύρωση</button>
@@ -8694,12 +8734,27 @@ function bindModalEvents() {
     if (editId) {
       const activeEl = document.getElementById('c-active');
       if (activeEl) payload.active = activeEl.checked;
+      const moduleToggles = document.querySelectorAll('.c-module-toggle');
+      if (moduleToggles.length) {
+        const editingClinic = (S.clinics||[]).find(x=>x.id===editId);
+        const enabled_modules = {};
+        moduleToggles.forEach(el => { enabled_modules[el.dataset.module] = el.checked; });
+        payload.settings = Object.assign({}, (editingClinic&&editingClinic.settings)||{}, {enabled_modules});
+      }
       ({error} = await sb.from('clinics').update(payload).eq('id', editId));
     } else {
       payload.active = true;
       ({error} = await sb.from('clinics').insert(payload));
     }
     if (error) { alert(error.message); btn.textContent='Αποθήκευση'; btn.disabled=false; return; }
+    // Ενημέρωση των ήδη φορτωμένων clinic objects στη μνήμη (S.allClinics/S.clinic)
+    // ώστε αλλαγές όπως τα ενεργά modules να φανούν αμέσως, ακόμα κι αν επεξεργαζόμαστε
+    // την κλινική που είναι αυτή τη στιγμή επιλεγμένη — αυτά ανανεώνονται μόνο στο login.
+    if (editId && S.allClinics) {
+      const idx = S.allClinics.findIndex(x=>x.id===editId);
+      if (idx>-1) Object.assign(S.allClinics[idx], payload);
+      if (S.clinic && S.clinic.id===editId) Object.assign(S.clinic, payload);
+    }
     closeModal(); await loadPageData();
   });
 }
