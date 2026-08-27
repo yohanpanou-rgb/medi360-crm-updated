@@ -552,7 +552,9 @@ function findServiceMatch(appointments, afterDateStr, treatmentText) {
   const normTreatment = normalizeGreek(treatmentText);
   const treatWords = normTreatment.split(' ').filter(w=>w.length>=4);
   if (!treatWords.length) return null;
-  const candidates = (appointments||[]).filter(a => a.start_time && new Date(a.start_time) > afterDate);
+  // Ένα ακυρωμένο ραντεβού δεν αποδεικνύει τίποτα — δεν πρέπει να μετράει ούτε
+  // ως "κλεισμένο" ούτε ως "έγινε", αλλιώς μια ακύρωση θα άφηνε λάθος badge.
+  const candidates = (appointments||[]).filter(a => a.start_time && a.status!=='cancelled' && new Date(a.start_time) > afterDate);
   candidates.sort((a,b)=>new Date(a.start_time)-new Date(b.start_time)); // πιο κοντινό στο μέλλον πρώτα
   for (const a of candidates) {
     const normService = normalizeGreek(a.service_name||'');
@@ -2718,9 +2720,11 @@ function renderPatientDetail() {
           // μέσω ραντεβού ΜΕΤΑ την ημερομηνία του consultation
           const inClinicStatusBadge = (treatmentText) => {
             const match = findServiceMatch(p.appointments, signedAt, treatmentText);
-            return match
-              ? `<span style="display:inline-flex;align-items:center;gap:5px;margin-left:8px;font-size:12px;font-weight:700;color:#0F6E56;background:#E1F5EE;padding:4px 12px;border-radius:12px;white-space:nowrap;vertical-align:middle"><span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:#0F6E56;color:#fff;font-size:12px;line-height:1;flex-shrink:0">✓</span>Έγινε ${new Date(match.start_time).toLocaleDateString('el-GR',{day:'2-digit',month:'2-digit',year:'numeric'})}</span>`
-              : `<span style="display:inline-flex;align-items:center;gap:5px;margin-left:8px;font-size:12px;font-weight:700;color:#854F0B;background:#FAEEDA;padding:4px 12px;border-radius:12px;white-space:nowrap;vertical-align:middle"><span style="font-size:13px;line-height:1">⏳</span>Δεν έχει κλειστεί</span>`;
+            if (!match) return `<span style="display:inline-flex;align-items:center;gap:5px;margin-left:8px;font-size:12px;font-weight:700;color:#854F0B;background:#FAEEDA;padding:4px 12px;border-radius:12px;white-space:nowrap;vertical-align:middle"><span style="font-size:13px;line-height:1">⏳</span>Δεν έχει κλειστεί</span>`;
+            const matchDate = new Date(match.start_time).toLocaleDateString('el-GR',{day:'2-digit',month:'2-digit',year:'numeric'});
+            // Κλεισμένο/Επιβεβαιωμένο ≠ Έγινε — μπορεί ακόμα να ακυρωθεί μέχρι να ολοκληρωθεί.
+            if (match.status !== 'completed') return `<span style="display:inline-flex;align-items:center;gap:5px;margin-left:8px;font-size:12px;font-weight:700;color:#185FA5;background:#E6F1FB;padding:4px 12px;border-radius:12px;white-space:nowrap;vertical-align:middle"><span style="font-size:13px;line-height:1">📅</span>Κλεισμένο ${matchDate}</span>`;
+            return `<span style="display:inline-flex;align-items:center;gap:5px;margin-left:8px;font-size:12px;font-weight:700;color:#0F6E56;background:#E1F5EE;padding:4px 12px;border-radius:12px;white-space:nowrap;vertical-align:middle"><span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:#0F6E56;color:#fff;font-size:12px;line-height:1;flex-shrink:0">✓</span>Έγινε ${matchDate}</span>`;
           };
           const formatInClinicStatus = (raw) => raw.split('\n').map(l=>l.trim()).filter(Boolean)
             .map(l => {
@@ -2757,7 +2761,10 @@ function renderPatientDetail() {
           // Σύνοψη προόδου: πόσες in-clinic θεραπείες έχουν πραγματοποιηθεί
           const inClinicSteps = parseConsultInClinicSteps(text);
           const totalCount = inClinicSteps.length;
-          const doneCount = inClinicSteps.filter(t => findServiceMatch(p.appointments, signedAt, t)).length;
+          const doneCount = inClinicSteps.filter(t => {
+            const m = findServiceMatch(p.appointments, signedAt, t);
+            return m && m.status === 'completed';
+          }).length;
           const progressBadge = totalCount ? `<span style="display:inline-flex;align-items:center;gap:4px;margin-left:8px;font-size:11px;font-weight:700;padding:3px 10px;border-radius:10px;white-space:nowrap;${doneCount===totalCount?'color:#0F6E56;background:#E1F5EE':'color:#854F0B;background:#FAEEDA'}">${doneCount===totalCount?'✓':'⏳'} ${doneCount}/${totalCount} έγιναν</span>` : '';
 
           return `<div class="card" style="overflow:hidden">
@@ -4296,7 +4303,10 @@ function computeReportStats() {
     };
     steps.forEach(step=>{
       recommendedTotal++; e.total++;
-      if (findServiceMatch(patientAppts, c.signed_at, step)) { recommendedDone++; e.done++; }
+      // "Έγινε" σημαίνει ολοκληρωμένο ραντεβού — ένα κλεισμένο/επιβεβαιωμένο
+      // μπορεί ακόμα να ακυρωθεί, οπότε μετράει ως εκκρεμές μέχρι να ολοκληρωθεί.
+      const match = findServiceMatch(patientAppts, c.signed_at, step);
+      if (match && match.status === 'completed') { recommendedDone++; e.done++; }
       else e.pending.push(step);
     });
   });
