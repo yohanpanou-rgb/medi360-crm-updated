@@ -3406,6 +3406,9 @@ function renderCalendar() {
 }
 
 async function loadLaserForm(id) {
+  // Το "← Πίσω" της φόρμας πρέπει να γυρίζει εκεί απ' όπου ανοίχτηκε —
+  // στην καρτέλα ασθενή αν ανοίχτηκε από εκεί, αλλιώς στη λίστα Laser Forms.
+  S._laserBackPage = S.page==='patient-detail' ? 'patient-detail' : 'laser';
   S.laserFormId = id;
   S.page = 'laser-detail';
   await loadPageData();
@@ -3466,7 +3469,7 @@ function renderLaserDetail() {
         <div style="font-size:16px;font-weight:700;color:#fff;margin-top:2px">ΚΑΡΤΕΛΑ ΠΕΛΑΤΗ - LASER ΑΠΟΤΡΙΧΩΣΗΣ</div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn btn-ghost btn-sm" data-page="laser" style="background:rgba(255,255,255,0.15);color:#fff;border-color:rgba(255,255,255,0.3)">← Πίσω</button>
+        <button class="btn btn-ghost btn-sm" data-page="${S._laserBackPage||'laser'}" style="background:rgba(255,255,255,0.15);color:#fff;border-color:rgba(255,255,255,0.3)">← Πίσω</button>
         <button class="btn btn-ghost btn-sm" onclick="window.print()" style="background:rgba(255,255,255,0.15);color:#fff;border-color:rgba(255,255,255,0.3)">🖨 Εκτύπωση</button>
         <button class="btn btn-ghost btn-sm" onclick="openPackageModalFromLaser()" style="background:rgba(255,255,255,0.15);color:#fff;border-color:rgba(255,255,255,0.3)">📦 + Πακέτο</button>
         <button class="btn btn-sm" id="save-laser-form" style="background:#fff;color:#C4618A;font-weight:600">💾 Αποθήκευση</button>
