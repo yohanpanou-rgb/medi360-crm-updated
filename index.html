@@ -412,6 +412,26 @@ function classifyConsentGroup(serviceName) {
   return null;
 }
 
+// Ομαδοποίηση υπηρεσίας σε κατηγορία για το φίλτρο απόδοσης ανά κατηγορία στις
+// Αναφορές (Καθαρισμοί/Facials/Laser/Κερί/Μασάζ/Σώμα) — ξεχωριστή ταξινόμηση
+// από το classifyConsentGroup (αυτή αφορά συναινέσεις, όχι reporting) γιατί ο
+// χρήστης θέλει εδώ τα «Καθαρισμοί» ξεχωριστά από τα «Facials».
+const SERVICE_REPORT_CATEGORIES = {
+  cleansing: 'Καθαρισμοί', facials: 'Facials', laser: 'Laser',
+  wax: 'Κερί', massage: 'Μασάζ', body: 'Σώμα', other: 'Άλλο',
+};
+function classifyServiceReportCategory(serviceName) {
+  const s = normalizeGreek(serviceName);
+  if (!s) return 'other';
+  if (/καθαρισμ|δερμοαποξ|pore ?over|eco ?peel/.test(s)) return 'cleansing';
+  if (/alexandrite|laser|αποτριχωσ|ηλεκτρολυσ/.test(s)) return 'laser';
+  if (/κερι/.test(s)) return 'wax';
+  if (/μασαζ|massage|drainage|λεμφικ/.test(s)) return 'massage';
+  if (/vacuum|θερμοκουβ|panotherm|mydren|σωμα|πλατ/.test(s)) return 'body';
+  if (/φρυδ|βαφη|facial|peel|prx|dermapen|μικροβελον|microneedl|tca|ενυδατ|υδροδερμ|glow|οξυγον|θρεψη|φωτοθεραπ|λαμψ|λευκανσ|αντιγηρανσ|dermalux/.test(s)) return 'facials';
+  return 'other';
+}
+
 // Πρόσωπο vs σώμα/αποτρίχωση — χρησιμοποιείται στη Φόρμα Consultation ώστε τα
 // Βήματα 1-3 (βασική ροή) να δείχνουν ΜΟΝΟ θεραπείες προσώπου, ποτέ σώματος ή
 // αποτρίχωσης (laser/ηλεκτρόλυση) — αυτές έχουν τη δική τους ξεχωριστή,
@@ -4250,7 +4270,17 @@ function computeReportStats() {
   // ΜΟΝΟ τα πληρωμένα/ολοκληρωμένα — αλλιώς το άθροισμα ανά υπηρεσία ξεπερνούσε το συνολικό
   // KPI "Έσοδα" (που μετράει μόνο paid/completed), δείχνοντας ασυνεπή νούμερα στην αναφορά.
   apts.forEach(a=>{ if(a.service_name) { svc[a.service_name]=svc[a.service_name]||{count:0,revenue:0}; svc[a.service_name].count++; if(a.status==='completed') svc[a.service_name].revenue+=(a.price||0); } });
-  const topServices = Object.entries(svc).sort((a,b)=>b[1].revenue-a[1].revenue).slice(0,8);
+  const allServices = Object.entries(svc).sort((a,b)=>b[1].revenue-a[1].revenue);
+  const topServices = allServices.slice(0,8);
+  // Απόδοση ομαδοποιημένη σε κατηγορίες (Καθαρισμοί/Facials/Laser/Κερί/Μασάζ/Σώμα) —
+  // φίλτρο chips στις Αναφορές, δίπλα στον πίνακα ανά υπηρεσία.
+  const svcByCategory = {};
+  allServices.forEach(([name,d])=>{
+    const cat = classifyServiceReportCategory(name);
+    svcByCategory[cat] = svcByCategory[cat] || {count:0, revenue:0};
+    svcByCategory[cat].count += d.count;
+    svcByCategory[cat].revenue += d.revenue;
+  });
 
   // Νέοι πελάτες vs ισόχρονη προηγούμενη περίοδος
   const prevNewPatientsCount = (S.reportPrevNewPatients||[]).length;
@@ -4317,6 +4347,7 @@ function computeReportStats() {
     .sort((a,b)=>(b.total-b.done)-(a.total-a.done) || b.total-a.total);
 
   return { apts, newPatients, allPatients, revenue, pkgRevenue, pkgCount, noShowRate, noShows, gdprRate, gdprSigned, activeCount:activePatients.length, topServices,
+    allServices, svcByCategory,
     npNever, npOne, npTwo, npMore, npAttended, npReturned, npFirstServices,
     newPatientsDelta, newPatientsPct, consultations, prevConsultCount, consultDelta, consultPct,
     utilizationRate, utilizationIsReal, recommendedTotal, recommendedDone, consultPatients,
@@ -4707,16 +4738,29 @@ function renderReports() {
 
     <div class="card" style="padding:16px;margin-bottom:16px">
       <div class="card-title" style="margin-bottom:12px">Κορυφαίες Υπηρεσίες</div>
-      ${s.topServices.length?`<table style="width:100%;border-collapse:collapse;font-size:13px">
+      ${(()=>{
+        const catFilter = S.reportServiceCat || 'all';
+        const catOrder = ['cleansing','facials','laser','wax','massage','body','other'];
+        const chips = [['all','Όλα']].concat(catOrder.filter(k=>k!=='other'||(s.svcByCategory.other&&s.svcByCategory.other.count)).map(k=>[k,SERVICE_REPORT_CATEGORIES[k]]));
+        const chipsHtml = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">
+          ${chips.map(([key,label])=>{
+            const active = catFilter===key;
+            const d = key==='all' ? {count:s.apts.filter(a=>a.service_name).length, revenue:s.topServices.reduce((sum,[,x])=>sum+x.revenue,0)} : (s.svcByCategory[key]||{count:0,revenue:0});
+            return `<button class="btn btn-sm" data-report-cat="${key}" style="border-radius:20px;background:${active?'var(--blue)':'var(--surface)'};color:${active?'#fff':'var(--text-2)'};border:1px solid ${active?'var(--blue)':'var(--border-2)'};font-weight:600">${label} <span style="opacity:.75;font-weight:500">(${d.count})</span></button>`;
+          }).join('')}
+        </div>`;
+        const filteredServices = catFilter==='all' ? s.topServices : s.allServices.filter(([name])=>classifyServiceReportCategory(name)===catFilter).slice(0,8);
+        return chipsHtml + (filteredServices.length?`<table style="width:100%;border-collapse:collapse;font-size:13px">
         <thead><tr style="text-align:left;color:var(--text-2);font-size:11px;text-transform:uppercase"><th style="padding:6px 0">Υπηρεσία</th><th style="padding:6px 0">Ραντεβού</th>${canFin?'<th style="padding:6px 0">Έσοδα</th>':''}</tr></thead>
         <tbody>
-          ${s.topServices.map(([name,d])=>`<tr style="border-top:1px solid var(--border-2)">
+          ${filteredServices.map(([name,d])=>`<tr style="border-top:1px solid var(--border-2)">
             <td style="padding:8px 0">${esc(name)}</td>
             <td style="padding:8px 0">${d.count}</td>
             ${canFin?`<td style="padding:8px 0">${euro(d.revenue)}</td>`:''}
           </tr>`).join('')}
         </tbody>
-      </table>`:`<div class="empty-state"><div class="empty-icon">▤</div><div>Δεν υπάρχουν ραντεβού στο διάστημα</div></div>`}
+      </table>`:`<div class="empty-state"><div class="empty-icon">▤</div><div>Δεν υπάρχουν ραντεβού σε αυτή την κατηγορία στο διάστημα</div></div>`);
+      })()}
     </div>
 
     <div class="card" style="padding:16px;margin-bottom:16px">
@@ -8158,6 +8202,11 @@ function bindEvents() {
     if (from>to) return alert('Η ημερομηνία "Από" πρέπει να είναι πριν το "Έως"');
     S.reportRange = {from, to};
     loadPageData();
+  });
+
+  // Αναφορές — φίλτρο κατηγορίας υπηρεσιών (Κορυφαίες Υπηρεσίες)
+  document.querySelectorAll('[data-report-cat]').forEach(el => {
+    el.onclick = () => { S.reportServiceCat = el.dataset.reportCat; render(); };
   });
 
   // Προσωπικό & Υπηρεσίες — tabs
