@@ -122,6 +122,14 @@ function normalizeGreek(s: string): string {
   return (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
 }
 
+// Βασικός έλεγχος μορφής (όχι μόνο "περιέχει @") — ένα email με κενό ή χωρίς
+// domain (π.χ. καταχωρημένο λάθος στην καρτέλα) πρέπει να καταγράφεται ως
+// 'no_email' ΜΙΑ φορά, όχι να ξαναδοκιμάζεται κάθε 15 λεπτά επ' άπειρον αφού
+// το 'failed' δεν είναι τελική κατάσταση για το alreadyDone().
+function isValidEmail(email: unknown): boolean {
+  return typeof email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+}
+
 function athensDT(iso: string): string {
   const d = new Date(iso);
   return d.toLocaleDateString('el-GR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Athens' })
@@ -390,7 +398,7 @@ Deno.serve(async (req: Request) => {
       const sorted = [...dayAppts].sort((x, y) => (x.start_time < y.start_time ? -1 : 1));
       const first = sorted[0];
       const email = first.patients && first.patients.email;
-      if (!email || !String(email).includes('@')) {
+      if (!isValidEmail(email)) {
         for (const a of pending) await log(a, 'confirmation_request', channel, 'no_email');
         results.no_email++; return;
       }
@@ -416,7 +424,7 @@ Deno.serve(async (req: Request) => {
     const sendInstructions = async (a: Appt, channel = 'email') => {
       const set = setForService(a.service_name || '');
       const email = a.patients && a.patients.email;
-      if (!email || !String(email).includes('@')) { await log(a, 'instructions', channel, 'no_email', set ? { metadata: { instruction_set: set.name } } : undefined); results.no_email++; return; }
+      if (!isValidEmail(email)) { await log(a, 'instructions', channel, 'no_email', set ? { metadata: { instruction_set: set.name } } : undefined); results.no_email++; return; }
       const insTs = Math.floor(new Date(a.start_time).getTime() / 1000);
       const insIcsUrl = `${CONFIRM_URL}?id=${a.id}&ts=${insTs}&ics=1`;
       const { gcal, outlook, ics } = buildCalendarBits([a], clinicAddress, brand);
@@ -438,7 +446,7 @@ Deno.serve(async (req: Request) => {
     const sendReviewRequest = async (a: Appt, channel = 'email') => {
       if (!reviewLink) { results.errors++; return; }
       const email = a.patients && a.patients.email;
-      if (!email || !String(email).includes('@')) { await log(a, 'review_request', channel, 'no_email'); results.no_email++; return; }
+      if (!isValidEmail(email)) { await log(a, 'review_request', channel, 'no_email'); results.no_email++; return; }
       const html = reviewRequestEmailHtml((a.patients && a.patients.full_name) || '', a.service_name || '', reviewLink, brand);
       try {
         const msgId = await sendEmail(await gmail(), String(email), '⭐ Πώς ήταν η εμπειρία σας; — ' + brand.name, html, undefined, brand.name);
