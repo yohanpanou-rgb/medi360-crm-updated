@@ -10,12 +10,18 @@
 //     Instruction Set της υπηρεσίας (πίνακες instruction_sets +
 //     service_instruction_map). Υπηρεσία χωρίς σετ → φεύγει ΚΑΙ ΤΟΤΕ email,
 //     απλό κλεισίματος ραντεβού χωρίς τμήματα πριν/μετά (όχι σιωπή).
+//  3. ΖΗΤΗΣΗ ΑΞΙΟΛΟΓΗΣΗΣ: ραντεβού ΟΛΟΚΛΗΡΩΜΕΝΑ (completed) που πέρασαν τις
+//     clinics.settings.review_request_delay_days ημέρες από την ώρα τους →
+//     email με σύνδεσμο αξιολόγησης (clinics.settings.review_link). Τρέχει
+//     ΜΟΝΟ όταν clinics.settings.review_request_enabled === true ΚΑΙ υπάρχει
+//     review_link — παραμένει ανενεργή μέχρι να ενεργοποιηθεί ρητά από τις
+//     Ρυθμίσεις της κλινικής.
 //
 // Idempotency: μοναδικό (appointment_id, automation_type, cycle) με
 // cycle = start_time — αλλαγή ώρας ραντεβού ξεκινά αυτόματα νέο κύκλο.
 //
 // Χειροκίνητες ενέργειες (από το CRM, με login): POST body
-// {action:'resend_confirmation'|'resend_instructions', appointment_id} —
+// {action:'resend_confirmation'|'resend_instructions'|'resend_review_request', appointment_id} —
 // στέλνει ξανά αγνοώντας το idempotency (καταγράφεται με channel 'manual').
 //
 // Deploy with:
@@ -280,6 +286,19 @@ function instructionsEmailHtml(name: string, service: string, whenStr: string, s
       </td></tr>`, brand);
 }
 
+function reviewRequestEmailHtml(name: string, service: string, reviewLink: string, brand: Brand): string {
+  return shell(`
+      ${headerBand(brand, '⭐', 'Πώς ήταν η εμπειρία σας;')}
+      <tr><td style="padding:28px 30px;">
+        <p style="font-size:15px;line-height:1.7;color:#333333;-webkit-text-fill-color:#333333;margin:0 0 14px;">Αγαπητή/έ κε/κα <b>${esc(name)}</b>,</p>
+        <p style="font-size:14.5px;line-height:1.7;color:#333333;-webkit-text-fill-color:#333333;margin:0 0 18px;">Ελπίζουμε να μείνατε ευχαριστημένη/ος από <b>${esc(service)}</b>. Η γνώμη σας μας βοηθάει πολύ — έχετε 30 δευτερόλεπτα για μια σύντομη αξιολόγηση;</p>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:6px 0 6px;">
+          <a href="${esc(reviewLink)}" style="display:inline-block;background-color:${esc(brand.color)};color:#FFFFFF;-webkit-text-fill-color:#FFFFFF;font-size:15px;font-weight:bold;text-decoration:none;padding:14px 34px;border-radius:30px;">⭐ Αφήστε μια αξιολόγηση</a>
+        </td></tr></table>
+        <p style="font-size:13px;line-height:1.7;color:#8A6070;-webkit-text-fill-color:#8A6070;margin:18px 0 0;">Σας ευχαριστούμε που μας εμπιστευτήκατε! ✨</p>
+      </td></tr>`, brand);
+}
+
 interface Appt {
   id: string; clinic_id: string; patient_id: string; status: string;
   start_time: string; service_name?: string; duration_minutes?: number;
@@ -338,13 +357,16 @@ Deno.serve(async (req: Request) => {
     // Διεύθυνση ινστιτούτου για ημερολόγιο/χάρτες — fallback στο όνομα (το
     // Google Maps βρίσκει την επιχείρηση με αναζήτηση ονόματος).
     const { data: clinicRow } = await supabase.from('clinics').select('*').ilike('name', '%Beauty Line%').limit(1).single();
-    const cRow = (clinicRow || {}) as { name?: string; address?: string; settings?: { address?: string; brand_name?: string; brand_color?: string; brand_logo_url?: string } };
+    const cRow = (clinicRow || {}) as { name?: string; address?: string; settings?: { address?: string; brand_name?: string; brand_color?: string; brand_logo_url?: string; review_request_enabled?: boolean; review_link?: string; review_request_delay_days?: number } };
     const clinicAddress = cRow.address || (cRow.settings && cRow.settings.address) || 'Beauty Line by Lina Panou';
     const brand: Brand = {
       name: (cRow.settings && cRow.settings.brand_name) || cRow.name || 'Beauty Line by Lina Panou',
       color: (cRow.settings && cRow.settings.brand_color) || '#C4618A',
       logoUrl: (cRow.settings && cRow.settings.brand_logo_url) || '',
     };
+    const reviewLink = (cRow.settings && cRow.settings.review_link) || '';
+    const reviewRequestEnabled = !!(cRow.settings && cRow.settings.review_request_enabled) && !!reviewLink;
+    const reviewRequestDelayDays = (cRow.settings && cRow.settings.review_request_delay_days) || 2;
 
     // ── Φόρτωση instruction sets + καταλόγου για την αντιστοίχιση ──
     const { data: sets } = await supabase.from('instruction_sets').select('*').eq('active', true);
@@ -410,6 +432,24 @@ Deno.serve(async (req: Request) => {
       }
     };
 
+    // ⭐ Ζήτηση αξιολόγησης: μόνο για ολοκληρωμένα ραντεβού, με τον σύνδεσμο
+    // από τις Ρυθμίσεις (review_link) — χωρίς σύνδεσμο δεν έχει νόημα η
+    // αποστολή, ούτε καν χειροκίνητα.
+    const sendReviewRequest = async (a: Appt, channel = 'email') => {
+      if (!reviewLink) { results.errors++; return; }
+      const email = a.patients && a.patients.email;
+      if (!email || !String(email).includes('@')) { await log(a, 'review_request', channel, 'no_email'); results.no_email++; return; }
+      const html = reviewRequestEmailHtml((a.patients && a.patients.full_name) || '', a.service_name || '', reviewLink, brand);
+      try {
+        const msgId = await sendEmail(await gmail(), String(email), '⭐ Πώς ήταν η εμπειρία σας; — ' + brand.name, html, undefined, brand.name);
+        await log(a, 'review_request', channel, 'sent', { metadata: { gmail_id: msgId } });
+        results.review_requests = (results.review_requests || 0) + 1;
+      } catch (e) {
+        await log(a, 'review_request', channel, 'failed', { error: e instanceof Error ? e.message : String(e) });
+        results.errors++;
+      }
+    };
+
     // ── Χειροκίνητη ενέργεια από το CRM ──
     if (body.action && body.appointment_id) {
       const { data: appt } = await supabase.from('appointments')
@@ -419,6 +459,7 @@ Deno.serve(async (req: Request) => {
       const a = appt as unknown as Appt;
       if (body.action === 'resend_confirmation') await sendConfirmation([a], [a], 'manual');
       else if (body.action === 'resend_instructions') await sendInstructions(a, 'manual');
+      else if (body.action === 'resend_review_request') await sendReviewRequest(a, 'manual');
       else return json({ error: 'Unknown action' }, 400);
       return json({ ok: true, results });
     }
@@ -457,6 +498,21 @@ Deno.serve(async (req: Request) => {
     for (const row of (confRows || []) as unknown as Appt[]) {
       if (await alreadyDone(row, 'instructions')) continue;
       await sendInstructions(row);
+    }
+
+    // 3) ΟΛΟΚΛΗΡΩΜΕΝΑ που πέρασαν τις καθορισμένες ημέρες από την ώρα τους →
+    //    ζήτηση αξιολόγησης. Παραμένει ανενεργή μέχρι να ενεργοποιηθεί ρητά
+    //    (review_request_enabled) και να οριστεί σύνδεσμος (review_link).
+    if (reviewRequestEnabled) {
+      const reviewCutoff = new Date(now.getTime() - reviewRequestDelayDays * 86400 * 1000);
+      const reviewHorizon = new Date(now.getTime() - 30 * 86400 * 1000);
+      const { data: doneRows } = await supabase.from('appointments')
+        .select('id,clinic_id,patient_id,status,start_time,service_name,duration_minutes,patients(full_name,email)')
+        .eq('status', 'completed').lte('start_time', reviewCutoff.toISOString()).gte('start_time', reviewHorizon.toISOString());
+      for (const row of (doneRows || []) as unknown as Appt[]) {
+        if (await alreadyDone(row, 'review_request')) continue;
+        await sendReviewRequest(row);
+      }
     }
 
     return json({ ok: true, results });
