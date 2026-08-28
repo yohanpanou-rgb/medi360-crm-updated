@@ -4604,14 +4604,41 @@ async function loadApptConsumablesList(aid) {
   const {data:rows} = await sb.from('appointment_consumables').select('id,item_name,quantity,unit').eq('appointment_id',aid).order('created_at',{ascending:true});
   if (!rows || !rows.length) { el.innerHTML = '<span style="color:var(--text-2)">Καμία καταχώρηση ακόμα</span>'; return; }
   el.innerHTML = rows.map(r=>`
-    <div style="display:flex;justify-content:space-between;align-items:center;padding:3px 0">
-      <span style="color:var(--text)">${esc(r.item_name)}${r.quantity?' × '+esc(r.quantity):''}${r.unit?' '+esc(r.unit):''}</span>
-      <button data-cons-del="${r.id}" style="background:none;border:none;cursor:pointer;color:var(--text-2);font-size:12px" title="Διαγραφή">✕</button>
+    <div class="appt-cons-row" data-cons-row="${r.id}" style="display:flex;justify-content:space-between;align-items:center;gap:6px;padding:3px 0">
+      <span class="appt-cons-view" style="color:var(--text)">${esc(r.item_name)}${r.quantity?' × '+esc(r.quantity):''}${r.unit?' '+esc(r.unit):''}</span>
+      <span style="flex-shrink:0">
+        <button data-cons-edit="${r.id}" style="background:none;border:none;cursor:pointer;color:var(--text-2);font-size:12px" title="Επεξεργασία">✎</button>
+        <button data-cons-del="${r.id}" style="background:none;border:none;cursor:pointer;color:var(--text-2);font-size:12px" title="Διαγραφή">✕</button>
+      </span>
     </div>`).join('');
   el.querySelectorAll('[data-cons-del]').forEach(btn=>{
     btn.addEventListener('click', async () => {
       await sb.from('appointment_consumables').delete().eq('id', btn.dataset.consDel);
       loadApptConsumablesList(aid);
+    });
+  });
+  el.querySelectorAll('[data-cons-edit]').forEach(btn=>{
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.consEdit;
+      const row = rows.find(r=>r.id===id);
+      const rowEl = el.querySelector(`[data-cons-row="${id}"]`);
+      if (!row || !rowEl) return;
+      rowEl.innerHTML = `
+        <input class="appt-cons-edit-name" value="${esc(row.item_name)}" style="flex:2;min-width:80px;font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:6px"/>
+        <input class="appt-cons-edit-qty" type="number" min="0" step="any" value="${row.quantity||1}" style="flex:1;min-width:50px;font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:6px"/>
+        <input class="appt-cons-edit-unit" value="${esc(row.unit||'')}" placeholder="Μονάδα" style="flex:1;min-width:60px;font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:6px"/>
+        <button class="appt-cons-edit-save" style="background:none;border:none;cursor:pointer;color:#0F6E56;font-size:12px" title="Αποθήκευση">✓</button>
+        <button class="appt-cons-edit-cancel" style="background:none;border:none;cursor:pointer;color:var(--text-2);font-size:12px" title="Ακύρωση">✕</button>`;
+      rowEl.querySelector('.appt-cons-edit-cancel').addEventListener('click', () => loadApptConsumablesList(aid));
+      rowEl.querySelector('.appt-cons-edit-save').addEventListener('click', async () => {
+        const item_name = rowEl.querySelector('.appt-cons-edit-name').value.trim();
+        if (!item_name) return;
+        const quantity = parseFloat(rowEl.querySelector('.appt-cons-edit-qty').value)||1;
+        const unit = rowEl.querySelector('.appt-cons-edit-unit').value.trim()||null;
+        const {error} = await sb.from('appointment_consumables').update({item_name, quantity, unit}).eq('id', id);
+        if (error) { alert(error.message); return; }
+        loadApptConsumablesList(aid);
+      });
     });
   });
 }

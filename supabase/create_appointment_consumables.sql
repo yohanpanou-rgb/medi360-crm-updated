@@ -46,3 +46,13 @@ create policy "appointment_consumables_delete" on public.appointment_consumables
     public.is_super_admin()
     or clinic_id = public.current_user_clinic_id()
   );
+
+drop policy if exists "appointment_consumables_update" on public.appointment_consumables;
+create policy "appointment_consumables_update" on public.appointment_consumables
+  for update using (
+    public.is_super_admin()
+    or clinic_id = public.current_user_clinic_id()
+  ) with check (
+    public.is_super_admin()
+    or clinic_id = public.current_user_clinic_id()
+  );
