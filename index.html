@@ -4444,6 +4444,11 @@ async function loadApptAutomationInfo(aid) {
         if (r.status==='no_set') return `— Δεν έχει οριστεί σετ οδηγιών για την υπηρεσία`;
         if (r.status==='failed') return `✗ Αποτυχία αποστολής οδηγιών ${fmtD(r.created_at)}`;
       }
+      if (r.automation_type==='review_request') {
+        if (r.status==='sent') return `⭐ Ζήτηση αξιολόγησης εστάλη ${fmtD(r.created_at)}${r.channel==='manual'?' (χειροκίνητα)':''}`;
+        if (r.status==='no_email') return `⚠️ Ζήτηση αξιολόγησης: ο πελάτης δεν έχει email`;
+        if (r.status==='failed') return `✗ Αποτυχία ζήτησης αξιολόγησης ${fmtD(r.created_at)}`;
+      }
       return null;
     }).filter(Boolean);
     el.innerHTML = lines.map(l=>`<div style="padding:2px 0">${l}</div>`).join('');
@@ -4451,7 +4456,7 @@ async function loadApptAutomationInfo(aid) {
 }
 
 async function resendApptAutomation(aid, action) {
-  const label = action==='resend_confirmation' ? 'το αίτημα επιβεβαίωσης' : 'τις οδηγίες θεραπείας';
+  const label = action==='resend_confirmation' ? 'το αίτημα επιβεβαίωσης' : action==='resend_review_request' ? 'τη ζήτηση αξιολόγησης' : 'τις οδηγίες θεραπείας';
   if (!confirm(`Να σταλεί ξανά ${label} στον πελάτη με email;`)) return;
   try {
     const {data, error} = await sb.functions.invoke('appointment-automations', { body: { action, appointment_id: aid } });
@@ -4513,6 +4518,77 @@ function bindApptReceiptButton(a, canReceipt) {
   const areaEl = document.getElementById('appt-receipt-area'); if (!areaEl) return;
   const btn = areaEl.querySelector('#appt-receipt-btn'); if (!btn) return;
   btn.addEventListener('click', () => openApptReceiptModal(a, canReceipt));
+}
+
+// 🧴 Καταγραφή Αναλώσιμων — φαίνεται μόνο για ολοκληρωμένα ραντεβού και μόνο
+// όταν η κλινική έχει ενεργοποιήσει τη λειτουργία (Ρυθμίσεις → Κλινική).
+// Ανεξάρτητο από το κοστολόγιο ανά υπηρεσία (services.consumables, Προσωπικό
+// & Υπηρεσίες) — εκείνο είναι η "συνταγή", αυτό εδώ η πραγματική κατανάλωση
+// ανά συγκεκριμένο ραντεβού.
+function consumablesTrackingEnabled() {
+  return !!(S.clinic && S.clinic.settings && S.clinic.settings.consumables_tracking_enabled);
+}
+
+function apptConsumablesAreaHtml(a) {
+  if (a.status !== 'completed' || !consumablesTrackingEnabled()) return '';
+  return `
+    <div style="margin-top:10px;background:var(--surface-2);border-radius:10px;padding:10px 12px">
+      <div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:6px">🧴 Αναλώσιμα</div>
+      <div id="appt-consumables-list" style="font-size:12px;margin-bottom:8px;color:var(--text-2)">Φόρτωση...</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <input id="appt-cons-name" placeholder="Προϊόν" style="flex:2;min-width:100px;font-size:12px;padding:5px 6px;border:1px solid var(--border);border-radius:6px" list="appt-cons-suggestions"/>
+        <datalist id="appt-cons-suggestions"></datalist>
+        <input id="appt-cons-qty" type="number" min="0" step="any" value="1" placeholder="Ποσότητα" style="flex:1;min-width:60px;font-size:12px;padding:5px 6px;border:1px solid var(--border);border-radius:6px"/>
+        <input id="appt-cons-unit" placeholder="Μονάδα (π.χ. ml)" style="flex:1;min-width:70px;font-size:12px;padding:5px 6px;border:1px solid var(--border);border-radius:6px"/>
+      </div>
+      <button class="btn btn-ghost btn-sm" id="appt-cons-add" style="margin-top:6px;width:100%;justify-content:center">+ Προσθήκη αναλώσιμου</button>
+    </div>`;
+}
+
+async function loadApptConsumablesList(aid) {
+  const el = document.getElementById('appt-consumables-list'); if (!el) return;
+  const {data:rows} = await sb.from('appointment_consumables').select('id,item_name,quantity,unit').eq('appointment_id',aid).order('created_at',{ascending:true});
+  if (!rows || !rows.length) { el.innerHTML = '<span style="color:var(--text-2)">Καμία καταχώρηση ακόμα</span>'; return; }
+  el.innerHTML = rows.map(r=>`
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:3px 0">
+      <span style="color:var(--text)">${esc(r.item_name)}${r.quantity?' × '+esc(r.quantity):''}${r.unit?' '+esc(r.unit):''}</span>
+      <button data-cons-del="${r.id}" style="background:none;border:none;cursor:pointer;color:var(--text-2);font-size:12px" title="Διαγραφή">✕</button>
+    </div>`).join('');
+  el.querySelectorAll('[data-cons-del]').forEach(btn=>{
+    btn.addEventListener('click', async () => {
+      await sb.from('appointment_consumables').delete().eq('id', btn.dataset.consDel);
+      loadApptConsumablesList(aid);
+    });
+  });
+}
+
+function bindApptConsumablesArea(a) {
+  if (a.status !== 'completed' || !consumablesTrackingEnabled()) return;
+  loadApptConsumablesList(a.id);
+  // Προτάσεις από τη "συνταγή" της υπηρεσίας (services.consumables), αν υπάρχει
+  sb.from('services').select('name,consumables').eq('clinic_id', clinicId()).then(({data}) => {
+    const want = normalizeGreek(a.service_name||'');
+    const svc = (data||[]).find(s=>normalizeGreek(s.name)===want);
+    const names = (svc && Array.isArray(svc.consumables)) ? svc.consumables.map(c=>c.name).filter(Boolean) : [];
+    const dl = document.getElementById('appt-cons-suggestions');
+    if (dl) dl.innerHTML = names.map(n=>`<option value="${esc(n)}"></option>`).join('');
+  });
+  const btn = document.getElementById('appt-cons-add'); if (!btn) return;
+  btn.addEventListener('click', async () => {
+    const nameEl = document.getElementById('appt-cons-name');
+    const qtyEl = document.getElementById('appt-cons-qty');
+    const unitEl = document.getElementById('appt-cons-unit');
+    const item_name = (nameEl.value||'').trim();
+    if (!item_name) { nameEl.focus(); return; }
+    const {error} = await sb.from('appointment_consumables').insert({
+      clinic_id: clinicId(), appointment_id: a.id, patient_id: a.patient_id||null,
+      item_name, quantity: parseFloat(qtyEl.value)||1, unit: (unitEl.value||'').trim()||null,
+      created_by: S.user && S.user.id,
+    });
+    if (error) { alert(error.message); return; }
+    nameEl.value=''; qtyEl.value='1'; unitEl.value='';
+    loadApptConsumablesList(a.id);
+  });
 }
 
 // Μικρό modal έκδοσης απόδειξης για ραντεβού — ποσό προσυμπληρωμένο από την
@@ -5958,6 +6034,44 @@ function renderSettings() {
         </div>
       </div>
 
+      <!-- ΖΗΤΗΣΗ ΑΞΙΟΛΟΓΗΣΗΣ -->
+      <div class="card">
+        <div class="card-header"><span class="card-title">⭐ Ζήτηση Αξιολόγησης</span></div>
+        <div style="padding:16px">
+          <div style="font-size:12px;color:var(--text-2);margin-bottom:14px">Στέλνει αυτόματα email στον πελάτη μετά την ολοκλήρωση ραντεβού, με σύνδεσμο για αξιολόγηση. Παραμένει ανενεργή μέχρι να τη θέσεις σε λειτουργία.</div>
+          <div class="form-group">
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+              <input type="checkbox" id="review-request-enabled" ${(c&&c.settings&&c.settings.review_request_enabled)?'checked':''}/>
+              Ενεργή αυτόματη ζήτηση αξιολόγησης
+            </label>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Σύνδεσμος αξιολόγησης (π.χ. Google Review)</label>
+            <input class="form-control" id="review-request-link" placeholder="https://g.page/r/..." value="${esc((c&&c.settings&&c.settings.review_link)||'')}"/>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Ημέρες μετά το ραντεβού</label>
+            <input class="form-control" type="number" min="0" id="review-request-delay" style="max-width:100px" value="${(c&&c.settings&&c.settings.review_request_delay_days)||2}"/>
+          </div>
+          <button class="btn btn-primary" id="save-review-request-settings">Αποθήκευση</button>
+        </div>
+      </div>
+
+      <!-- ΚΑΤΑΓΡΑΦΗ ΑΝΑΛΩΣΙΜΩΝ -->
+      <div class="card">
+        <div class="card-header"><span class="card-title">🧴 Καταγραφή Αναλώσιμων</span></div>
+        <div style="padding:16px">
+          <div style="font-size:12px;color:var(--text-2);margin-bottom:14px">Προσθέτει στην κάρτα κάθε ολοκληρωμένου ραντεβού τη δυνατότητα καταγραφής των αναλώσιμων που χρησιμοποιήθηκαν. Παραμένει κρυμμένη μέχρι να την ενεργοποιήσεις.</div>
+          <div class="form-group">
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+              <input type="checkbox" id="consumables-tracking-enabled" ${(c&&c.settings&&c.settings.consumables_tracking_enabled)?'checked':''}/>
+              Ενεργή καταγραφή αναλώσιμων ανά ραντεβού
+            </label>
+          </div>
+          <button class="btn btn-primary" id="save-consumables-settings">Αποθήκευση</button>
+        </div>
+      </div>
+
       <!-- ΕΚΚΡΕΜΕΙΣ CONSULTATIONS -->
       ${(S.unmatchedConsultations&&S.unmatchedConsultations.length)?`
       <div class="card" style="grid-column:1/-1">
@@ -7260,6 +7374,7 @@ function bindEvents() {
           ...(canFin && a.price ? [['Τιμή', euro(a.price)]] : []),
         ].map(([k,v])=>`<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border-2);font-size:12px"><span style="color:var(--text-2)">${k}</span><span style="font-weight:500;text-align:right;max-width:180px">${esc(v||'—')}</span></div>`).join('')}
         <div id="appt-receipt-area">${apptReceiptAreaHtml(a, canReceipt)}</div>
+        ${apptConsumablesAreaHtml(a)}
         ${(()=>{
           // Θεραπευτής: δικό του πεδίο — η αλλαγή εδώ ισοδυναμεί με drag & drop
           // (ενημερώνει therapist_id + notes και μετακινεί την κάρτα στη στήλη του).
@@ -7293,7 +7408,9 @@ function bindEvents() {
         <div style="display:flex;gap:6px;margin-top:6px">
           <button class="btn btn-ghost btn-sm" style="flex:1;justify-content:center;font-size:11px" onclick="resendApptAutomation('${a.id}','resend_confirmation')">📧 Αίτημα επιβεβ.</button>
           <button class="btn btn-ghost btn-sm" style="flex:1;justify-content:center;font-size:11px" onclick="resendApptAutomation('${a.id}','resend_instructions')">📋 Αποστολή οδηγιών</button>
-        </div>`:''}`;
+        </div>
+        ${a.status==='completed' && S.clinic && S.clinic.settings && S.clinic.settings.review_request_enabled?`
+        <button class="btn btn-ghost btn-sm" style="width:100%;justify-content:center;font-size:11px;margin-top:6px" onclick="resendApptAutomation('${a.id}','resend_review_request')">⭐ Ζήτηση αξιολόγησης</button>`:''}`:''}`;
       panel.style.display = 'block';
       loadApptAutomationInfo(a.id);
       // Rebind patient link
@@ -7302,6 +7419,7 @@ function bindEvents() {
         loadPatientDetail(a.patient_id);
       });
       bindApptReceiptButton(a, canReceipt);
+      bindApptConsumablesArea(a);
       const _cs=content.querySelector('[data-appt-status]');if(_cs)_cs.addEventListener('change', async (ev) => {
         const prevValue = a.status;
         const upd = await apptStatusUpdatePayload(a, ev.target.value);
@@ -7519,6 +7637,40 @@ function bindEvents() {
     if (S.clinic) S.clinic.settings = settings;
     _sbs.textContent='✓ Αποθηκεύτηκε!';
     setTimeout(()=>{ _sbs.textContent='Αποθήκευση'; }, 2000);
+  });
+
+  // Save review-request settings (ζήτηση αξιολόγησης — παραμένει ανενεργή
+  // μέχρι να τσεκαριστεί χειροκίνητα)
+  const _srr = document.getElementById('save-review-request-settings');
+  if (_srr) _srr.addEventListener('click', async () => {
+    const enabled = document.getElementById('review-request-enabled');
+    const link = document.getElementById('review-request-link');
+    const delay = document.getElementById('review-request-delay');
+    const settings = Object.assign({}, (S.clinic&&S.clinic.settings)||{}, {
+      review_request_enabled: enabled ? enabled.checked : false,
+      review_link: link ? link.value.trim() : '',
+      review_request_delay_days: delay ? (parseInt(delay.value)||0) : 2,
+    });
+    const {error} = await sb.from('clinics').update({settings}).eq('id',clinicId());
+    if (error) { alert(error.message); return; }
+    if (S.clinic) S.clinic.settings = settings;
+    _srr.textContent='✓ Αποθηκεύτηκε!';
+    setTimeout(()=>{ _srr.textContent='Αποθήκευση'; }, 2000);
+  });
+
+  // Save consumables-tracking settings (καταγραφή αναλώσιμων — κρυμμένη
+  // μέχρι να ενεργοποιηθεί)
+  const _sct = document.getElementById('save-consumables-settings');
+  if (_sct) _sct.addEventListener('click', async () => {
+    const enabled = document.getElementById('consumables-tracking-enabled');
+    const settings = Object.assign({}, (S.clinic&&S.clinic.settings)||{}, {
+      consumables_tracking_enabled: enabled ? enabled.checked : false,
+    });
+    const {error} = await sb.from('clinics').update({settings}).eq('id',clinicId());
+    if (error) { alert(error.message); return; }
+    if (S.clinic) S.clinic.settings = settings;
+    _sct.textContent='✓ Αποθηκεύτηκε!';
+    setTimeout(()=>{ _sct.textContent='Αποθήκευση'; }, 2000);
   });
 
   // One-time bulk conversion: όλα τα ονόματα πελατών σε ΚΕΦΑΛΑΙΑ
