@@ -122,6 +122,14 @@ function normalizeGreek(s: string): string {
   return (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
 }
 
+// Βασικός έλεγχος μορφής (όχι μόνο "περιέχει @") — ένα email με κενό ή χωρίς
+// domain (π.χ. καταχωρημένο λάθος στην καρτέλα) πρέπει να καταγράφεται ως
+// 'no_email' ΜΙΑ φορά, όχι να ξαναδοκιμάζεται κάθε 15 λεπτά επ' άπειρον αφού
+// το 'failed' δεν είναι τελική κατάσταση για το alreadyDone().
+function isValidEmail(email: unknown): boolean {
+  return typeof email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+}
+
 function athensDT(iso: string): string {
   const d = new Date(iso);
   return d.toLocaleDateString('el-GR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Athens' })
@@ -350,8 +358,35 @@ Deno.serve(async (req: Request) => {
     const alreadyDone = async (a: Appt, type: string) => {
       const { data } = await supabase.from('communication_log').select('id')
         .eq('appointment_id', a.id).eq('automation_type', type).eq('cycle', a.start_time)
-        .in('status', ['sent', 'no_email', 'no_set']).limit(1);
+        .in('status', ['sent', 'no_email', 'no_set', 'failed_final']).limit(1);
       return !!(data && data.length);
+    };
+
+    // Μετά από MAX_ATTEMPTS αποτυχημένες προσπάθειες αποστολής (π.χ. Gmail
+    // API σφάλμα, όχι θέμα μορφής email — αυτό το πιάνει ήδη το isValidEmail),
+    // σταματάμε να ξαναδοκιμάζουμε κάθε 15 λεπτά επ' άπειρον· καταγράφεται ως
+    // τελικό 'failed_final' και ειδοποιείται η κλινική με email.
+    const MAX_ATTEMPTS = 3;
+    const failureCount = async (a: Appt, type: string) => {
+      const { count } = await supabase.from('communication_log').select('id', { count: 'exact', head: true })
+        .eq('appointment_id', a.id).eq('automation_type', type).eq('cycle', a.start_time).eq('status', 'failed');
+      return count || 0;
+    };
+    const AUTOMATION_LABEL: Record<string, string> = {
+      confirmation_request: 'αίτημα επιβεβαίωσης', instructions: 'οδηγίες πριν/μετά', review_request: 'ζήτηση αξιολόγησης',
+    };
+    const notifyGiveUp = async (a: Appt, type: string, attempts: number, lastError: string) => {
+      const name = (a.patients && a.patients.full_name) || 'Άγνωστος πελάτης';
+      const email = (a.patients && a.patients.email) || '—';
+      const html = shell(`
+        ${headerBand(brand, '⚠️', 'Απέτυχε αυτόματο email')}
+        <tr><td style="padding:28px 30px;">
+          <p style="font-size:14.5px;line-height:1.7;color:#333333;-webkit-text-fill-color:#333333;margin:0 0 10px;">Η αυτόματη αποστολή (<b>${esc(AUTOMATION_LABEL[type] || type)}</b>) στον/στην <b>${esc(name)}</b> απέτυχε ${attempts} φορές και σταμάτησε.</p>
+          <p style="font-size:13.5px;line-height:1.7;color:#333333;-webkit-text-fill-color:#333333;margin:0 0 6px;">Email: ${esc(email)}</p>
+          <p style="font-size:13.5px;line-height:1.7;color:#8A6070;-webkit-text-fill-color:#8A6070;margin:0;">Σφάλμα: ${esc(lastError)}</p>
+          <p style="font-size:13.5px;line-height:1.7;color:#333333;-webkit-text-fill-color:#333333;margin:14px 0 0;">Παρακαλώ ελέγξτε/ενημερώστε χειροκίνητα.</p>
+        </td></tr>`, brand);
+      try { await sendEmail(await gmail(), SENDER, '⚠️ Απέτυχε αυτόματο email — ' + name, html, undefined, brand.name); } catch { /* best effort, δεν μπλοκάρει τη σάρωση */ }
     };
 
     // Διεύθυνση ινστιτούτου για ημερολόγιο/χάρτες — fallback στο όνομα (το
@@ -390,9 +425,15 @@ Deno.serve(async (req: Request) => {
       const sorted = [...dayAppts].sort((x, y) => (x.start_time < y.start_time ? -1 : 1));
       const first = sorted[0];
       const email = first.patients && first.patients.email;
-      if (!email || !String(email).includes('@')) {
+      if (!isValidEmail(email)) {
         for (const a of pending) await log(a, 'confirmation_request', channel, 'no_email');
         results.no_email++; return;
+      }
+      const fails = await failureCount(first, 'confirmation_request');
+      if (fails >= MAX_ATTEMPTS) {
+        for (const a of pending) await log(a, 'confirmation_request', channel, 'failed_final', { error: `Εγκατάλειψη μετά από ${fails} αποτυχημένες προσπάθειες` });
+        await notifyGiveUp(first, 'confirmation_request', fails, 'Επαναλαμβανόμενη αποτυχία αποστολής');
+        results.errors++; return;
       }
       const ts = Math.floor(new Date(first.start_time).getTime() / 1000);
       const link = `${CONFIRM_URL}?id=${first.id}&ts=${ts}`;
@@ -416,7 +457,13 @@ Deno.serve(async (req: Request) => {
     const sendInstructions = async (a: Appt, channel = 'email') => {
       const set = setForService(a.service_name || '');
       const email = a.patients && a.patients.email;
-      if (!email || !String(email).includes('@')) { await log(a, 'instructions', channel, 'no_email', set ? { metadata: { instruction_set: set.name } } : undefined); results.no_email++; return; }
+      if (!isValidEmail(email)) { await log(a, 'instructions', channel, 'no_email', set ? { metadata: { instruction_set: set.name } } : undefined); results.no_email++; return; }
+      const fails = await failureCount(a, 'instructions');
+      if (fails >= MAX_ATTEMPTS) {
+        await log(a, 'instructions', channel, 'failed_final', { error: `Εγκατάλειψη μετά από ${fails} αποτυχημένες προσπάθειες` });
+        await notifyGiveUp(a, 'instructions', fails, 'Επαναλαμβανόμενη αποτυχία αποστολής');
+        results.errors++; return;
+      }
       const insTs = Math.floor(new Date(a.start_time).getTime() / 1000);
       const insIcsUrl = `${CONFIRM_URL}?id=${a.id}&ts=${insTs}&ics=1`;
       const { gcal, outlook, ics } = buildCalendarBits([a], clinicAddress, brand);
@@ -438,7 +485,13 @@ Deno.serve(async (req: Request) => {
     const sendReviewRequest = async (a: Appt, channel = 'email') => {
       if (!reviewLink) { results.errors++; return; }
       const email = a.patients && a.patients.email;
-      if (!email || !String(email).includes('@')) { await log(a, 'review_request', channel, 'no_email'); results.no_email++; return; }
+      if (!isValidEmail(email)) { await log(a, 'review_request', channel, 'no_email'); results.no_email++; return; }
+      const fails = await failureCount(a, 'review_request');
+      if (fails >= MAX_ATTEMPTS) {
+        await log(a, 'review_request', channel, 'failed_final', { error: `Εγκατάλειψη μετά από ${fails} αποτυχημένες προσπάθειες` });
+        await notifyGiveUp(a, 'review_request', fails, 'Επαναλαμβανόμενη αποτυχία αποστολής');
+        results.errors++; return;
+      }
       const html = reviewRequestEmailHtml((a.patients && a.patients.full_name) || '', a.service_name || '', reviewLink, brand);
       try {
         const msgId = await sendEmail(await gmail(), String(email), '⭐ Πώς ήταν η εμπειρία σας; — ' + brand.name, html, undefined, brand.name);

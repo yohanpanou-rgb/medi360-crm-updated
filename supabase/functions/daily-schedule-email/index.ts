@@ -175,7 +175,10 @@ Deno.serve(async (req: Request) => {
 
     const { data: clinic, error: clinicErr } = await supabase
       .from('clinics').select('*').ilike('name', '%Beauty Line%').limit(1).single();
-    if (clinicErr || !clinic) return json({ error: 'Clinic not found: ' + (clinicErr ? clinicErr.message : '') }, 500);
+    if (clinicErr || !clinic) {
+      console.error('daily-schedule-email: clinic lookup failed', clinicErr);
+      return json({ error: 'Clinic not found: ' + (clinicErr ? clinicErr.message : '') }, 500);
+    }
     const cid = clinic.id as string;
     const cRow = clinic as { name?: string; settings?: { brand_name?: string; brand_color?: string; brand_logo_url?: string } };
     const brand: Brand = {
@@ -200,7 +203,10 @@ Deno.serve(async (req: Request) => {
       .lt('start_time', dstr(winTo) + 'T00:00:00')
       .neq('status', 'cancelled')
       .order('start_time');
-    if (apptErr) return json({ error: 'Appointments: ' + apptErr.message }, 500);
+    if (apptErr) {
+      console.error('daily-schedule-email: appointments query failed', apptErr);
+      return json({ error: 'Appointments: ' + apptErr.message }, 500);
+    }
     const byDay: Record<string, Appt[]> = {};
     ((allAppts || []) as unknown as Appt[]).forEach((a) => {
       const k = athensDay(a.start_time);
@@ -240,13 +246,19 @@ Deno.serve(async (req: Request) => {
         body: JSON.stringify({ raw }),
       });
       const out = await gmailRes.json();
-      if (out.error) return json({ error: 'Gmail: ' + JSON.stringify(out.error) }, 500);
+      if (out.error) {
+        console.error('daily-schedule-email: Gmail send failed', out.error);
+        return json({ error: 'Gmail: ' + JSON.stringify(out.error) }, 500);
+      }
 
       return json({ ok: true, day: dstr(day), appointments: appts.length });
     }
 
     return json({ ok: true, message: 'Καμία ημέρα με ραντεβού στις επόμενες 7 — δεν στάλθηκε email' });
   } catch (e) {
+    // console.error εδώ ώστε ένα μελλοντικό 500 να είναι διαγνώσιμο από τα
+    // Supabase function logs — πριν δεν υπήρχε καμία καταγραφή του σφάλματος.
+    console.error('daily-schedule-email failed:', e instanceof Error ? e.stack || e.message : e);
     return json({ error: e instanceof Error ? e.message : 'Άγνωστο σφάλμα' }, 500);
   }
 });
