@@ -1051,19 +1051,37 @@ async function loadPageData() {
     // no-show) μέσα στο διάστημα — ΟΧΙ πότε ανοίχτηκε η καρτέλα τους. Έτσι οι
     // παλιοί πελάτες που απλώς καταχωρήθηκαν αργά στο Medi δεν μετράνε ως νέοι.
     // Χτίζουμε χάρτη «πρώτο ραντεβού ανά πελάτη» με σελιδοποίηση (όριο 1000/query).
+    // Στο ίδιο πέρασμα (ίδιο query, καμία επιπλέον κλήση) χτίζουμε και τα
+    // στοιχεία που χρειάζεται η «Αναφορά ανά Κατηγορία Πελάτη»: τελευταία
+    // ΟΛΟΚΛΗΡΩΜΕΝΗ επίσκεψη (all-time, όχι μόνο μέσα στο επιλεγμένο διάστημα),
+    // επισκέψεις τελευταίου 12μήνου, και σύνολο τζίρου (lifetime).
     const firstApptByPatient = {};
+    const lastVisitByPatient = {};
+    const visits12moByPatient = {};
+    const lifetimeSpendByPatient = {};
+    const oneYearAgoISO = new Date(Date.now() - 365*86400000).toISOString();
     for (let off = 0; ; off += 1000) {
-      const {data:chunk} = await sb.from('appointments').select('patient_id,start_time,status')
+      const {data:chunk} = await sb.from('appointments').select('patient_id,start_time,status,price')
         .eq('clinic_id',cid).order('start_time',{ascending:true}).range(off, off+999);
       (chunk||[]).forEach(a=>{
-        if (a.status==='cancelled'||a.status==='no_show'||!a.start_time) return;
-        if (!firstApptByPatient[a.patient_id] || a.start_time < firstApptByPatient[a.patient_id]) firstApptByPatient[a.patient_id] = a.start_time;
+        if (!a.start_time) return;
+        if (a.status!=='cancelled' && a.status!=='no_show') {
+          if (!firstApptByPatient[a.patient_id] || a.start_time < firstApptByPatient[a.patient_id]) firstApptByPatient[a.patient_id] = a.start_time;
+        }
+        if (a.status==='completed') {
+          if (!lastVisitByPatient[a.patient_id] || a.start_time > lastVisitByPatient[a.patient_id]) lastVisitByPatient[a.patient_id] = a.start_time;
+          if (a.start_time >= oneYearAgoISO) visits12moByPatient[a.patient_id] = (visits12moByPatient[a.patient_id]||0) + 1;
+          lifetimeSpendByPatient[a.patient_id] = (lifetimeSpendByPatient[a.patient_id]||0) + (a.price||0);
+        }
       });
       if (!chunk || chunk.length < 1000) break;
     }
     S.reportNewPatients = Object.entries(firstApptByPatient)
       .filter(([,ts])=>ts>=fromISO && ts<=toISO).map(([id])=>({id}));
     S._reportFirstApptMap = firstApptByPatient;
+    S._reportLastVisitMap = lastVisitByPatient;
+    S._reportVisits12moMap = visits12moByPatient;
+    S._reportLifetimeSpendMap = lifetimeSpendByPatient;
     // Επιστροφή νέων πελατών: ΟΛΑ τα ραντεβού (έως σήμερα) όσων πρωτοήρθαν στην
     // περίοδο — για τους κάδους «1 επίσκεψη / 2 / 3+» και την 1η υπηρεσία τους.
     S.reportNewPtAppts = [];
@@ -1071,7 +1089,7 @@ async function loadPageData() {
     if (npIds.length) {
       S.reportNewPtAppts = await sbAll(()=>sb.from('appointments').select('patient_id,service_name,start_time,status').eq('clinic_id',cid).in('patient_id', npIds).order('start_time',{ascending:true}));
     }
-    const {data:allPts} = await sb.from('patients').select('id,status,gdpr_signed').eq('clinic_id',cid);
+    const {data:allPts} = await sb.from('patients').select('id,status,gdpr_signed,full_name,phone').eq('clinic_id',cid);
     S.reportAllPatients = allPts||[];
     // Πακέτα που ΑΓΟΡΑΣΤΗΚΑΝ στην περίοδο — τα ραντεβού πακέτου δεν έχουν τιμή
     // (πληρώθηκαν στην αγορά), οπότε ο τζίρος τους μετράει εδώ, ξεχωριστά.
@@ -4373,12 +4391,48 @@ function computeReportStats() {
   const consultPatients = Object.values(consultByPatient)
     .sort((a,b)=>(b.total-b.done)-(a.total-a.done) || b.total-a.total);
 
+  // 🎯 Αναφορά ανά Κατηγορία Πελάτη — κατηγορίες ΑΠΟΚΛΕΙΣΤΙΚΕΣ (κάθε πελάτης
+  // σε ΜΙΑ), με σειρά προτεραιότητας:
+  //  1. VIP — χειροκίνητη ετικέτα (p.status), όπως ήδη υπάρχει στο CRM.
+  //  2. Τακτικός πελάτης — ≥3 ολοκληρωμένες επισκέψεις στους τελευταίους 12 μήνες.
+  //  3. Ιδιαίτερος πελάτης — lifetime τζίρος στο πάνω 20% όσων απομένουν με τζίρο>0
+  //     (σχετικό κατώφλι, προσαρμόζεται αυτόματα στο μέγεθος της κλινικής).
+  //  4. Κανονικός πελάτης — τουλάχιστον 1 ολοκληρωμένη επίσκεψη ever, καμία από τα παραπάνω.
+  // Πελάτες χωρίς καμία ολοκληρωμένη επίσκεψη ever δεν μπαίνουν σε αυτές τις 4
+  // κατηγορίες (καλύπτονται ήδη από lead/inactive αλλού στο CRM).
+  const lastVisitMap = S._reportLastVisitMap||{};
+  const visits12moMap = S._reportVisits12moMap||{};
+  const spendMap = S._reportLifetimeSpendMap||{};
+  const now = new Date();
+  const withVisit = allPatients.filter(p=>lastVisitMap[p.id]);
+  const remaining = new Set(withVisit.map(p=>p.id));
+  const vipIds = new Set(withVisit.filter(p=>p.status==='vip').map(p=>p.id));
+  vipIds.forEach(id=>remaining.delete(id));
+  const regularIds = new Set([...remaining].filter(id=>(visits12moMap[id]||0)>=3));
+  regularIds.forEach(id=>remaining.delete(id));
+  const spendCandidates = [...remaining].filter(id=>(spendMap[id]||0)>0).sort((a,b)=>(spendMap[b]||0)-(spendMap[a]||0));
+  const specialCount = Math.max(spendCandidates.length ? 1 : 0, Math.round(spendCandidates.length*0.2));
+  const specialIds = new Set(spendCandidates.slice(0, specialCount));
+  specialIds.forEach(id=>remaining.delete(id));
+  const normalIds = remaining;
+  const buildEntry = (p) => {
+    const lastVisit = lastVisitMap[p.id];
+    return { id:p.id, name:p.full_name||'—', phone:p.phone||'', daysSince: Math.floor((now-new Date(lastVisit))/86400000), spend: spendMap[p.id]||0, visits12mo: visits12moMap[p.id]||0 };
+  };
+  const byDaysDesc = (a,b)=>b.daysSince-a.daysSince;
+  const patientCategoryGroups = [
+    { key:'vip', label:'VIP', color:'#854F0B', bg:'#FAEEDA', items: withVisit.filter(p=>vipIds.has(p.id)).map(buildEntry).sort(byDaysDesc) },
+    { key:'regular', label:'Τακτικός πελάτης', color:'#0F6E56', bg:'#E1F5EE', items: withVisit.filter(p=>regularIds.has(p.id)).map(buildEntry).sort(byDaysDesc) },
+    { key:'special', label:'Ιδιαίτερος πελάτης', color:'#3C3489', bg:'#EEEDFE', items: withVisit.filter(p=>specialIds.has(p.id)).map(buildEntry).sort(byDaysDesc) },
+    { key:'normal', label:'Κανονικός πελάτης', color:'#185FA5', bg:'#E6F1FB', items: withVisit.filter(p=>normalIds.has(p.id)).map(buildEntry).sort(byDaysDesc) },
+  ];
+
   return { apts, newPatients, allPatients, revenue, pkgRevenue, pkgCount, noShowRate, noShows, gdprRate, gdprSigned, activeCount:activePatients.length, topServices,
     allServices, svcByCategory,
     npNever, npOne, npTwo, npMore, npAttended, npReturned, npFirstServices,
     newPatientsDelta, newPatientsPct, consultations, prevConsultCount, consultDelta, consultPct,
     utilizationRate, utilizationIsReal, recommendedTotal, recommendedDone, consultPatients,
-    completedCount, cancelledCount, pendingCount };
+    completedCount, cancelledCount, pendingCount, patientCategoryGroups };
 }
 
 // 🎁 Δώρο γενεθλίων — εξαργύρωση
@@ -4864,6 +4918,32 @@ function renderReports() {
         </tbody>
       </table>`:`<div class="empty-state"><div class="empty-icon">▤</div><div>Δεν υπάρχουν ραντεβού σε αυτή την κατηγορία στο διάστημα</div></div>`);
       })()}
+    </div>
+
+    <div class="card" style="padding:16px;margin-bottom:16px">
+      <div class="card-title" style="margin-bottom:4px">🎯 Αναφορά ανά Κατηγορία Πελάτη</div>
+      <div style="font-size:11px;color:var(--text-2);margin-bottom:12px">Όλοι οι πελάτες με τουλάχιστον 1 ολοκληρωμένη επίσκεψη, ταξινομημένοι σε ΜΙΑ κατηγορία ο καθένας: <b>VIP</b> (χειροκίνητη ετικέτα) → <b>Τακτικός</b> (3+ επισκέψεις στο τελευταίο 12μηνο) → <b>Ιδιαίτερος</b> (κορυφαίος τζίρος lifetime) → <b>Κανονικός</b> (οι υπόλοιποι). Ταξινόμηση εντός κατηγορίας: όσοι έχουν να έρθουν περισσότερο καιρό πρώτοι.</div>
+      ${s.patientCategoryGroups.every(g=>!g.items.length) ? `<div class="empty-state"><div class="empty-icon">◎</div><div>Κανένας πελάτης με ολοκληρωμένη επίσκεψη ακόμα</div></div>` : `
+      <div style="display:flex;flex-direction:column;gap:8px">
+        ${s.patientCategoryGroups.map(g=>`
+        <details style="background:var(--surface-2);border-radius:8px" ${g.key==='vip'&&g.items.length?'open':''}>
+          <summary style="display:flex;align-items:center;gap:8px;list-style:none;cursor:pointer;padding:10px 12px">
+            <span style="font-size:12px;font-weight:700;color:${g.color};background:${g.bg};border-radius:99px;padding:2px 10px">${g.label}</span>
+            <span style="font-size:11px;color:var(--text-2)">${g.items.length} πελάτ${g.items.length===1?'ης':'ες'}</span>
+            <span style="flex:1"></span>
+            <span style="font-size:10px;color:var(--text-3)">▾</span>
+          </summary>
+          ${g.items.length?`
+          <div style="padding:0 12px 10px;display:flex;flex-direction:column;gap:6px;max-height:320px;overflow-y:auto">
+            ${g.items.map(p=>`
+            <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--border-2)">
+              <span style="font-size:12px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;flex:1" onclick="loadPatientDetail('${p.id}')">${esc(p.name)}</span>
+              <span style="font-size:11px;color:${p.daysSince>60?'#A32D2D':'var(--text-2)'};font-weight:${p.daysSince>60?'700':'400'};flex-shrink:0">${p.daysSince===0?'σήμερα':p.daysSince+' ημέρες'}</span>
+              ${p.phone?`<a href="tel:${esc(p.phone)}" onclick="event.stopPropagation()" style="font-size:11px;color:var(--blue);text-decoration:none;flex-shrink:0">☎</a>`:''}
+            </div>`).join('')}
+          </div>`:`<div style="padding:0 12px 10px;font-size:11.5px;color:var(--text-2)">Κανένας πελάτης σε αυτή την κατηγορία</div>`}
+        </details>`).join('')}
+      </div>`}
     </div>
 
     <div class="card" style="padding:16px;margin-bottom:16px">
