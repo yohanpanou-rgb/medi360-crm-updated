@@ -10,9 +10,15 @@
 // θεραπεύτρια (therapist_id → profiles, αλλιώς "Προσωπικό: X" στα notes),
 // με τη σταθερή σειρά Λίνα/Χριστιάνα/Αθανασία/Νάνσυ πρώτα.
 //
-// Τρέχει καθημερινά από pg_cron (βλ. supabase/create_daily_schedule_email.sql)
-// στις 17:00 UTC = 20:00 Ελλάδας το καλοκαίρι / 19:00 τον χειμώνα (το pg_cron
-// τρέχει σε UTC, χωρίς αυτόματη προσαρμογή θερινής/χειμερινής ώρας).
+// Στόχος: να φεύγει ΠΑΝΤΑ στις 20:00 ώρα Ελλάδας, ανεξάρτητα από
+// θερινή/χειμερινή ώρα. Το pg_cron τρέχει σε UTC χωρίς αυτόματη προσαρμογή
+// DST, οπότε το cron (βλ. supabase/create_daily_schedule_email.sql) καλεί το
+// function ΔΥΟ φορές την ημέρα — στις 17:00 UTC (=20:00 EEST καλοκαίρι) ΚΑΙ
+// στις 18:00 UTC (=20:00 EET χειμώνα)· το ίδιο το function ελέγχει παρακάτω
+// την πραγματική τοπική ώρα Ελλάδας και εκτελείται μόνο στην κλήση που
+// πραγματικά αντιστοιχεί σε 20:00 εκεί — η άλλη επιστρέφει αμέσως χωρίς
+// να στείλει τίποτα. Έτσι δεν χρειάζεται καμία χειροκίνητη αλλαγή δύο
+// φορές τον χρόνο στις ημερομηνίες αλλαγής ώρας.
 //
 // Deploy with:
 //   supabase functions deploy daily-schedule-email --no-verify-jwt
@@ -166,6 +172,19 @@ Deno.serve(async (req: Request) => {
   const secret = Deno.env.get('BIRTHDAY_CRON_SECRET');
   if (secret && req.headers.get('x-cron-secret') !== secret) {
     return json({ error: 'Unauthorized' }, 401);
+  }
+
+  let body: { force?: boolean } = {};
+  try { body = await req.json(); } catch { /* κενό body από cron */ }
+
+  // Δύο κλήσεις/ημέρα (17:00 & 18:00 UTC, βλ. σχόλιο πιο πάνω) — μόνο η
+  // κλήση που πέφτει ΠΡΑΓΜΑΤΙΚΑ στις 20:00 ώρα Ελλάδας συνεχίζει. Το
+  // {force:true} στο body παρακάμπτει τον έλεγχο (χειροκίνητη δοκιμή/αποστολή).
+  if (!body.force) {
+    const athensHour = Number(new Date().toLocaleString('en-US', { hour: 'numeric', hour12: false, timeZone: 'Europe/Athens' }));
+    if (athensHour !== 20) {
+      return json({ ok: true, skipped: true, reason: `Παράκαμψη — τώρα είναι ${athensHour}:00 ώρα Ελλάδας, όχι 20:00` });
+    }
   }
 
   try {
