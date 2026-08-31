@@ -7472,6 +7472,13 @@ function bindEvents() {
           </div>
           <button class="btn btn-primary btn-sm" style="flex-shrink:0;padding:6px 10px;font-size:11px;white-space:nowrap" data-patient="${a.patient_id}">👤 Καρτέλα</button>
         </div>
+        ${canSee(['super_admin','clinic_admin','receptionist'])?`
+        <div style="display:flex;gap:6px;margin-bottom:10px">
+          <button class="btn btn-ghost btn-sm" style="flex:1;justify-content:center;font-size:11px" onclick="resendApptAutomation('${a.id}','resend_confirmation')">📧 Αίτημα επιβεβ.</button>
+          <button class="btn btn-ghost btn-sm" style="flex:1;justify-content:center;font-size:11px" onclick="resendApptAutomation('${a.id}','resend_instructions')">📋 Αποστολή οδηγιών</button>
+        </div>
+        ${a.status==='completed' && S.clinic && S.clinic.settings && S.clinic.settings.review_request_enabled?`
+        <button class="btn btn-ghost btn-sm" style="width:100%;justify-content:center;font-size:11px;margin-bottom:10px" onclick="resendApptAutomation('${a.id}','resend_review_request')">⭐ Ζήτηση αξιολόγησης</button>`:''}`:''}
         ${[
           ['Υπηρεσία', a.service_name],
           ['Ημερομηνία', start.toLocaleDateString('el-GR',{weekday:'long',day:'numeric',month:'long',year:'numeric'})],
@@ -7510,14 +7517,7 @@ function bindEvents() {
             ${Object.entries(STATUS_APPT).map(([k,v])=>`<option value="${k}" ${a.status===k?'selected':''}>${v.l}</option>`).join('')}
           </select>
         </div>
-        <div id="appt-autom-info" style="margin-top:8px;font-size:11px;color:var(--text-2)"></div>
-        ${canSee(['super_admin','clinic_admin','receptionist'])?`
-        <div style="display:flex;gap:6px;margin-top:6px">
-          <button class="btn btn-ghost btn-sm" style="flex:1;justify-content:center;font-size:11px" onclick="resendApptAutomation('${a.id}','resend_confirmation')">📧 Αίτημα επιβεβ.</button>
-          <button class="btn btn-ghost btn-sm" style="flex:1;justify-content:center;font-size:11px" onclick="resendApptAutomation('${a.id}','resend_instructions')">📋 Αποστολή οδηγιών</button>
-        </div>
-        ${a.status==='completed' && S.clinic && S.clinic.settings && S.clinic.settings.review_request_enabled?`
-        <button class="btn btn-ghost btn-sm" style="width:100%;justify-content:center;font-size:11px;margin-top:6px" onclick="resendApptAutomation('${a.id}','resend_review_request')">⭐ Ζήτηση αξιολόγησης</button>`:''}`:''}`;
+        <div id="appt-autom-info" style="margin-top:8px;font-size:11px;color:var(--text-2)"></div>`;
       panel.style.display = 'block';
       loadApptAutomationInfo(a.id);
       // Rebind patient link
