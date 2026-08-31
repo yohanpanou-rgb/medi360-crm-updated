@@ -7464,12 +7464,13 @@ function bindEvents() {
       const consentLabels = {laser:'Laser Αποτρίχωσης', cleansing:'Καθαρισμού', peelings:'Peelings', oxygen:'Οξυγόνου/Ενυδάτωσης'};
       const missingThisConsent = consentGrp && a.patient_id && consentIdSets[consentGrp] && !consentIdSets[consentGrp].has(a.patient_id);
       content.innerHTML = `
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
-          <div style="width:36px;height:36px;border-radius:50%;background:${c.bg};display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:${c.text}">${initials(a.patients&&a.patients.full_name)}</div>
-          <div>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+          <div style="width:36px;height:36px;border-radius:50%;background:${c.bg};display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:${c.text};flex-shrink:0">${initials(a.patients&&a.patients.full_name)}</div>
+          <div style="flex:1;min-width:0">
             <div style="font-size:14px;font-weight:500">${esc(a.patients&&a.patients.full_name||'—')}</div>
             <div style="font-size:12px;color:var(--text-2);display:flex;align-items:center;gap:6px">${esc(a.patients&&a.patients.phone||'')} ${phoneActionsHtml(a.patients&&a.patients.phone, 13)}</div>
           </div>
+          <button class="btn btn-primary btn-sm" style="flex-shrink:0;padding:6px 10px;font-size:11px;white-space:nowrap" data-patient="${a.patient_id}">👤 Καρτέλα</button>
         </div>
         ${[
           ['Υπηρεσία', a.service_name],
@@ -7479,7 +7480,7 @@ function bindEvents() {
           ['Κατάσταση', (STATUS_APPT[a.status]||STATUS_APPT.confirmed).l],
           ['GDPR', a.patients&&a.patients.gdpr_signed ? '✅ Υπογεγραμμένο' : '❌ Χωρίς GDPR'],
           ...(canFin && a.price ? [['Τιμή', euro(a.price)]] : []),
-        ].map(([k,v])=>`<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border-2);font-size:12px"><span style="color:var(--text-2)">${k}</span><span style="font-weight:500;text-align:right;max-width:180px">${esc(v||'—')}</span></div>`).join('')}
+        ].map(([k,v])=>`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border-2);font-size:12px"><span style="color:var(--text-2)">${k}</span><span style="font-weight:500;text-align:right;max-width:180px">${esc(v||'—')}</span></div>`).join('')}
         <div id="appt-receipt-area">${apptReceiptAreaHtml(a, canReceipt)}</div>
         ${apptConsumablesAreaHtml(a)}
         ${(()=>{
@@ -7489,28 +7490,27 @@ function bindEvents() {
           const extras = (S.staff||[]).map(s=>s.full_name).filter(n=>n && !FIXED.some(f=>sameStaffName(f,n)));
           const opts = [...FIXED, ...extras];
           const curName = apptStaffName(a, S.staff||[]) || '';
-          return `<div style="margin-top:10px">
-            <div style="font-size:11px;color:var(--text-2);margin-bottom:4px">Θεραπευτής</div>
+          return `<div style="margin-top:8px">
+            <div style="font-size:11px;color:var(--text-2);margin-bottom:3px">Θεραπευτής</div>
             <select id="appt-therapist-edit" style="width:100%;font-size:12px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-family:var(--font)">
               <option value="">— Χωρίς ανάθεση —</option>
               ${opts.map(n=>`<option value="${esc(n)}" ${curName && sameStaffName(n,curName)?'selected':''}>${esc(n)}</option>`).join('')}
             </select>
           </div>`;
         })()}
-        <div style="margin-top:10px">
-          <div style="font-size:11px;color:var(--text-2);margin-bottom:4px">Σημειώσεις</div>
-          <textarea id="appt-notes-edit" rows="3" style="width:100%;font-size:12px;resize:vertical" placeholder="π.χ. προτιμήσεις, ευαισθησίες, παρατηρήσεις...">${esc((a.notes||'').replace(/Προσωπικό:\s*[^\n·|]+\n?/i,'').trim())}</textarea>
+        <div style="margin-top:8px">
+          <div style="font-size:11px;color:var(--text-2);margin-bottom:3px">Σημειώσεις</div>
+          <textarea id="appt-notes-edit" rows="2" style="width:100%;font-size:12px;resize:vertical" placeholder="π.χ. προτιμήσεις, ευαισθησίες, παρατηρήσεις...">${esc((a.notes||'').replace(/Προσωπικό:\s*[^\n·|]+\n?/i,'').trim())}</textarea>
           <button class="btn btn-ghost btn-sm" id="appt-notes-save" style="margin-top:4px;width:100%;justify-content:center">💾 Αποθήκευση σημειώσεων</button>
         </div>
         ${missingThisConsent?`
-        <button class="btn btn-sm" style="width:100%;margin-top:12px;justify-content:center;background:#D97706;color:#fff;font-weight:700" onclick="openConsentFromAppointment('${a.patient_id}','${esc(a.patients&&a.patients.full_name||'')}','${consentGrp}')">📝 Συμπλήρωση Συναίνεσης ${consentLabels[consentGrp]}</button>`:''}
-        <div style="display:flex;gap:8px;margin-top:${missingThisConsent?'8':'14'}px">
-          <button class="btn btn-primary btn-sm" style="flex:1;justify-content:center" data-patient="${a.patient_id}">👤 Καρτέλα ασθενή</button>
-          <select data-appt-status="${a.id}" style="flex:1;font-size:11px;padding:5px;border:1px solid var(--border);border-radius:6px;font-family:var(--font)">
+        <button class="btn btn-sm" style="width:100%;margin-top:8px;justify-content:center;background:#D97706;color:#fff;font-weight:700" onclick="openConsentFromAppointment('${a.patient_id}','${esc(a.patients&&a.patients.full_name||'')}','${consentGrp}')">📝 Συμπλήρωση Συναίνεσης ${consentLabels[consentGrp]}</button>`:''}
+        <div style="margin-top:${missingThisConsent?'8':'10'}px">
+          <select data-appt-status="${a.id}" style="width:100%;font-size:11px;padding:5px;border:1px solid var(--border);border-radius:6px;font-family:var(--font)">
             ${Object.entries(STATUS_APPT).map(([k,v])=>`<option value="${k}" ${a.status===k?'selected':''}>${v.l}</option>`).join('')}
           </select>
         </div>
-        <div id="appt-autom-info" style="margin-top:10px;font-size:11px;color:var(--text-2)"></div>
+        <div id="appt-autom-info" style="margin-top:8px;font-size:11px;color:var(--text-2)"></div>
         ${canSee(['super_admin','clinic_admin','receptionist'])?`
         <div style="display:flex;gap:6px;margin-top:6px">
           <button class="btn btn-ghost btn-sm" style="flex:1;justify-content:center;font-size:11px" onclick="resendApptAutomation('${a.id}','resend_confirmation')">📧 Αίτημα επιβεβ.</button>
