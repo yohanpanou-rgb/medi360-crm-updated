@@ -8866,6 +8866,14 @@ function bindModalEvents() {
     };
     svcSearch.onfocus = showServiceDropdown;
     svcSearch.oninput = showServiceDropdown;
+    // Αν ο χρήστης πληκτρολογήσει αλλά κλείσει το πεδίο χωρίς να διαλέξει
+    // πρόταση, το ορατό κείμενο θα έμενε εκτός συγχρονισμού με το πραγματικό
+    // #a-service (πχ κενή υπηρεσία σε ραντεβού που δείχνει όνομα). Καθυστέρηση
+    // ώστε να προλάβει πρώτα το click πάνω σε πρόταση (το blur φεύγει πριν το click).
+    svcSearch.onblur = () => setTimeout(() => {
+      const opt = aServiceSel.selectedOptions[0];
+      svcSearch.value = (opt && opt.value && opt.value !== '__custom__') ? opt.textContent : '';
+    }, 200);
     document.addEventListener('click', (e) => {
       if (!e.target.closest('#a-service-search') && !e.target.closest('#a-service-results')) svcResults.style.display = 'none';
     });
@@ -8879,6 +8887,14 @@ function bindModalEvents() {
     const timeWithTz = time.length===16 ? time+':00+03:00' : time+'+03:00'; // datetime-local: "YYYY-MM-DDTHH:MM"
     const svcSel = document.getElementById('a-service');
     const serviceName = svcSel.value==='__custom__' ? document.getElementById('a-service-custom').value.trim() : svcSel.value;
+    // Ασφαλιστική δικλείδα: αν ο χρήστης πληκτρολόγησε στο πεδίο αναζήτησης
+    // αλλά δεν πρόλαβε να διαλέξει πρόταση (πχ πάτησε Αποθήκευση αμέσως),
+    // το #a-service θα είναι ακόμα κενό ενώ το ορατό κείμενο δείχνει κάτι —
+    // μπλοκάρουμε αντί να αποθηκευτεί ραντεβού με κενή υπηρεσία.
+    const svcSearchEl = document.getElementById('a-service-search');
+    if (svcSearchEl && svcSearchEl.value.trim() && !serviceName) {
+      return alert('Επίλεξε την υπηρεσία από τη λίστα (ή «✎ Άλλη» για ελεύθερο κείμενο) — αυτό που έγραψες δεν έχει επιλεγεί ακόμα.');
+    }
     const therapistSel = document.getElementById('a-therapist');
     // Προειδοποίηση διπλοκράτησης ΘΕΡΑΠΕΥΤΗ: αν το νέο ραντεβού επικαλύπτεται
     // χρονικά με άλλο του ίδιου ατόμου, ρωτάμε — δεν μπλοκάρουμε (όπως και με
