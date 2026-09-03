@@ -3311,6 +3311,8 @@ function renderCalendar() {
               const hasConflict = laserConflictIds.has(a.id);
               const missingGrp = missingConsent(a);
               const hasNoConsent = !!missingGrp;
+              const therapistName = apptTherapist(a) || '';
+              const metaText = [a.service_name, therapistName].filter(Boolean).join(' · ');
               // Αν επικαλύπτεται χρονικά με άλλο ραντεβού στην ίδια στήλη, μοίρασε το
               // πλάτος δίπλα-δίπλα αντί να καλύψει το ένα εντελώς το άλλο (βλ. packOverlaps).
               const pack = overlapPack[a.id] || {col:0, count:1};
@@ -3338,10 +3340,10 @@ function renderCalendar() {
                 data-status="${a.status||'confirmed'}"
                 data-consent-missing="${missingGrp?CONSENT_GROUP_LABEL[missingGrp]:''}">
                 <div style="font-size:10px;font-weight:500;color:${c.text};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
-                  ${hasNoConsent?'<span style="font-size:13px;font-weight:700;color:#D97706">⚠</span> ':''}${isVip?'★ ':''}${esc(a.patients&&a.patients.full_name||'—')}
+                  ${hasNoConsent?'<span style="font-size:13px;font-weight:700;color:#D97706">⚠</span> ':''}${isVip?'★ ':''}${esc(a.patients&&a.patients.full_name||'—')}${heightPx<=(hasNoConsent?58:30)&&metaText?`<span style="font-weight:400;opacity:0.75"> · ${esc(metaText)}</span>`:''}
                 </div>
                 ${hasNoConsent&&heightPx>30?`<div style="font-size:9px;font-weight:700;color:#D97706;white-space:nowrap;overflow:hidden">⚠ ΧΩΡΙΣ ΣΥΝΑΙΝΕΣΗ ${CONSENT_GROUP_LABEL[missingGrp]}</div>`:''}
-                ${heightPx>(hasNoConsent?58:30)?`<div style="font-size:9px;color:${c.text};opacity:0.8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(a.service_name||'')}</div>`:''}
+                ${heightPx>(hasNoConsent?58:30)?`<div style="font-size:9px;color:${c.text};opacity:0.8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(metaText)}</div>`:''}
                 ${heightPx>44?`<div style="font-size:9px;color:${c.text};opacity:0.7">${startTime}${!gdpr?' ⚠':''}</div>`:''}
               </div>`;
             }).join('')}
@@ -3394,8 +3396,10 @@ function renderCalendar() {
             return `<div style="height:${HOUR_H}px;border-bottom:1px solid var(--border-2);border-right:1px solid var(--border-2);position:relative;padding:1px">
               ${dayAppts3.map(a=>{
                 const c=apptColor(a);
-                return `<div data-appt-cal="${a.id}" style="background:${c.bg};border-left:2px solid ${c.border};border-radius:3px;padding:1px 3px;font-size:9px;color:${c.text};margin-bottom:1px;cursor:pointer;overflow:hidden;white-space:nowrap;text-overflow:ellipsis" title="${esc(a.patients&&a.patients.full_name||'')} · ${esc(a.service_name||'')}">
-                  ${esc((a.patients&&a.patients.full_name||'—').split(' ')[0])}
+                const therapistName = apptTherapist(a) || '';
+                const metaText = [a.service_name, therapistName].filter(Boolean).join(' · ');
+                return `<div data-appt-cal="${a.id}" style="background:${c.bg};border-left:2px solid ${c.border};border-radius:3px;padding:1px 3px;font-size:9px;color:${c.text};margin-bottom:1px;cursor:pointer;overflow:hidden;white-space:nowrap;text-overflow:ellipsis" title="${esc(a.patients&&a.patients.full_name||'')} · ${esc(a.service_name||'')}${therapistName?' · '+esc(therapistName):''}">
+                  <span style="font-weight:600">${esc((a.patients&&a.patients.full_name||'—').split(' ')[0])}</span>${metaText?` · <span style="opacity:0.8">${esc(metaText)}</span>`:''}
                 </div>`;
               }).join('')}
             </div>`;
