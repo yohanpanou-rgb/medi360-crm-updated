@@ -23,11 +23,15 @@
 //
 // PDF: παράγεται με pdf-lib (καθαρό JS, τρέχει μέσα στο Deno edge runtime —
 // όχι headless browser, μη διαθέσιμο εκεί) με ενσωματωμένη γραμματοσειρά
-// Noto Sans για υποστήριξη ελληνικών. Η γραμματοσειρά «κατεβαίνει» τη στιγμή
-// της εκτέλεσης (μία φορά ανά cold start, μέσω module-level cache) από το
-// Google Fonts repository στο GitHub — καθαρό font asset, όχι δεδομένα
-// πελατών· κανένα δεδομένο πελάτη/ραντεβού δεν στέλνεται πουθενά εκτός
-// Google (Gmail) και του ίδιου του Supabase project.
+// Noto Sans (Regular, στατικό instance — ΟΧΙ variable font: το pdf-lib/
+// fontkit δεν παρσάρει αξιόπιστα variable fonts, έβγαζε σπασμένο/λειψό
+// κείμενο στο PDF) για υποστήριξη ελληνικών. Η γραμματοσειρά «κατεβαίνει»
+// τη στιγμή της εκτέλεσης (μία φορά ανά cold start, μέσω module-level
+// cache) από το ίδιο το repo του project στο GitHub
+// (supabase/functions/daily-audit-report/fonts/NotoSans-Regular.ttf) —
+// καθαρό font asset, όχι δεδομένα πελατών· κανένα δεδομένο πελάτη/
+// ραντεβού δεν στέλνεται πουθενά εκτός Google (Gmail) και του ίδιου του
+// Supabase project.
 //
 // Deploy with:
 //   supabase functions deploy daily-audit-report --no-verify-jwt
@@ -560,7 +564,7 @@ const RGB = {
 let notoSansBytesPromise: Promise<Uint8Array> | null = null;
 function getNotoSansBytes(): Promise<Uint8Array> {
   if (!notoSansBytesPromise) {
-    notoSansBytesPromise = fetch('https://raw.githubusercontent.com/google/fonts/main/ofl/notosans/NotoSans%5Bwdth%2Cwght%5D.ttf')
+    notoSansBytesPromise = fetch('https://raw.githubusercontent.com/yohanpanou-rgb/medi360-crm-updated/main/supabase/functions/daily-audit-report/fonts/NotoSans-Regular.ttf')
       .then((r) => { if (!r.ok) throw new Error('Font fetch failed: ' + r.status); return r.arrayBuffer(); })
       .then((buf) => new Uint8Array(buf));
   }
