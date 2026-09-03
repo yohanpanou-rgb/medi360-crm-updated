@@ -3279,6 +3279,8 @@ function renderCalendar() {
           : null;
         const t2h = (t) => { const [hh,mm] = String(t).split(':').map(Number); return hh+(mm||0)/60; };
         const hourIsOutside = (h) => colWW && (!colWW.working || (h+1<=t2h(colWW.start) || h>=t2h(colWW.end)));
+        // Σε άδεια σήμερα → όλη η στήλη αχνώνει σαν εκτός ωραρίου, όχι μόνο το badge στην κεφαλίδα.
+        const colOnLeave = calMode==='therapist' && col.id!=='unassigned' && namesOnLeaveToday.has(col.full_name);
 
         return `<div style="flex:1;min-width:160px;border-right:1px solid var(--border-2);position:relative" ${calMode==='therapist'&&col.id!=='unassigned'?`data-drop-col="${esc(col.full_name)}"`:''}>
           <!-- Header -->
@@ -3286,13 +3288,13 @@ function renderCalendar() {
             <div style="text-align:center">
               <div style="font-size:12px;font-weight:500;color:var(--navy)">${esc(col.full_name)}</div>
               <div style="font-size:10px;color:var(--text-3)">${colAppts.length} ραντεβού</div>
-              ${calMode==='therapist'&&col.id!=='unassigned'&&namesOnLeaveToday.has(col.full_name)?'<div style="font-size:9px;font-weight:700;color:#D97706;margin-top:2px">🏖 ΑΔΕΙΑ</div>':''}
+              ${colOnLeave?'<div style="font-size:9px;font-weight:700;color:#D97706;margin-top:2px">🏖 ΑΔΕΙΑ</div>':''}
             </div>
           </div>
           <!-- Hour grid -->
           <div style="position:relative;height:${hours.length*HOUR_H}px" data-hour-grid="${startHour}" data-ppm="${PX_PER_MIN}" data-total-min="${hours.length*60}">
             ${hours.map(h=>`
-              <div style="position:absolute;left:0;right:0;top:${(h-startHour)*HOUR_H}px;height:${HOUR_H}px;border-bottom:1px solid var(--border-2);${hourIsOutside(h)?'background:rgba(148,163,184,0.16)':''}">
+              <div style="position:absolute;left:0;right:0;top:${(h-startHour)*HOUR_H}px;height:${HOUR_H}px;border-bottom:1px solid var(--border-2);${(hourIsOutside(h)||colOnLeave)?'background:rgba(148,163,184,0.16)':''}">
                 <div style="position:absolute;left:0;right:0;top:50%;height:1px;background:rgba(0,0,0,0.03)"></div>
               </div>`).join('')}
             <!-- Appointments -->
