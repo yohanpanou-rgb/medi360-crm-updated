@@ -561,6 +561,8 @@ const RGB = {
   green: rgb(0.059, 0.431, 0.337),
   gray: rgb(0.42, 0.35, 0.38),
   black: rgb(0.13, 0.13, 0.13),
+  boxBg: rgb(0.96, 0.96, 0.96),
+  boxBorder: rgb(0.85, 0.85, 0.85),
 };
 
 // Ένα-φορά-ανά-cold-start cache — δεν χρειάζεται να ξανακατέβει η
@@ -642,12 +644,19 @@ async function buildAuditPdf(clinicName: string, dayLabel: string, summary: { to
     ensureSpace(blockHeight);
 
     const blockTop = y;
+    // Γκρι κουτί γύρω από κάθε πελάτη, ώστε να ξεχωρίζουν καθαρά τα ραντεβού
+    // μεταξύ τους — ίδιο πνεύμα με τις κάρτες του HTML email.
+    page.drawRectangle({
+      x: MARGIN, y: blockTop - blockHeight + 8,
+      width: PAGE_W - MARGIN * 2, height: blockHeight - 8,
+      color: RGB.boxBg, borderColor: RGB.boxBorder, borderWidth: 0.75,
+    });
     page.drawRectangle({ x: MARGIN, y: blockTop - blockHeight + 8, width: 4, height: blockHeight - 8, color });
 
     const nameLine = `${chk.time} — ${chk.name}${chk.isNew ? '  [NEW]' : ''}`;
     drawLine(nameLine, MARGIN + 12, 11, RGB.black);
     const labelWidth = font.widthOfTextAtSize(label, 9.5);
-    page.drawText(label, { x: PAGE_W - MARGIN - labelWidth, y, size: 9.5, font, color });
+    page.drawText(label, { x: PAGE_W - MARGIN - labelWidth - 10, y, size: 9.5, font, color });
     y -= 14;
     drawLine(`Υπηρεσία: ${chk.service}`, MARGIN + 12, 9.5, RGB.gray);
     y -= 13;
