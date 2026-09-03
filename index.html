@@ -6183,6 +6183,45 @@ function renderSettings() {
         </div>
       </div>
 
+      <!-- ΚΑΘΗΜΕΡΙΝΗ ΑΝΑΦΟΡΑ ΕΛΕΓΧΟΥ -->
+      <div class="card" style="grid-column:1/-1">
+        <div class="card-header"><span class="card-title">📋 Καθημερινή Αναφορά Ελέγχου Ραντεβού & Πελατών</span></div>
+        <div style="padding:16px">
+          <div style="font-size:12px;color:var(--text-2);margin-bottom:14px">Στέλνει κάθε πρωί email (με συνημμένο PDF) με έλεγχο GDPR, consultation, συναινέσεων υπηρεσίας, στοιχείων πελάτη και επόμενου βήματος για τα σημερινά ραντεβού. Παραμένει ανενεργή μέχρι να τη θέσεις σε λειτουργία.</div>
+          <div class="form-group">
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+              <input type="checkbox" id="daily-audit-enabled" ${(c&&c.settings&&c.settings.daily_audit&&c.settings.daily_audit.enabled)?'checked':''}/>
+              Ενεργή καθημερινή αναφορά ελέγχου
+            </label>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Παραλήπτες (emails χωρισμένα με κόμμα)</label>
+            <input class="form-control" id="daily-audit-recipients" placeholder="yohan.panou@gmail.com, ..." value="${esc(((c&&c.settings&&c.settings.daily_audit&&c.settings.daily_audit.recipients)||[]).join(', '))}"/>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Ώρα αποστολής (ώρα Ελλάδας)</label>
+            <select id="daily-audit-time" style="max-width:140px">
+              ${Array.from({length:96},(_,i)=>{const h=String(Math.floor(i/4)).padStart(2,'0');const m=String((i%4)*15).padStart(2,'0');return `${h}:${m}`;}).map(t=>`<option value="${t}" ${((c&&c.settings&&c.settings.daily_audit&&c.settings.daily_audit.send_time)||'08:00')===t?'selected':''}>${t}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" style="margin-bottom:8px">Ενότητες ελέγχου</label>
+            <div style="display:flex;flex-direction:column;gap:6px">
+              ${[['gdpr','GDPR Συναίνεση'],['consultation','Consultation (έγινε ποτέ)'],['service_consent','Συναίνεση Υπηρεσίας'],['next_step','Επόμενο Βήμα Consultation'],['data_completeness','Πληρότητα Στοιχείων Πελάτη'],['new_customer','Σήμανση Νέου Πελάτη (NEW)']].map(([key,label])=>`
+              <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+                <input type="checkbox" class="daily-audit-section" data-section="${key}" ${!(c&&c.settings&&c.settings.daily_audit&&c.settings.daily_audit.sections&&c.settings.daily_audit.sections[key]===false)?'checked':''}/>
+                ${label}
+              </label>`).join('')}
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn btn-primary" id="save-daily-audit-settings">Αποθήκευση</button>
+            <button class="btn btn-ghost" id="test-daily-audit-now">📧 Δοκιμαστική αποστολή τώρα</button>
+            <span id="daily-audit-test-result" style="font-size:12px"></span>
+          </div>
+        </div>
+      </div>
+
       <!-- ΕΚΚΡΕΜΕΙΣ CONSULTATIONS -->
       ${(S.unmatchedConsultations&&S.unmatchedConsultations.length)?`
       <div class="card" style="grid-column:1/-1">
@@ -7788,6 +7827,63 @@ function bindEvents() {
     if (S.clinic) S.clinic.settings = settings;
     _sct.textContent='✓ Αποθηκεύτηκε!';
     setTimeout(()=>{ _sct.textContent='Αποθήκευση'; }, 2000);
+  });
+
+  // Save daily-audit-report settings (καθημερινή αναφορά ελέγχου —
+  // παραμένει ανενεργή μέχρι να ενεργοποιηθεί χειροκίνητα)
+  const _sda = document.getElementById('save-daily-audit-settings');
+  if (_sda) _sda.addEventListener('click', async () => {
+    const enabled = document.getElementById('daily-audit-enabled');
+    const recipients = document.getElementById('daily-audit-recipients');
+    const time = document.getElementById('daily-audit-time');
+    const sections = {};
+    document.querySelectorAll('.daily-audit-section').forEach(cb => { sections[cb.dataset.section] = cb.checked; });
+    const settings = Object.assign({}, (S.clinic&&S.clinic.settings)||{}, {
+      daily_audit: {
+        enabled: enabled ? enabled.checked : false,
+        recipients: recipients ? recipients.value.split(',').map(s=>s.trim()).filter(Boolean) : [],
+        send_time: time ? time.value : '08:00',
+        sections,
+      },
+    });
+    const {error} = await sb.from('clinics').update({settings}).eq('id',clinicId());
+    if (error) { alert(error.message); return; }
+    if (S.clinic) S.clinic.settings = settings;
+    _sda.textContent='✓ Αποθηκεύτηκε!';
+    setTimeout(()=>{ _sda.textContent='Αποθήκευση'; }, 2000);
+  });
+
+  // Δοκιμαστική αποστολή — αποθηκεύει πρώτα τις τρέχουσες ρυθμίσεις (ώστε ο
+  // παραλήπτης/ενότητες στην οθόνη να είναι ό,τι θα σταλεί), μετά καλεί το
+  // function με {force:true} για να παρακάμψει τον έλεγχο ώρας.
+  const _tda = document.getElementById('test-daily-audit-now');
+  if (_tda) _tda.addEventListener('click', async () => {
+    const result = document.getElementById('daily-audit-test-result');
+    _tda.disabled = true; _tda.textContent = 'Αποστολή...';
+    if (result) result.textContent = '';
+    const enabled = document.getElementById('daily-audit-enabled');
+    const recipients = document.getElementById('daily-audit-recipients');
+    const time = document.getElementById('daily-audit-time');
+    const sections = {};
+    document.querySelectorAll('.daily-audit-section').forEach(cb => { sections[cb.dataset.section] = cb.checked; });
+    const settings = Object.assign({}, (S.clinic&&S.clinic.settings)||{}, {
+      daily_audit: {
+        enabled: enabled ? enabled.checked : false,
+        recipients: recipients ? recipients.value.split(',').map(s=>s.trim()).filter(Boolean) : [],
+        send_time: time ? time.value : '08:00',
+        sections,
+      },
+    });
+    const {error: saveErr} = await sb.from('clinics').update({settings}).eq('id',clinicId());
+    if (saveErr) { if (result) result.innerHTML = `<span style="color:var(--red)">✗ ${esc(saveErr.message)}</span>`; _tda.disabled=false; _tda.textContent='📧 Δοκιμαστική αποστολή τώρα'; return; }
+    if (S.clinic) S.clinic.settings = settings;
+    const {data, error} = await sb.functions.invoke('daily-audit-report', {body:{force:true, clinic_id:clinicId()}});
+    _tda.disabled = false; _tda.textContent = '📧 Δοκιμαστική αποστολή τώρα';
+    if (error) { if (result) result.innerHTML = `<span style="color:var(--red)">✗ ${esc(error.message)}</span>`; return; }
+    const r = (data&&data.results&&data.results[0])||{};
+    if (result) result.innerHTML = r.sent
+      ? `<span style="color:var(--green)">✓ Στάλθηκε (${r.appointments} ραντεβού)</span>`
+      : `<span style="color:var(--red)">${esc(r.skipped||r.error||'Άγνωστο αποτέλεσμα')}</span>`;
   });
 
   // One-time bulk conversion: όλα τα ονόματα πελατών σε ΚΕΦΑΛΑΙΑ
