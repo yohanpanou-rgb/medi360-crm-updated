@@ -23,11 +23,15 @@
 //
 // PDF: παράγεται με pdf-lib (καθαρό JS, τρέχει μέσα στο Deno edge runtime —
 // όχι headless browser, μη διαθέσιμο εκεί) με ενσωματωμένη γραμματοσειρά
-// Noto Sans (Regular, στατικό instance — ΟΧΙ variable font: το pdf-lib/
-// fontkit δεν παρσάρει αξιόπιστα variable fonts, έβγαζε σπασμένο/λειψό
-// κείμενο στο PDF) για υποστήριξη ελληνικών. Η γραμματοσειρά «κατεβαίνει»
-// τη στιγμή της εκτέλεσης (μία φορά ανά cold start, μέσω module-level
-// cache) από το ίδιο το repo του project στο GitHub
+// Noto Sans (Regular, στατικό instance — όχι variable font, για συμβατότητα)
+// για υποστήριξη ελληνικών. ΣΗΜΑΝΤΙΚΟ: embedFont() με {subset:true} — το
+// fontkit subsetting που χρησιμοποιεί το pdf-lib — χαλάει το glyph table
+// αυτής της γραμματοσειράς και βγάζει σπασμένο/λειψό κείμενο (επιβεβαιωμένο
+// τοπικά, σε πραγματικό PDF). Γι' αυτό εδώ γίνεται embed ολόκληρη η
+// γραμματοσειρά ({subset:false}) — μερικές εκατοντάδες KB παραπάνω στο PDF,
+// αμελητέο για συνημμένο email. Η γραμματοσειρά «κατεβαίνει» τη στιγμή
+// της εκτέλεσης (μία φορά ανά cold start, μέσω module-level cache) από το
+// ίδιο το repo του project στο GitHub
 // (supabase/functions/daily-audit-report/fonts/NotoSans-Regular.ttf) —
 // καθαρό font asset, όχι δεδομένα πελατών· κανένα δεδομένο πελάτη/
 // ραντεβού δεν στέλνεται πουθενά εκτός Google (Gmail) και του ίδιου του
@@ -576,7 +580,11 @@ async function buildAuditPdf(clinicName: string, dayLabel: string, summary: { to
   // deno-lint-ignore no-explicit-any
   pdfDoc.registerFontkit(fontkit as any);
   const fontBytes = await getNotoSansBytes();
-  const font = await pdfDoc.embedFont(fontBytes, { subset: true });
+  // subset:false — pdf-lib's fontkit-based glyph subsetting corrupts this
+  // font's glyph table (confirmed locally: with subset:true most Greek AND
+  // Latin characters render as blank gaps). Embedding the whole font costs
+  // ~300KB extra on the PDF, which is a non-issue for an email attachment.
+  const font = await pdfDoc.embedFont(fontBytes, { subset: false });
 
   const MARGIN = 40;
   const PAGE_W = 595.28, PAGE_H = 841.89;
