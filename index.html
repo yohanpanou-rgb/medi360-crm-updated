@@ -6213,7 +6213,7 @@ function renderSettings() {
       <div class="card" style="grid-column:1/-1">
         <div class="card-header"><span class="card-title">📋 Καθημερινή Αναφορά Ελέγχου Ραντεβού & Πελατών</span></div>
         <div style="padding:16px">
-          <div style="font-size:12px;color:var(--text-2);margin-bottom:14px">Στέλνει κάθε πρωί email (με συνημμένο PDF) με έλεγχο GDPR, consultation, συναινέσεων υπηρεσίας, στοιχείων πελάτη και επόμενου βήματος για τα σημερινά ραντεβού. Παραμένει ανενεργή μέχρι να τη θέσεις σε λειτουργία.</div>
+          <div style="font-size:12px;color:var(--text-2);margin-bottom:14px">Στέλνει κάθε πρωί email (με συνημμένο PDF) με έλεγχο GDPR, consultation, συναινέσεων υπηρεσίας, στοιχείων πελάτη και επόμενου βήματος για τα σημερινά ραντεβού — και τεχνικό/λειτουργικό έλεγχο (διπλότυπους πελάτες, συγκρούσεις ραντεβού, ραντεβού εκτός ωραρίου, automations που απέτυχαν). Πάντα σαν σημείωση με πρόταση — δεν αλλάζει τίποτα αυτόματα. Παραμένει ανενεργή μέχρι να τη θέσεις σε λειτουργία.</div>
           <div class="form-group">
             <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
               <input type="checkbox" id="daily-audit-enabled" ${(c&&c.settings&&c.settings.daily_audit&&c.settings.daily_audit.enabled)?'checked':''}/>
@@ -6233,7 +6233,7 @@ function renderSettings() {
           <div class="form-group">
             <label class="form-label" style="margin-bottom:8px">Ενότητες ελέγχου</label>
             <div style="display:flex;flex-direction:column;gap:6px">
-              ${[['gdpr','GDPR Συναίνεση'],['consultation','Consultation (έγινε ποτέ)'],['service_consent','Συναίνεση Υπηρεσίας'],['next_step','Επόμενο Βήμα Consultation'],['data_completeness','Πληρότητα Στοιχείων Πελάτη'],['new_customer','Σήμανση Νέου Πελάτη (NEW)']].map(([key,label])=>`
+              ${[['gdpr','GDPR Συναίνεση'],['consultation','Consultation (έγινε ποτέ)'],['service_consent','Συναίνεση Υπηρεσίας'],['next_step','Επόμενο Βήμα Consultation'],['data_completeness','Πληρότητα Στοιχείων Πελάτη'],['new_customer','Σήμανση Νέου Πελάτη (NEW)'],['duplicate_patients','🔧 Πιθανά Διπλότυπα Πελατών'],['scheduling_conflicts','🔧 Συγκρούσεις Ραντεβού'],['outside_hours','🔧 Ραντεβού Εκτός Ωραρίου'],['failed_automations','🔧 Αποτυχημένα Automations']].map(([key,label])=>`
               <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
                 <input type="checkbox" class="daily-audit-section" data-section="${key}" ${!(c&&c.settings&&c.settings.daily_audit&&c.settings.daily_audit.sections&&c.settings.daily_audit.sections[key]===false)?'checked':''}/>
                 ${label}
