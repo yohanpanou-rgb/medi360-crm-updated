@@ -1096,6 +1096,15 @@ async function loadPageData() {
     const {data:rpkgs} = await sb.from('patient_packages').select('price,purchased_at').eq('clinic_id',cid).gte('purchased_at',fromISO).lte('purchased_at',toISO);
     S.reportPackages = rpkgs||[];
 
+    // Ποσοστό Επιβεβαίωσης Email: από όσα ραντεβού στάλθηκε αίτημα επιβεβαίωσης
+    // (automation_type='confirmation_request', status='sent'), πόσα ο ΙΔΙΟΣ ο
+    // πελάτης πάτησε το κουμπί (automation_type='confirmation_received' —
+    // καταγράφεται ΜΟΝΟ σε πραγματικό κλικ, βλ. appointment-confirm). Πιο
+    // ακριβές από το να κοιτάμε το τρέχον status του ραντεβού, γιατί η
+    // γραμματεία μπορεί να το επιβεβαιώσει χειροκίνητα αργότερα (τηλέφωνο).
+    const {data:commLogRows} = await sb.from('communication_log').select('appointment_id,automation_type,status').eq('clinic_id',cid).gte('cycle',fromISO).lte('cycle',toISO).in('automation_type',['confirmation_request','confirmation_received']);
+    S.reportCommLog = commLogRows||[];
+
     // Ισόχρονη προηγούμενη περίοδος (ίδιος αριθμός ημερών, αμέσως πριν) — για τα
     // deltas Νέων Πελατών & Consultations, ίδια λογική με το widget "Από πού μας βρήκαν".
     const fromDate = new Date(fromISO), toDate = new Date(toISO);
@@ -4338,6 +4347,14 @@ function computeReportStats() {
   const newPatientsDelta = newPatients.length - prevNewPatientsCount;
   const newPatientsPct = prevNewPatientsCount>0 ? Math.round((newPatientsDelta/prevNewPatientsCount)*100) : (newPatients.length>0?100:0);
 
+  // Ποσοστό Επιβεβαίωσης Email — βλ. σχόλιο στη φόρτωση δεδομένων παραπάνω.
+  const commLog = S.reportCommLog||[];
+  const confirmSentIds = new Set(commLog.filter(r=>r.automation_type==='confirmation_request'&&r.status==='sent').map(r=>r.appointment_id));
+  const confirmReceivedIds = new Set(commLog.filter(r=>r.automation_type==='confirmation_received').map(r=>r.appointment_id));
+  const confirmSent = confirmSentIds.size;
+  const confirmReceived = [...confirmSentIds].filter(id=>confirmReceivedIds.has(id)).length;
+  const confirmRate = confirmSent ? Math.round((confirmReceived/confirmSent)*100) : null;
+
   // Consultations vs ισόχρονη προηγούμενη περίοδος
   const consultations = S.reportConsultations||[];
   const prevConsultCount = (S.reportPrevConsultations||[]).length;
@@ -4438,7 +4455,8 @@ function computeReportStats() {
     npNever, npOne, npTwo, npMore, npAttended, npReturned, npFirstServices,
     newPatientsDelta, newPatientsPct, consultations, prevConsultCount, consultDelta, consultPct,
     utilizationRate, utilizationIsReal, recommendedTotal, recommendedDone, consultPatients,
-    completedCount, cancelledCount, pendingCount, patientCategoryGroups };
+    completedCount, cancelledCount, pendingCount, patientCategoryGroups,
+    confirmSent, confirmReceived, confirmRate };
 }
 
 // 🎁 Δώρο γενεθλίων — εξαργύρωση
@@ -4872,6 +4890,12 @@ function renderReports() {
         <div class="stat-label">Consultations</div>
         <div class="stat-value" style="color:#A32D2D">${s.consultations.length}</div>
         <div class="stat-change">${reportDeltaLabel(s.consultDelta, s.consultPct)}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon" style="background:#FDF0F5;color:#C4618A">📧</div>
+        <div class="stat-label">Επιβεβαίωση Email</div>
+        <div class="stat-value" style="color:#C4618A">${s.confirmRate===null?'—':s.confirmRate+'%'}</div>
+        <div class="stat-change">${s.confirmSent?`${s.confirmReceived} / ${s.confirmSent} επιβεβαίωσαν οι ίδιοι`:'Δεν στάλθηκαν αιτήματα στο διάστημα'}</div>
       </div>
       <div class="stat-card">
         <div class="stat-icon" style="background:#E6F1FB;color:#185FA5">◔</div>
