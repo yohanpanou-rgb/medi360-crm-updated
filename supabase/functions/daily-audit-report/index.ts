@@ -5,12 +5,18 @@
 // ραντεβού για: GDPR συναίνεση, consultation (έχει γίνει ποτέ), συναίνεση
 // υπηρεσίας (laser/καθαρισμού/peeling/οξυγόνου), πληρότητα στοιχείων
 // πελάτη (email/τηλέφωνο/πόλη/γέννηση), εκκρεμές «επόμενο βήμα» consultation,
-// και σήμανση νέου πελάτη.
+// και σήμανση νέου πελάτη — ΚΑΙ έναν τεχνικό/λειτουργικό έλεγχο: πιθανά
+// διπλότυπα πελατών, συγκρούσεις ραντεβού (ίδιος θεραπευτής, επικαλυπτόμενες
+// ώρες), ραντεβού εκτός προγραμματισμένου ωραρίου προσωπικού, και automations
+// που απέτυχαν οριστικά τις τελευταίες 48 ώρες. Ο τεχνικός έλεγχος ΜΟΝΟ
+// σημειώνει και προτείνει — δεν αλλάζει ποτέ τίποτα αυτόματα.
 //
 // Το «επόμενο βήμα» χρησιμοποιεί ΑΚΡΙΒΩΣ την ίδια λογική ταιριάσματος με
 // την καρτέλα ασθενή (tab Consultation) στο index.html — parseConsultInClinicSteps
 // + findServiceMatch — ώστε το «X βήματα εκκρεμούν» εδώ να συμφωνεί πάντα με
-// το «⏳ X/Y έγιναν» badge που βλέπει ο χρήστης στο CRM.
+// το «⏳ X/Y έγιναν» badge που βλέπει ο χρήστης στο CRM. Ομοίως, οι διπλότυποι
+// πελάτες (normalizePhone) και το ωράριο προσωπικού (staffWorkWindow) είναι
+// ΙΔΙΑ λογική με το index.html — ίδια ευρήματα παντού στο CRM.
 //
 // Ώρα αποστολής: pg_cron καλεί αυτό το function κάθε 15 λεπτά (βλ.
 // supabase/create_daily_audit_report.sql). Το ίδιο το function υπολογίζει
@@ -159,6 +165,75 @@ function findServiceMatch(appointments: ApptRow[], afterDateStr: string, treatme
   return null;
 }
 
+// Ίδιο με normalizePhone(index.html): κρατάει μόνο ψηφία, αφαιρεί
+// διεθνές πρόθεμα (00/+30) και αρχικά μηδενικά — ώστε "6971234567",
+// "+306971234567" και "00306971234567" να ταυτίζονται στον ίδιο πελάτη.
+function normalizePhone(p: string | null | undefined): string {
+  if (!p) return '';
+  let digits = (p + '').replace(/[^\d]/g, '');
+  if (digits.startsWith('00') && digits.length > 10) digits = digits.slice(2);
+  if (digits.startsWith('30') && digits.length > 10) digits = digits.slice(2);
+  digits = digits.replace(/^0+/, '');
+  return digits;
+}
+
+// Ίδια λογική ονομάτων προσωπικού με το index.html/daily-schedule-email —
+// ταιριάζει "Λίνα" ↔ "Lina Panou" κ.λπ.
+function greekToLatinKey(s: string | null | undefined): string {
+  const m: Record<string, string> = { 'α': 'a', 'β': 'v', 'γ': 'g', 'δ': 'd', 'ε': 'e', 'ζ': 'z', 'η': 'i', 'θ': 'th', 'ι': 'i', 'κ': 'k', 'λ': 'l', 'μ': 'm', 'ν': 'n', 'ξ': 'x', 'ο': 'o', 'π': 'p', 'ρ': 'r', 'σ': 's', 'ς': 's', 'τ': 't', 'υ': 'y', 'φ': 'f', 'χ': 'ch', 'ψ': 'ps', 'ω': 'o' };
+  return (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .split('').map((c) => m[c] || c).join('')
+    .replace(/[^a-z0-9]+/g, ' ').trim();
+}
+function sameStaffName(a: string, b: string): boolean {
+  const ka = greekToLatinKey(a), kb = greekToLatinKey(b);
+  if (!ka || !kb) return false;
+  if (ka === kb) return true;
+  return ka.split(' ')[0] === kb.split(' ')[0];
+}
+// Το προσωπικό ενός ραντεβού: από therapist_id αν υπάρχει, αλλιώς από τα
+// notes (ίδιες δύο μορφές με index.html — "Προσωπικό: X" και
+// "booking247_id:NNN | X").
+function apptStaffName(a: { therapist_id?: string | null; notes?: string | null }, staffList: { id: string; full_name: string }[]): string | null {
+  if (a.therapist_id) {
+    const st = staffList.find((s) => s.id === a.therapist_id);
+    if (st) return st.full_name;
+  }
+  const notes = a.notes || '';
+  const m = notes.match(/Προσωπικό:\s*([^\n·|]+)/i);
+  if (m) return m[1].trim();
+  const m2 = notes.match(/booking247_id:\S+\s*\|\s*([^\n·|]+)/i);
+  return m2 ? m2[1].trim() : null;
+}
+
+interface ScheduleRow { staff_id: string; day_of_week: number; is_working: boolean; start_time: string; end_time: string; }
+interface OverrideRow { staff_id: string; date: string; is_working: boolean; start_time: string | null; end_time: string | null; }
+interface StaffRow { id: string; full_name: string; }
+
+// Ίδιο με staffWorkWindow(index.html): εβδομαδιαίο ωράριο + εξαίρεση
+// συγκεκριμένης ημέρας (έχει προτεραιότητα). null = δεν έχει οριστεί
+// καθόλου ωράριο γι' αυτό το άτομο/ημέρα.
+function staffWorkWindow(staffFullName: string, athensDate: Date, scheduleRows: ScheduleRow[], overrideRows: OverrideRow[], staffList: StaffRow[]): { working: boolean; start?: string; end?: string } | null {
+  const st = staffList.find((s) => sameStaffName(s.full_name, staffFullName));
+  if (!st) return null;
+  const dateStr = `${athensDate.getFullYear()}-${String(athensDate.getMonth() + 1).padStart(2, '0')}-${String(athensDate.getDate()).padStart(2, '0')}`;
+  const ovr = overrideRows.find((o) => o.staff_id === st.id && o.date === dateStr);
+  const row = ovr || scheduleRows.find((r) => r.staff_id === st.id && r.day_of_week === athensDate.getDay());
+  if (!row) return null;
+  if (!row.is_working) return { working: false };
+  return { working: true, start: row.start_time, end: row.end_time };
+}
+// Ίδιο με isOutsideStaffHours(index.html).
+function isOutsideStaffHours(staffFullName: string, startAthens: Date, durationMinutes: number, scheduleRows: ScheduleRow[], overrideRows: OverrideRow[], staffList: StaffRow[]): boolean {
+  const ww = staffWorkWindow(staffFullName, startAthens, scheduleRows, overrideRows, staffList);
+  if (!ww) return false;
+  if (!ww.working) return true;
+  const t2m = (t: string) => { const [h, m] = String(t).split(':').map(Number); return (h || 0) * 60 + (m || 0); };
+  const startMin = startAthens.getHours() * 60 + startAthens.getMinutes();
+  const endMin = startMin + (durationMinutes || 60);
+  return startMin < t2m(ww.start!) || endMin > t2m(ww.end!);
+}
+
 // ── ΤΥΠΟΙ ────────────────────────────────────────────────────────────────
 
 interface Patient {
@@ -172,6 +247,9 @@ interface Patient {
 }
 interface TodayAppt extends ApptRow {
   patients: Patient | null;
+  therapist_id: string | null;
+  notes: string | null;
+  duration_minutes: number | null;
 }
 interface ConsultRow { patient_id: string; consent_text: string | null; signed_at: string | null; }
 
@@ -196,6 +274,15 @@ interface PatientCheck {
   missingFields: string[]; // κενό = όλα εντάξει
   priority: 'red' | 'yellow' | 'green';
   actions: string[];
+}
+
+// Ένα εύρημα τεχνικού/λειτουργικού ελέγχου — ΜΟΝΟ σημείωση + πρόταση,
+// ποτέ αυτόματη ενέργεια.
+interface TechFinding {
+  title: string;
+  severity: 'red' | 'yellow';
+  details: string[];
+  suggestion: string;
 }
 
 function sectionOn(sections: Record<string, boolean> | undefined, key: string): boolean {
@@ -277,10 +364,14 @@ Deno.serve(async (req: Request) => {
       const dstr = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       const todayStr = dstr(nowAthens);
       const tomorrow = new Date(nowAthens); tomorrow.setDate(tomorrow.getDate() + 1);
+      // Ίδιο κόλπο με το nowAthens παραπάνω: μετατρέπει ένα UTC ISO timestamp
+      // σε Date όπου τα getHours/getMinutes/getDay/κ.λπ. επιστρέφουν την
+      // ΤΟΠΙΚΗ ώρα Ελλάδας, ανεξάρτητα από θερινή/χειμερινή ώρα.
+      const toAthensLocal = (iso: string) => new Date(new Date(iso).toLocaleString('en-US', { timeZone: 'Europe/Athens' }));
 
       const { data: todayApptsRaw, error: apptErr } = await supabase
         .from('appointments')
-        .select('id, patient_id, service_name, start_time, status, patients(id, full_name, email, phone, city, dob, gdpr_signed)')
+        .select('id, patient_id, service_name, start_time, status, therapist_id, notes, duration_minutes, patients(id, full_name, email, phone, city, dob, gdpr_signed)')
         .eq('clinic_id', cid)
         .gte('start_time', todayStr + 'T00:00:00')
         .lt('start_time', dstr(tomorrow) + 'T00:00:00')
@@ -392,6 +483,113 @@ Deno.serve(async (req: Request) => {
         });
       }
 
+      // ── ΤΕΧΝΙΚΟΣ & ΛΕΙΤΟΥΡΓΙΚΟΣ ΕΛΕΓΧΟΣ ─────────────────────────────────
+      // Ξεχωριστό από τον ανά-πελάτη έλεγχο παραπάνω — αφορά την κλινική
+      // συνολικά, όχι μεμονωμένα ραντεβού. ΜΟΝΟ σημείωση + πρόταση.
+      const techFindings: TechFinding[] = [];
+
+      if (sectionOn(sections, 'duplicate_patients')) {
+        const { data: allPatientsRaw } = await supabase.from('patients').select('id, full_name, phone').eq('clinic_id', cid);
+        const dupGroups: Record<string, { id: string; full_name: string }[]> = {};
+        ((allPatientsRaw || []) as { id: string; full_name: string | null; phone: string | null }[]).forEach((p) => {
+          const norm = normalizePhone(p.phone);
+          if (!norm || norm.length < 9) return;
+          (dupGroups[norm] = dupGroups[norm] || []).push({ id: p.id, full_name: p.full_name || '—' });
+        });
+        const groups = Object.values(dupGroups).filter((list) => list.length > 1);
+        if (groups.length) {
+          techFindings.push({
+            title: `👥 ${groups.length} πιθανά διπλότυπα πελατών`,
+            severity: 'yellow',
+            details: groups.slice(0, 5).map((g) => g.map((p) => p.full_name).join(' / ') + ' (ίδιο τηλέφωνο)'),
+            suggestion: 'Έλεγξε στη σελίδα Πελάτες - Πιθανά Διπλότυπα και συγχώνευσε αν χρειάζεται.',
+          });
+        }
+      }
+
+      let staffList: StaffRow[] = [];
+      if (sectionOn(sections, 'scheduling_conflicts') || sectionOn(sections, 'outside_hours')) {
+        const { data: staffRows } = await supabase.from('profiles').select('id, full_name').eq('clinic_id', cid).in('role', ['therapist', 'clinic_admin', 'super_admin']);
+        staffList = (staffRows || []) as StaffRow[];
+      }
+
+      if (sectionOn(sections, 'scheduling_conflicts')) {
+        const byTherapist: Record<string, { start: number; end: number; time: string; patient: string }[]> = {};
+        todayAppts.forEach((a) => {
+          const name = apptStaffName(a, staffList);
+          if (!name) return;
+          const start = new Date(a.start_time).getTime();
+          const end = start + (a.duration_minutes || 60) * 60000;
+          const time = toAthensLocal(a.start_time).toLocaleTimeString('el-GR', { hour: '2-digit', minute: '2-digit' });
+          (byTherapist[name] = byTherapist[name] || []).push({ start, end, time, patient: (a.patients && a.patients.full_name) || '—' });
+        });
+        const conflictDetails: string[] = [];
+        for (const [therapist, list] of Object.entries(byTherapist)) {
+          list.sort((x, y) => x.start - y.start);
+          for (let i = 1; i < list.length; i++) {
+            if (list[i].start < list[i - 1].end) {
+              conflictDetails.push(`${therapist}: ${list[i - 1].time} ${list[i - 1].patient} συγκρούεται με ${list[i].time} ${list[i].patient}`);
+            }
+          }
+        }
+        if (conflictDetails.length) {
+          techFindings.push({
+            title: `📅 ${conflictDetails.length} συγκρούσεις ραντεβού σήμερα`,
+            severity: 'red',
+            details: conflictDetails.slice(0, 5),
+            suggestion: 'Έλεγξε το πρόγραμμα και μετάθεσε το ένα από τα δύο ραντεβού.',
+          });
+        }
+      }
+
+      if (sectionOn(sections, 'outside_hours')) {
+        const [schedRes, ovrRes] = await Promise.all([
+          supabase.from('staff_schedules').select('staff_id, day_of_week, is_working, start_time, end_time').eq('clinic_id', cid),
+          supabase.from('staff_schedule_overrides').select('staff_id, date, is_working, start_time, end_time').eq('clinic_id', cid).eq('date', todayStr),
+        ]);
+        const scheduleRows = (schedRes.data || []) as ScheduleRow[];
+        const overrideRows = (ovrRes.data || []) as OverrideRow[];
+        const outsideDetails: string[] = [];
+        todayAppts.forEach((a) => {
+          const name = apptStaffName(a, staffList);
+          if (!name) return;
+          const startAthens = toAthensLocal(a.start_time);
+          if (isOutsideStaffHours(name, startAthens, a.duration_minutes || 60, scheduleRows, overrideRows, staffList)) {
+            const time = startAthens.toLocaleTimeString('el-GR', { hour: '2-digit', minute: '2-digit' });
+            outsideDetails.push(`${name} — ${time} ${(a.patients && a.patients.full_name) || '—'} (εκτός προγραμματισμένου ωραρίου/ρεπό)`);
+          }
+        });
+        if (outsideDetails.length) {
+          techFindings.push({
+            title: `⏰ ${outsideDetails.length} ραντεβού εκτός προγραμματισμένου ωραρίου`,
+            severity: 'yellow',
+            details: outsideDetails.slice(0, 5),
+            suggestion: 'Επιβεβαίωσε ότι είναι σκόπιμη εξαίρεση (π.χ. έκτακτο ωράριο), αλλιώς μετάθεσε το ραντεβού.',
+          });
+        }
+      }
+
+      if (sectionOn(sections, 'failed_automations')) {
+        const since48h = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
+        const { data: failedRows } = await supabase.from('communication_log').select('automation_type, error').eq('clinic_id', cid).eq('status', 'failed_final').gte('created_at', since48h);
+        const rows = (failedRows || []) as { automation_type: string; error: string | null }[];
+        if (rows.length) {
+          const byType: Record<string, number> = {};
+          rows.forEach((r) => { byType[r.automation_type] = (byType[r.automation_type] || 0) + 1; });
+          const AUTOMATION_LABEL: Record<string, string> = { confirmation_request: 'αίτημα επιβεβαίωσης', instructions: 'οδηγίες πριν/μετά', review_request: 'ζήτηση αξιολόγησης' };
+          const sampleError = rows.find((r) => r.error)?.error;
+          techFindings.push({
+            title: `⚠️ ${rows.length} automations απέτυχαν οριστικά (τελευταίες 48 ώρες)`,
+            severity: 'red',
+            details: [
+              ...Object.entries(byType).map(([type, n]) => `${AUTOMATION_LABEL[type] || type}: ${n}`),
+              ...(sampleError ? [`Τελευταίο σφάλμα: ${sampleError.slice(0, 140)}`] : []),
+            ],
+            suggestion: 'Συνήθως χρειάζεται επανασύνδεση του Gmail στις Ρυθμίσεις — αν επιμένει, χρειάζεται τεχνικός έλεγχος.',
+          });
+        }
+      }
+
       const dayLabel = nowAthens.toLocaleDateString('el-GR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
       const summary = {
         total: checks.length,
@@ -402,8 +600,8 @@ Deno.serve(async (req: Request) => {
         incompleteData: checks.filter((c) => c.missingFields.length > 0).length,
       };
 
-      const html = buildAuditHtml(dayLabel, brand, summary, checks);
-      const pdfBytes = await buildAuditPdf(brand.name, dayLabel, summary, checks);
+      const html = buildAuditHtml(dayLabel, brand, summary, checks, techFindings);
+      const pdfBytes = await buildAuditPdf(brand.name, dayLabel, summary, checks, techFindings);
       const pdfFilename = `daily-audit-${todayStr}.pdf`;
 
       const subject = `📋 Beauty Line | Daily Audit — ${dayLabel} · ${checks.length} ραντεβού`;
@@ -420,7 +618,7 @@ Deno.serve(async (req: Request) => {
         results.push({ clinic: clinic.name, error: 'Gmail: ' + JSON.stringify(out.error) });
         continue;
       }
-      results.push({ clinic: clinic.name, sent: recipients, appointments: checks.length });
+      results.push({ clinic: clinic.name, sent: recipients, appointments: checks.length, techFindings: techFindings.length });
     }
 
     return json({ ok: true, results });
@@ -462,7 +660,7 @@ function buildMimeMessage(fromName: string, to: string[], subject: string, html:
 }
 
 // ── HTML EMAIL (ίδιο layout με το εγκεκριμένο mockup — ανά πελάτη,
-// χρονολογική σειρά) ─────────────────────────────────────────────────
+// χρονολογική σειρά, + τεχνικός έλεγχος) ─────────────────────────────
 
 function priorityBadge(p: 'red' | 'yellow' | 'green') {
   if (p === 'red') return { label: '🔴 ΥΨΗΛΗ', color: '#A32D2D' };
@@ -478,7 +676,21 @@ function chip(text: string, ok: boolean | null) {
   return `<span style="background-color:${bg};color:${c};-webkit-text-fill-color:${c};border-radius:8px;padding:2px 9px;margin-right:5px;display:inline-block;margin-bottom:4px">${esc(text)}</span>`;
 }
 
-function buildAuditHtml(dayLabel: string, brand: { name: string; color: string }, summary: { total: number; gdprMissing: number; consultMissing: number; consentMissing: number; nextStepPending: number; incompleteData: number }, checks: PatientCheck[]): string {
+function techFindingBox(f: TechFinding) {
+  const border = f.severity === 'red' ? '#A32D2D' : '#D97706';
+  const bg = f.severity === 'red' ? '#FEFAFA' : '#FEFCF8';
+  const color = f.severity === 'red' ? '#A32D2D' : '#854F0B';
+  return `
+  <tr><td style="padding:8px 32px 0;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:${bg};border:1px solid #F0E2E9;border-left:4px solid ${border};border-radius:12px;"><tr><td style="padding:12px 16px;">
+      <div style="font-size:13px;font-weight:bold;color:${color};-webkit-text-fill-color:${color};">${esc(f.title)}</div>
+      ${f.details.length ? `<div style="font-size:11.5px;color:#6B5A61;-webkit-text-fill-color:#6B5A61;margin-top:5px;line-height:1.7">${f.details.map((d) => esc(d)).join('<br/>')}</div>` : ''}
+      <div style="font-size:11.5px;font-weight:bold;color:${color};-webkit-text-fill-color:${color};margin-top:6px;">Πρόταση: ${esc(f.suggestion)}</div>
+    </td></tr></table>
+  </td></tr>`;
+}
+
+function buildAuditHtml(dayLabel: string, brand: { name: string; color: string }, summary: { total: number; gdprMissing: number; consultMissing: number; consentMissing: number; nextStepPending: number; incompleteData: number }, checks: PatientCheck[], techFindings: TechFinding[]): string {
   const summaryCard = (n: number, label: string, bg: string, c: string) => `
     <td width="33%" style="padding:4px;">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:${bg};border-radius:12px;"><tr><td style="padding:14px 10px;text-align:center;">
@@ -518,6 +730,13 @@ function buildAuditHtml(dayLabel: string, brand: { name: string; color: string }
     </td></tr>`;
   };
 
+  const techSection = techFindings.length ? `
+    <tr><td style="padding:24px 32px 4px;">
+      <div style="font-size:14px;font-weight:bold;color:${esc(brand.color)};-webkit-text-fill-color:${esc(brand.color)};border-bottom:2px solid ${esc(brand.color)};padding-bottom:6px;">🔧 Τεχνικός &amp; Λειτουργικός Έλεγχος</div>
+    </td></tr>
+    ${techFindings.map(techFindingBox).join('')}
+  ` : '';
+
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
   <body style="margin:0;padding:0;background-color:#FAF3F6;font-family:Arial,Helvetica,sans-serif;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#FAF3F6;padding:24px 0;"><tr><td align="center">
@@ -542,6 +761,7 @@ function buildAuditHtml(dayLabel: string, brand: { name: string; color: string }
         ${summaryCard(summary.incompleteData, 'Ελλιπή Στοιχεία', '#FAEEDA', '#854F0B')}
       </tr></table>
     </td></tr>
+    ${techSection}
     <tr><td style="padding:24px 32px 4px;">
       <div style="font-size:14px;font-weight:bold;color:${esc(brand.color)};-webkit-text-fill-color:${esc(brand.color)};border-bottom:2px solid ${esc(brand.color)};padding-bottom:6px;">📅 Ραντεβού Σήμερα — Ανά Πελάτη (με σειρά ώρας)</div>
     </td></tr>
@@ -577,7 +797,7 @@ function getNotoSansBytes(): Promise<Uint8Array> {
   return notoSansBytesPromise;
 }
 
-async function buildAuditPdf(clinicName: string, dayLabel: string, summary: { total: number; gdprMissing: number; consultMissing: number; consentMissing: number; nextStepPending: number; incompleteData: number }, checks: PatientCheck[]): Promise<Uint8Array> {
+async function buildAuditPdf(clinicName: string, dayLabel: string, summary: { total: number; gdprMissing: number; consultMissing: number; consentMissing: number; nextStepPending: number; incompleteData: number }, checks: PatientCheck[], techFindings: TechFinding[]): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.create();
   // deno-lint-ignore no-explicit-any
   pdfDoc.registerFontkit(fontkit as any);
@@ -609,6 +829,27 @@ async function buildAuditPdf(clinicName: string, dayLabel: string, summary: { to
   const drawLine = (text: string, x: number, size: number, color = RGB.black) => {
     page.drawText(text, { x, y, size, font, color });
   };
+  const contentWidth = PAGE_W - MARGIN * 2 - 16;
+  // Η γραμματοσειρά δεν έχει glyphs για emoji (εμφανίζονται ως κενά τετράγωνα
+  // στο PDF) — τα αφαιρούμε μόνο εδώ· στο HTML email παραμένουν όπως είναι.
+  const stripEmoji = (s: string) => s.replace(/[\u{1F300}-\u{1FAFF}\u{2300}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}]\s*/gu, '').trim();
+
+  // Γενική βοηθητική για ένα κουτί (γκρι φόντο + έγχρωμη μπάρα αριστερά),
+  // ίδια οπτική με τα per-patient κουτιά παρακάτω — χρησιμοποιείται και
+  // στα ευρήματα τεχνικού ελέγχου.
+  const drawBox = (lines: { text: string; size: number; color: ReturnType<typeof rgb> }[], barColor: ReturnType<typeof rgb>) => {
+    const wrapped = lines.flatMap((l) => wrapText(l.text, l.size, contentWidth).map((t) => ({ text: t, size: l.size, color: l.color })));
+    const blockHeight = wrapped.reduce((sum, l) => sum + (l.size >= 11 ? 14 : 12), 0) + 12;
+    ensureSpace(blockHeight);
+    const blockTop = y;
+    page.drawRectangle({ x: MARGIN, y: blockTop - blockHeight + 8, width: PAGE_W - MARGIN * 2, height: blockHeight - 8, color: RGB.boxBg, borderColor: RGB.boxBorder, borderWidth: 0.75 });
+    page.drawRectangle({ x: MARGIN, y: blockTop - blockHeight + 8, width: 4, height: blockHeight - 8, color: barColor });
+    for (const l of wrapped) {
+      drawLine(l.text, MARGIN + 12, l.size, l.color);
+      y -= l.size >= 11 ? 14 : 12;
+    }
+    y -= 10;
+  };
 
   drawLine(`${clinicName} — Daily Appointment & Customer Audit`, MARGIN, 16, RGB.navy);
   y -= 20;
@@ -620,7 +861,19 @@ async function buildAuditPdf(clinicName: string, dayLabel: string, summary: { to
   drawLine(`Χωρίς Service Consent: ${summary.consentMissing}   ·   Επόμενο Βήμα Εκκρεμεί: ${summary.nextStepPending}   ·   Ελλιπή Στοιχεία: ${summary.incompleteData}`, MARGIN, 9.5, RGB.gray);
   y -= 20;
 
-  const contentWidth = PAGE_W - MARGIN * 2 - 16;
+  if (techFindings.length) {
+    drawLine('Τεχνικός & Λειτουργικός Έλεγχος', MARGIN, 13, RGB.navy);
+    y -= 18;
+    for (const f of techFindings) {
+      const color = f.severity === 'red' ? RGB.red : RGB.amber;
+      const lines: { text: string; size: number; color: ReturnType<typeof rgb> }[] = [{ text: stripEmoji(f.title), size: 11, color }];
+      f.details.forEach((d) => lines.push({ text: '• ' + d, size: 9.5, color: RGB.gray }));
+      lines.push({ text: 'Πρόταση: ' + f.suggestion, size: 9.5, color });
+      drawBox(lines, color);
+    }
+    y -= 6;
+  }
+
   for (const chk of checks) {
     const color = chk.priority === 'red' ? RGB.red : chk.priority === 'yellow' ? RGB.amber : RGB.green;
     const label = chk.priority === 'red' ? 'ΥΨΗΛΗ' : chk.priority === 'yellow' ? 'ΜΕΣΑΙΑ' : 'OK';
