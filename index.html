@@ -387,12 +387,25 @@ let S = {
   patients: [], appointments: [], pipeline: [], clinics: [],
   loading: false, search: '', filter: 'all',
   patientDetail: null,
+  staffDirectory: null, // id -> full_name, ανά κλινική· φορτώνεται μία φορά (βλ. ensureStaffDirectory)
 };
 
 function set(patch) { Object.assign(S, patch); render(); }
 
 // ── HELPERS ──
 const esc = s => (s===null||s===undefined?'':s).toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+// Χαρτογράφηση profiles.id → full_name, για να δείχνουμε ποιος κατέγραψε ένα
+// ραντεβού (appointments.created_by) χωρίς να χρειάζεται join παντού. Φορτώνεται
+// μία φορά ανά κλινική (session-level cache), όχι σε κάθε άνοιγμα καρτέλας ασθενή.
+async function ensureStaffDirectory() {
+  if (S.staffDirectory) return S.staffDirectory;
+  const {data} = await sb.from('profiles').select('id,full_name').eq('clinic_id', clinicId());
+  const dir = {};
+  (data||[]).forEach(p => { dir[p.id] = p.full_name; });
+  S.staffDirectory = dir;
+  return dir;
+}
 
 // Ταξινόμηση υπηρεσίας → απαιτούμενη κατηγορία συναίνεσης (global — χρησιμοποιείται
 // και στο Πρόγραμμα για τα warnings, και στην καρτέλα ασθενή για να δείχνει
@@ -1208,6 +1221,7 @@ async function loadPatientDetail(id, tab) {
     const {data:p, error:pErr} = await sb.from('patients').select('*').eq('id',id).single();
     if (pErr) throw new Error('Ασθενής: '+pErr.message);
     const {data:a} = await sb.from('appointments').select('*').eq('patient_id',id).order('start_time',{ascending:true}).limit(500);
+    await ensureStaffDirectory(); // για να δείχνει "Καταχωρήθηκε από: X" στο Ιστορικό Ραντεβού
     // Πωλήσεις καλλυντικών του ασθενή — για να δείχνει το tab Consultation ✓
     // «Αγοράστηκε» δίπλα σε κάθε προτεινόμενο Homecare προϊόν που έχει όντως
     // πωληθεί (βλ. findProductSaleMatch, ίδια λογική με τα in-clinic ραντεβού).
@@ -2662,7 +2676,7 @@ function renderPatientDetail() {
             <div style="width:4px;align-self:stretch;border-radius:2px;background:${(STATUS_APPT[a.status]||STATUS_APPT.confirmed).c};flex-shrink:0"></div>
             <div style="flex:1">
               <div style="font-size:13px;font-weight:500">${a.package_id?'<span title="Συνεδρία πακέτου">📦 </span>':''}${esc(a.service_name||'—')}</div>
-              <div style="font-size:11px;color:var(--text-2)">${fmtDt(a.start_time)} · <span style="color:var(--blue)">προβολή στο Πρόγραμμα →</span></div>
+              <div style="font-size:11px;color:var(--text-2)">${fmtDt(a.start_time)} · <span style="color:var(--blue)">προβολή στο Πρόγραμμα →</span>${a.created_by&&S.staffDirectory&&S.staffDirectory[a.created_by]?` · Καταχωρήθηκε από: ${esc(S.staffDirectory[a.created_by])}`:''}</div>
             </div>
             ${canSeeFinancials&&a.price?`<div style="font-size:13px;font-weight:500;color:#0F6E56">${euro(a.price)}</div>`:''}
             ${apptBadge(a.status)}
@@ -8115,6 +8129,7 @@ function bindEvents() {
         price: parseFloat(row['Τιμή']||row['price']||'')||null,
         status: mapApptStatus(row['Κατάσταση']||row['status']||'confirmed'),
         notes: row['Σημειώσεις']||row['notes']||'',
+        created_by: S.user && S.user.id,
       };
       const {error} = await sb.from('appointments').insert(payload);
       if (error) err++; else ok++;
@@ -8250,6 +8265,7 @@ function bindEvents() {
             clinic_id: cid, patient_id: patientId, service_name: r.service,
             start_time: r.localTs, duration_minutes: r.duration||60, price: r.price,
             status, notes: r.staff?'Προσωπικό: '+r.staff:'',
+            created_by: S.user && S.user.id,
           });
           if (apErr) err++; else created++;
         } catch (e) { err++; }
@@ -9063,7 +9079,8 @@ function bindModalEvents() {
       // ΚΛΕΙΣΜΕΝΟ για μελλοντικά ραντεβού >48 ωρών (θα πάρουν email
       // επιβεβαίωσης 48 ώρες πριν)· κατευθείαν ΕΠΙΒΕΒΑΙΩΜΕΝΟ όταν το
       // ραντεβού είναι εντός 48 ωρών ή στο παρελθόν (οι οδηγίες φεύγουν αμέσως).
-      status: (new Date(timeWithTz).getTime() - Date.now() > 48*3600*1000) ? 'booked' : 'confirmed'
+      status: (new Date(timeWithTz).getTime() - Date.now() > 48*3600*1000) ? 'booked' : 'confirmed',
+      created_by: S.user && S.user.id,
     });
     if (error) { alert(error.message); btn.textContent='Αποθήκευση'; btn.disabled=false; return; }
     closeModal(); await loadPageData();
