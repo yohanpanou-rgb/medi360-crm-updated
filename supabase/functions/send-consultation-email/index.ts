@@ -42,6 +42,7 @@ function esc(x: unknown) {
 interface InClinicStep { label: string; items: string[]; }
 interface ConsultationEmailInput {
   clientName?: string;
+  clientGender?: string | null; // 'male' | 'female' | null/other — για σωστό "Αγαπητέ/Αγαπητή"
   skinLine?: string;
   expectedResults?: string[];
   inClinicSteps?: InClinicStep[];
@@ -83,6 +84,11 @@ function section(label: string, title: string, itemsHtml: string, bgColor: strin
 
 function renderConsultationEmailHtml(d: ConsultationEmailInput) {
   const headerName = d.clientName ? `, ${esc(d.clientName)}` : '';
+  // "Αγαπητή" (θηλυκό) ήταν πάντα σταθερό εδώ, ανεξάρτητα από το φύλο του
+  // πελάτη — λάθος για άντρες πελάτες (π.χ. "Αγαπητή, Δημήτρης Ράπτης").
+  // Χωρίς γνωστό φύλο (η πλειοψηφία των παλιών καρτελών) πέφτει σε
+  // ουδέτερη διατύπωση αντί να μαντεύει λάθος.
+  const dearWord = d.clientGender === 'male' ? 'Αγαπητέ' : d.clientGender === 'female' ? 'Αγαπητή' : 'Αγαπητέ/ή';
   const bookingLink = d.bookingLink || '#';
   const gmailExpandFix = '<div style="display:none!important;white-space:nowrap;font-size:0;line-height:0;">' + '.'.repeat(200) + '</div>';
 
@@ -118,7 +124,7 @@ ${gmailExpandFix}
 </div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${COLORS.bgIntro}" style="background-color:${COLORS.bgIntro};border-radius:18px;">
 <tr><td style="padding:16px 16px 14px 16px;">
-  <div style="font-size:15px;font-weight:900;margin-bottom:6px;color:${COLORS.textWhite};-webkit-text-fill-color:${COLORS.textWhite};">Αγαπητή${headerName}</div>
+  <div style="font-size:15px;font-weight:900;margin-bottom:6px;color:${COLORS.textWhite};-webkit-text-fill-color:${COLORS.textWhite};">${dearWord}${headerName}</div>
   <div style="line-height:1.65;font-size:14px;color:${COLORS.textWhite};-webkit-text-fill-color:${COLORS.textWhite};opacity:0.95;">Σας ευχαριστούμε για την επίσκεψή σας. Παρακάτω θα βρείτε το προσωποποιημένο σας skincare plan, όπως το διαμόρφωσε η θεραπεύτριά σας.</div>
 </td></tr>
 </table>
@@ -204,6 +210,7 @@ Deno.serve(async (req: Request) => {
 
     const html = renderConsultationEmailHtml({
       clientName: body.client_name,
+      clientGender: body.client_gender,
       skinLine: body.skin_line,
       expectedResults: body.expected_results || [],
       inClinicSteps: body.in_clinic_steps || [],

@@ -9565,7 +9565,7 @@ async function resendConsultationToPatient(consultId) {
   const clinicInfo = S.clinic || {};
   const {data, error} = await sb.functions.invoke('send-consultation-email', {
     body: {
-      to: p.email, clinic_name: clinicInfo.name, client_name: p.full_name,
+      to: p.email, clinic_name: clinicInfo.name, client_name: p.full_name, client_gender: p.gender,
       skin_line: skinLine, expected_results: expectedResults,
       in_clinic_steps: inClinicSteps, homecare_steps: homecareSteps,
       additional_notes: additionalNotes,
@@ -10871,12 +10871,12 @@ async function openConsultationFormModal(opts) {
     const payload = _cfBuildPayload();
     await sb.from('gdpr_consents').update({consent_text: payload.consent_text}).eq('id', savedConsentId);
 
-    const {data: patient} = await sb.from('patients').select('email,full_name').eq('id', selectedPatientId).single();
+    const {data: patient} = await sb.from('patients').select('email,full_name,gender').eq('id', selectedPatientId).single();
     const clinicInfo = S.clinic || {};
     const {data: emailResult, error: emailErr} = await sb.functions.invoke('send-consultation-email', {
       body: {
         to: patient&&patient.email, therapist_email: payload.therapistEmail || undefined,
-        clinic_name: clinicInfo.name, client_name: patient&&patient.full_name,
+        clinic_name: clinicInfo.name, client_name: patient&&patient.full_name, client_gender: patient&&patient.gender,
         skin_line: payload.skinLine, expected_results: payload.expectedResults,
         in_clinic_steps: payload.inClinicStepsForEmail, body_steps: payload.bodyStepsForEmail, homecare_steps: payload.homecareStepsForEmail,
         additional_notes: payload.additionalNotes,
