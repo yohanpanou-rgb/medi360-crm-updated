@@ -887,7 +887,15 @@ async function buildAuditPdf(clinicName: string, dayLabel: string, summary: { to
       badgeLines.push({ text: 'Συναίνεση Υπηρεσίας: N/A', ok: null });
     }
     if (chk.nextStepPending !== null) badgeLines.push({ text: chk.nextStepPending ? 'Επόμενο Βήμα: Δεν έχει κλειστεί' : 'Επόμενο Βήμα: Κλεισμένο', ok: !chk.nextStepPending });
-    badgeLines.push({ text: `Email: ${chk.missingFields.includes('Email') ? 'Λείπει' : 'OK'}  ·  Τηλ: ${chk.missingFields.includes('Τηλέφωνο') ? 'Λείπει' : 'OK'}  ·  Πόλη: ${chk.missingFields.includes('Πόλη') ? 'Λείπει' : 'OK'}  ·  Γέννηση: ${chk.missingFields.includes('Ημ. Γέννησης') ? 'Λείπει' : 'OK'}`, ok: chk.missingFields.length === 0 });
+    // Ξεχωριστή γραμμή ανά πεδίο (όχι μία ενιαία γραμμή για όλα) — αλλιώς αν
+    // λείπει έστω ένα πεδίο, ΟΛΗ η γραμμή έβγαινε κόκκινη μαζί με τα πεδία
+    // που όντως υπάρχουν (π.χ. "Email: OK" σε κόκκινο επειδή έλειπε η Πόλη).
+    // Το HTML email ήδη δείχνει κάθε πεδίο με δικό του ανεξάρτητο badge — το
+    // PDF έπρεπε να ταιριάζει.
+    badgeLines.push({ text: `Email: ${chk.missingFields.includes('Email') ? 'Λείπει' : 'OK'}`, ok: !chk.missingFields.includes('Email') });
+    badgeLines.push({ text: `Τηλέφωνο: ${chk.missingFields.includes('Τηλέφωνο') ? 'Λείπει' : 'OK'}`, ok: !chk.missingFields.includes('Τηλέφωνο') });
+    badgeLines.push({ text: `Πόλη: ${chk.missingFields.includes('Πόλη') ? 'Λείπει' : 'OK'}`, ok: !chk.missingFields.includes('Πόλη') });
+    badgeLines.push({ text: `Ημ. Γέννησης: ${chk.missingFields.includes('Ημ. Γέννησης') ? 'Λείπει' : 'OK'}`, ok: !chk.missingFields.includes('Ημ. Γέννησης') });
 
     const actionText = chk.actions.length ? 'Ενέργειες: ' + chk.actions.join(' · ') : 'Όλα εντάξει — καμία ενέργεια';
     const actionLines = wrapText(actionText, 9.5, contentWidth);
