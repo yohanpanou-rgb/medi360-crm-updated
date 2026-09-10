@@ -887,15 +887,19 @@ async function buildAuditPdf(clinicName: string, dayLabel: string, summary: { to
       badgeLines.push({ text: 'Συναίνεση Υπηρεσίας: N/A', ok: null });
     }
     if (chk.nextStepPending !== null) badgeLines.push({ text: chk.nextStepPending ? 'Επόμενο Βήμα: Δεν έχει κλειστεί' : 'Επόμενο Βήμα: Κλεισμένο', ok: !chk.nextStepPending });
-    // Ξεχωριστή γραμμή ανά πεδίο (όχι μία ενιαία γραμμή για όλα) — αλλιώς αν
-    // λείπει έστω ένα πεδίο, ΟΛΗ η γραμμή έβγαινε κόκκινη μαζί με τα πεδία
-    // που όντως υπάρχουν (π.χ. "Email: OK" σε κόκκινο επειδή έλειπε η Πόλη).
-    // Το HTML email ήδη δείχνει κάθε πεδίο με δικό του ανεξάρτητο badge — το
-    // PDF έπρεπε να ταιριάζει.
-    badgeLines.push({ text: `Email: ${chk.missingFields.includes('Email') ? 'Λείπει' : 'OK'}`, ok: !chk.missingFields.includes('Email') });
-    badgeLines.push({ text: `Τηλέφωνο: ${chk.missingFields.includes('Τηλέφωνο') ? 'Λείπει' : 'OK'}`, ok: !chk.missingFields.includes('Τηλέφωνο') });
-    badgeLines.push({ text: `Πόλη: ${chk.missingFields.includes('Πόλη') ? 'Λείπει' : 'OK'}`, ok: !chk.missingFields.includes('Πόλη') });
-    badgeLines.push({ text: `Ημ. Γέννησης: ${chk.missingFields.includes('Ημ. Γέννησης') ? 'Λείπει' : 'OK'}`, ok: !chk.missingFields.includes('Ημ. Γέννησης') });
+    // Τα 4 πεδία μένουν σε ΜΙΑ γραμμή (συμπαγές, όπως πριν — 4 ξεχωριστές
+    // γραμμές μάκραιναν πολύ το report), αλλά σχεδιάζονται σαν ξεχωριστά
+    // inline κομμάτια, το καθένα με το δικό του χρώμα, ώστε να μη βάφεται
+    // ΟΛΗ η γραμμή κόκκινη επειδή λείπει μόνο ένα πεδίο (π.χ. "Email: OK"
+    // σε κόκκινο επειδή έλειπε η Πόλη). Ίδιο αποτέλεσμα χρωματισμού με τα
+    // ανεξάρτητα badges του HTML email, χωρίς το επιπλέον ύψος.
+    const dataFieldSegments: { label: string; ok: boolean }[] = [
+      { label: 'Email', ok: !chk.missingFields.includes('Email') },
+      { label: 'Τηλ', ok: !chk.missingFields.includes('Τηλέφωνο') },
+      { label: 'Πόλη', ok: !chk.missingFields.includes('Πόλη') },
+      { label: 'Γέννηση', ok: !chk.missingFields.includes('Ημ. Γέννησης') },
+    ];
+    badgeLines.push({ text: '__DATA_FIELDS__', ok: null });
 
     const actionText = chk.actions.length ? 'Ενέργειες: ' + chk.actions.join(' · ') : 'Όλα εντάξει — καμία ενέργεια';
     const actionLines = wrapText(actionText, 9.5, contentWidth);
@@ -922,6 +926,22 @@ async function buildAuditPdf(clinicName: string, dayLabel: string, summary: { to
     y -= 13;
 
     for (const b of badgeLines) {
+      if (b.text === '__DATA_FIELDS__') {
+        drawLine('•', MARGIN + 12, 9.5, RGB.gray);
+        let x = MARGIN + 22;
+        dataFieldSegments.forEach((seg, i) => {
+          const segColor = seg.ok ? RGB.green : RGB.red;
+          const segText = `${seg.label}: ${seg.ok ? 'OK' : 'Λείπει'}`;
+          drawLine(segText, x, 9.5, segColor);
+          x += font.widthOfTextAtSize(segText, 9.5);
+          if (i < dataFieldSegments.length - 1) {
+            drawLine('  ·  ', x, 9.5, RGB.gray);
+            x += font.widthOfTextAtSize('  ·  ', 9.5);
+          }
+        });
+        y -= 13;
+        continue;
+      }
       const c = b.ok === false ? RGB.red : b.ok === true ? RGB.green : RGB.gray;
       drawLine('•', MARGIN + 12, 9.5, c);
       drawLine(b.text, MARGIN + 22, 9.5, c);
