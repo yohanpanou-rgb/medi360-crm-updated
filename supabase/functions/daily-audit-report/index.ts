@@ -272,7 +272,7 @@ interface PatientCheck {
   consentOk: boolean | null; // null = δεν απαιτείται/ενότητα off
   nextStepPending: boolean | null; // null = N/A
   missingFields: string[]; // κενό = όλα εντάξει
-  priority: 'red' | 'yellow' | 'green';
+  priority: 'red' | 'green'; // κόκκινο = χρειάζεται ενέργεια, πράσινο = όχι — δυαδικό κατ' αίτημα, όχι διαβάθμιση
   actions: string[];
 }
 
@@ -462,9 +462,9 @@ Deno.serve(async (req: Request) => {
           ? !(apptsByPatient[p.id] || []).some((o) => o.id !== a.id && o.status === 'completed' && new Date(o.start_time) < new Date(a.start_time))
           : false;
 
-        const highRisk = gdprOk === false || consultationDone === false || consentOk === false;
-        const midRisk = nextStepPending === true || missingFields.length > 0;
-        const priority: 'red' | 'yellow' | 'green' = highRisk ? 'red' : midRisk ? 'yellow' : 'green';
+        // Δυαδικό: κόκκινο αν υπάρχει έστω μία ενέργεια εκκρεμής, πράσινο αν όχι —
+        // όχι πια τριών επιπέδων (υψηλή/μεσαία), όπως ζητήθηκε.
+        const priority: 'red' | 'green' = actions.length > 0 ? 'red' : 'green';
 
         checks.push({
           time: new Date(a.start_time).toLocaleTimeString('el-GR', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Athens' }),
@@ -662,13 +662,12 @@ function buildMimeMessage(fromName: string, to: string[], subject: string, html:
 // ── HTML EMAIL (ίδιο layout με το εγκεκριμένο mockup — ανά πελάτη,
 // χρονολογική σειρά, + τεχνικός έλεγχος) ─────────────────────────────
 
-function priorityBadge(p: 'red' | 'yellow' | 'green') {
-  if (p === 'red') return { label: '🔴 ΥΨΗΛΗ', color: '#A32D2D' };
-  if (p === 'yellow') return { label: '🟡 ΜΕΣΑΙΑ', color: '#854F0B' };
+function priorityBadge(p: 'red' | 'green') {
+  if (p === 'red') return { label: '🔴 ΕΝΕΡΓΕΙΑ', color: '#A32D2D' };
   return { label: '🟢 ΟΚ', color: '#0F6E56' };
 }
-function cardBorderColor(p: 'red' | 'yellow' | 'green') {
-  return p === 'red' ? '#A32D2D' : p === 'yellow' ? '#D97706' : '#0F6E56';
+function cardBorderColor(p: 'red' | 'green') {
+  return p === 'red' ? '#A32D2D' : '#0F6E56';
 }
 function chip(text: string, ok: boolean | null) {
   const bg = ok === false ? '#FCEBEB' : '#E1F5EE';
@@ -702,7 +701,7 @@ function buildAuditHtml(dayLabel: string, brand: { name: string; color: string }
   const patientCard = (chk: PatientCheck) => {
     const bd = priorityBadge(chk.priority);
     const border = cardBorderColor(chk.priority);
-    const bg = chk.priority === 'red' ? '#FEFAFA' : chk.priority === 'yellow' ? '#FEFCF8' : '#FAFEFC';
+    const bg = chk.priority === 'red' ? '#FEFAFA' : '#FAFEFC';
     const badges: string[] = [];
     if (chk.gdprOk !== null) badges.push(chip(chk.gdprOk ? '🟢 GDPR OK' : '🔴 GDPR: Λείπει', chk.gdprOk));
     if (chk.consultationDone !== null) badges.push(chip(chk.consultationDone ? `🟢 Consultation: Έγινε${chk.consultDate ? ' (' + chk.consultDate + ')' : ''}` : '🔴 Consultation: δεν έχει γίνει ποτέ', chk.consultationDone));
@@ -711,7 +710,7 @@ function buildAuditHtml(dayLabel: string, brand: { name: string; color: string }
     } else {
       badges.push(chip('— Συναίνεση Υπηρεσίας: N/A', null));
     }
-    if (chk.nextStepPending !== null) badges.push(chip(chk.nextStepPending ? '🟡 Επόμενο Βήμα: Δεν έχει κλειστεί' : '🟢 Επόμενο Βήμα: Κλεισμένο', !chk.nextStepPending));
+    if (chk.nextStepPending !== null) badges.push(chip(chk.nextStepPending ? '🔴 Επόμενο Βήμα: Δεν έχει κλειστεί' : '🟢 Επόμενο Βήμα: Κλεισμένο', !chk.nextStepPending));
 
     const dataBadges = ['Email', 'Τηλέφωνο', 'Πόλη', 'Ημ. Γέννησης'].map((f) => chip(f, !chk.missingFields.includes(f)));
 
@@ -875,8 +874,8 @@ async function buildAuditPdf(clinicName: string, dayLabel: string, summary: { to
   }
 
   for (const chk of checks) {
-    const color = chk.priority === 'red' ? RGB.red : chk.priority === 'yellow' ? RGB.amber : RGB.green;
-    const label = chk.priority === 'red' ? 'ΥΨΗΛΗ' : chk.priority === 'yellow' ? 'ΜΕΣΑΙΑ' : 'OK';
+    const color = chk.priority === 'red' ? RGB.red : RGB.green;
+    const label = chk.priority === 'red' ? 'ΕΝΕΡΓΕΙΑ' : 'OK';
 
     // Προϋπολογισμός ύψους block ώστε να μη σκίζεται στο τέλος σελίδας.
     const badgeLines: { text: string; ok: boolean | null }[] = [];
@@ -888,7 +887,19 @@ async function buildAuditPdf(clinicName: string, dayLabel: string, summary: { to
       badgeLines.push({ text: 'Συναίνεση Υπηρεσίας: N/A', ok: null });
     }
     if (chk.nextStepPending !== null) badgeLines.push({ text: chk.nextStepPending ? 'Επόμενο Βήμα: Δεν έχει κλειστεί' : 'Επόμενο Βήμα: Κλεισμένο', ok: !chk.nextStepPending });
-    badgeLines.push({ text: `Email: ${chk.missingFields.includes('Email') ? 'Λείπει' : 'OK'}  ·  Τηλ: ${chk.missingFields.includes('Τηλέφωνο') ? 'Λείπει' : 'OK'}  ·  Πόλη: ${chk.missingFields.includes('Πόλη') ? 'Λείπει' : 'OK'}  ·  Γέννηση: ${chk.missingFields.includes('Ημ. Γέννησης') ? 'Λείπει' : 'OK'}`, ok: chk.missingFields.length === 0 });
+    // Τα 4 πεδία μένουν σε ΜΙΑ γραμμή (συμπαγές, όπως πριν — 4 ξεχωριστές
+    // γραμμές μάκραιναν πολύ το report), αλλά σχεδιάζονται σαν ξεχωριστά
+    // inline κομμάτια, το καθένα με το δικό του χρώμα, ώστε να μη βάφεται
+    // ΟΛΗ η γραμμή κόκκινη επειδή λείπει μόνο ένα πεδίο (π.χ. "Email: OK"
+    // σε κόκκινο επειδή έλειπε η Πόλη). Ίδιο αποτέλεσμα χρωματισμού με τα
+    // ανεξάρτητα badges του HTML email, χωρίς το επιπλέον ύψος.
+    const dataFieldSegments: { label: string; ok: boolean }[] = [
+      { label: 'Email', ok: !chk.missingFields.includes('Email') },
+      { label: 'Τηλ', ok: !chk.missingFields.includes('Τηλέφωνο') },
+      { label: 'Πόλη', ok: !chk.missingFields.includes('Πόλη') },
+      { label: 'Γέννηση', ok: !chk.missingFields.includes('Ημ. Γέννησης') },
+    ];
+    badgeLines.push({ text: '__DATA_FIELDS__', ok: null });
 
     const actionText = chk.actions.length ? 'Ενέργειες: ' + chk.actions.join(' · ') : 'Όλα εντάξει — καμία ενέργεια';
     const actionLines = wrapText(actionText, 9.5, contentWidth);
@@ -915,6 +926,22 @@ async function buildAuditPdf(clinicName: string, dayLabel: string, summary: { to
     y -= 13;
 
     for (const b of badgeLines) {
+      if (b.text === '__DATA_FIELDS__') {
+        drawLine('•', MARGIN + 12, 9.5, RGB.gray);
+        let x = MARGIN + 22;
+        dataFieldSegments.forEach((seg, i) => {
+          const segColor = seg.ok ? RGB.green : RGB.red;
+          const segText = `${seg.label}: ${seg.ok ? 'OK' : 'Λείπει'}`;
+          drawLine(segText, x, 9.5, segColor);
+          x += font.widthOfTextAtSize(segText, 9.5);
+          if (i < dataFieldSegments.length - 1) {
+            drawLine('  ·  ', x, 9.5, RGB.gray);
+            x += font.widthOfTextAtSize('  ·  ', 9.5);
+          }
+        });
+        y -= 13;
+        continue;
+      }
       const c = b.ok === false ? RGB.red : b.ok === true ? RGB.green : RGB.gray;
       drawLine('•', MARGIN + 12, 9.5, c);
       drawLine(b.text, MARGIN + 22, 9.5, c);
