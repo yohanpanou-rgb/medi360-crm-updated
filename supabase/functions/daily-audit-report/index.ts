@@ -272,7 +272,7 @@ interface PatientCheck {
   consentOk: boolean | null; // null = δεν απαιτείται/ενότητα off
   nextStepPending: boolean | null; // null = N/A
   missingFields: string[]; // κενό = όλα εντάξει
-  priority: 'red' | 'yellow' | 'green';
+  priority: 'red' | 'green'; // κόκκινο = χρειάζεται ενέργεια, πράσινο = όχι — δυαδικό κατ' αίτημα, όχι διαβάθμιση
   actions: string[];
 }
 
@@ -462,9 +462,9 @@ Deno.serve(async (req: Request) => {
           ? !(apptsByPatient[p.id] || []).some((o) => o.id !== a.id && o.status === 'completed' && new Date(o.start_time) < new Date(a.start_time))
           : false;
 
-        const highRisk = gdprOk === false || consultationDone === false || consentOk === false;
-        const midRisk = nextStepPending === true || missingFields.length > 0;
-        const priority: 'red' | 'yellow' | 'green' = highRisk ? 'red' : midRisk ? 'yellow' : 'green';
+        // Δυαδικό: κόκκινο αν υπάρχει έστω μία ενέργεια εκκρεμής, πράσινο αν όχι —
+        // όχι πια τριών επιπέδων (υψηλή/μεσαία), όπως ζητήθηκε.
+        const priority: 'red' | 'green' = actions.length > 0 ? 'red' : 'green';
 
         checks.push({
           time: new Date(a.start_time).toLocaleTimeString('el-GR', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Athens' }),
@@ -662,13 +662,12 @@ function buildMimeMessage(fromName: string, to: string[], subject: string, html:
 // ── HTML EMAIL (ίδιο layout με το εγκεκριμένο mockup — ανά πελάτη,
 // χρονολογική σειρά, + τεχνικός έλεγχος) ─────────────────────────────
 
-function priorityBadge(p: 'red' | 'yellow' | 'green') {
-  if (p === 'red') return { label: '🔴 ΥΨΗΛΗ', color: '#A32D2D' };
-  if (p === 'yellow') return { label: '🟡 ΜΕΣΑΙΑ', color: '#854F0B' };
+function priorityBadge(p: 'red' | 'green') {
+  if (p === 'red') return { label: '🔴 ΕΝΕΡΓΕΙΑ', color: '#A32D2D' };
   return { label: '🟢 ΟΚ', color: '#0F6E56' };
 }
-function cardBorderColor(p: 'red' | 'yellow' | 'green') {
-  return p === 'red' ? '#A32D2D' : p === 'yellow' ? '#D97706' : '#0F6E56';
+function cardBorderColor(p: 'red' | 'green') {
+  return p === 'red' ? '#A32D2D' : '#0F6E56';
 }
 function chip(text: string, ok: boolean | null) {
   const bg = ok === false ? '#FCEBEB' : '#E1F5EE';
@@ -702,7 +701,7 @@ function buildAuditHtml(dayLabel: string, brand: { name: string; color: string }
   const patientCard = (chk: PatientCheck) => {
     const bd = priorityBadge(chk.priority);
     const border = cardBorderColor(chk.priority);
-    const bg = chk.priority === 'red' ? '#FEFAFA' : chk.priority === 'yellow' ? '#FEFCF8' : '#FAFEFC';
+    const bg = chk.priority === 'red' ? '#FEFAFA' : '#FAFEFC';
     const badges: string[] = [];
     if (chk.gdprOk !== null) badges.push(chip(chk.gdprOk ? '🟢 GDPR OK' : '🔴 GDPR: Λείπει', chk.gdprOk));
     if (chk.consultationDone !== null) badges.push(chip(chk.consultationDone ? `🟢 Consultation: Έγινε${chk.consultDate ? ' (' + chk.consultDate + ')' : ''}` : '🔴 Consultation: δεν έχει γίνει ποτέ', chk.consultationDone));
@@ -711,7 +710,7 @@ function buildAuditHtml(dayLabel: string, brand: { name: string; color: string }
     } else {
       badges.push(chip('— Συναίνεση Υπηρεσίας: N/A', null));
     }
-    if (chk.nextStepPending !== null) badges.push(chip(chk.nextStepPending ? '🟡 Επόμενο Βήμα: Δεν έχει κλειστεί' : '🟢 Επόμενο Βήμα: Κλεισμένο', !chk.nextStepPending));
+    if (chk.nextStepPending !== null) badges.push(chip(chk.nextStepPending ? '🔴 Επόμενο Βήμα: Δεν έχει κλειστεί' : '🟢 Επόμενο Βήμα: Κλεισμένο', !chk.nextStepPending));
 
     const dataBadges = ['Email', 'Τηλέφωνο', 'Πόλη', 'Ημ. Γέννησης'].map((f) => chip(f, !chk.missingFields.includes(f)));
 
@@ -875,8 +874,8 @@ async function buildAuditPdf(clinicName: string, dayLabel: string, summary: { to
   }
 
   for (const chk of checks) {
-    const color = chk.priority === 'red' ? RGB.red : chk.priority === 'yellow' ? RGB.amber : RGB.green;
-    const label = chk.priority === 'red' ? 'ΥΨΗΛΗ' : chk.priority === 'yellow' ? 'ΜΕΣΑΙΑ' : 'OK';
+    const color = chk.priority === 'red' ? RGB.red : RGB.green;
+    const label = chk.priority === 'red' ? 'ΕΝΕΡΓΕΙΑ' : 'OK';
 
     // Προϋπολογισμός ύψους block ώστε να μη σκίζεται στο τέλος σελίδας.
     const badgeLines: { text: string; ok: boolean | null }[] = [];
