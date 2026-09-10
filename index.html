@@ -4480,21 +4480,6 @@ async function redeemBirthdayGift(id) {
   if (S.patientBirthdayGift && S.patientBirthdayGift.id===id) S.patientBirthdayGift.redeemed_at = new Date().toISOString();
   render();
 }
-// Αυτόματη εξαργύρωση: όταν ολοκληρώνεται ραντεβού πελάτη με ενεργό δώρο
-// γενεθλίων (μέσα στην ισχύ του), το δώρο μαρκάρεται εξαργυρωμένο μόνο του.
-async function maybeRedeemBirthdayGift(appt) {
-  try {
-    if (!appt || !appt.patient_id) return;
-    const todayStr = new Date().toISOString().slice(0,10);
-    const {data:gifts} = await sb.from('birthday_gifts').select('id')
-      .eq('patient_id', appt.patient_id).is('redeemed_at', null).gte('expires_at', todayStr).limit(1);
-    if (gifts && gifts.length) {
-      await sb.from('birthday_gifts').update({redeemed_at: new Date().toISOString(), redeemed_appointment_id: appt.id}).eq('id', gifts[0].id);
-      if (S.patientBirthdayGift && S.patientBirthdayGift.id===gifts[0].id) S.patientBirthdayGift.redeemed_at = new Date().toISOString();
-    }
-  } catch(e) { /* σιωπηλά — δεν μπλοκάρει την αλλαγή κατάστασης */ }
-}
-
 // Όταν ένα ραντεβού μαρκάρεται "Ολοκληρωμένο" ΧΩΡΙΣ τιμή (π.χ. ήρθε από το
 // booking247, που δεν στέλνει τιμές), ρωτάμε πόσο πληρώθηκε — αλλιώς τζίρος,
 // LTV και στατιστικά ανά υπηρεσία/θεραπευτή μετράνε 0€ για πραγματική δουλειά.
@@ -6947,7 +6932,6 @@ function bindEvents() {
       const {error} = await sb.from('appointments').update(upd).eq('id',el.dataset.apptStatus);
       if (error) { alert('✗ Η αλλαγή κατάστασης απέτυχε: '+error.message); el.value = prevValue; return; }
       if (appt) Object.assign(appt, upd);
-      if (newValue==='completed' && appt) await maybeRedeemBirthdayGift(appt);
       loadPageData();
     };
   });
@@ -7622,7 +7606,6 @@ function bindEvents() {
         const {error} = await sb.from('appointments').update(upd).eq('id',a.id);
         if (error) { alert('✗ Η αλλαγή κατάστασης απέτυχε: '+error.message); ev.target.value = prevValue; return; }
         Object.assign(a, upd);
-        if (ev.target.value==='completed') await maybeRedeemBirthdayGift(a);
         await loadPageData();
       });
       // Αλλαγή θεραπευτή από το popup — ίδια ενημέρωση με το drag & drop
