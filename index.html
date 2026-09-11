@@ -7677,7 +7677,9 @@ function bindEvents() {
             ${Object.entries(STATUS_APPT).map(([k,v])=>`<option value="${k}" ${a.status===k?'selected':''}>${v.l}</option>`).join('')}
           </select>
         </div>
-        <div id="appt-autom-info" style="margin-top:8px;font-size:11px;color:var(--text-2)"></div>`;
+        <div id="appt-autom-info" style="margin-top:8px;font-size:11px;color:var(--text-2)"></div>
+        ${canSee(['super_admin','clinic_admin'])?`
+        <button class="btn btn-sm" id="appt-delete-btn" style="width:100%;margin-top:10px;justify-content:center;background:#FCEBEB;color:#A32D2D;font-weight:700">🗑 Διαγραφή Ραντεβού</button>`:''}`;
       panel.style.display = 'block';
       loadApptAutomationInfo(a.id);
       // Rebind patient link
@@ -7687,6 +7689,18 @@ function bindEvents() {
       });
       bindApptReceiptButton(a, canReceipt);
       bindApptConsumablesArea(a);
+      // Οριστική διαγραφή ραντεβού — μόνο super_admin/clinic_admin (ίδιο gate
+      // με την RLS delete policy στη βάση). Ξεχωριστό από «Ακυρώθηκε»: η
+      // ακύρωση κρατάει ιστορικό, η διαγραφή αφαιρεί εντελώς την εγγραφή.
+      const _del=content.querySelector('#appt-delete-btn');if(_del)_del.onclick = async () => {
+        const who = (a.patients&&a.patients.full_name)||'—';
+        const when = start.toLocaleDateString('el-GR')+' '+start.toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'});
+        if (!confirm(`Οριστική διαγραφή του ραντεβού «${who} · ${when}»;\n\nΔεν αναιρείται. Αν θες απλά να μείνει ιστορικό, χρησιμοποίησε αντ' αυτού την κατάσταση «Ακυρώθηκε».`)) return;
+        const {error} = await sb.from('appointments').delete().eq('id',a.id);
+        if (error) { alert('✗ Η διαγραφή απέτυχε: '+error.message); return; }
+        panel.style.display='none';
+        await loadPageData();
+      };
       const _cs=content.querySelector('[data-appt-status]');if(_cs)_cs.addEventListener('change', async (ev) => {
         const prevValue = a.status;
         const upd = await apptStatusUpdatePayload(a, ev.target.value);
