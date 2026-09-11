@@ -2487,6 +2487,8 @@ function renderPatientDetail() {
             events.push({date:cl.created_at,type:'comm',icon:'🚫',color:'#A32D2D',bg:'#FCEBEB',title:'Ο πελάτης ακύρωσε το ραντεβού'+manual});
           else if (cl.automation_type==='instructions' && cl.status==='sent')
             events.push({date:cl.created_at,type:'comm',icon:'📋',color:'#854F0B',bg:'#FAEEDA',title:'Οδηγίες θεραπείας εστάλησαν'+manual,desc:(cl.metadata&&cl.metadata.instruction_set)||''});
+          else if (cl.automation_type==='rescheduled')
+            events.push({date:cl.created_at,type:'comm',icon:'🔄',color:'#0891B2',bg:'#CFFAFE',title:'Το ραντεβού μεταφέρθηκε',desc:(cl.metadata&&cl.metadata.from_start_time&&cl.metadata.to_start_time)?`${fmtDt(cl.metadata.from_start_time)} → ${fmtDt(cl.metadata.to_start_time)}`:''});
         });
         // Sort by date desc
         events.sort((a,b)=>new Date(b.date)-new Date(a.date));
@@ -4592,17 +4594,35 @@ function openRescheduleApptPicker(appt) {
 async function apptStatusUpdatePayload(appt, newStatus) {
   // "Μεταφέρθηκε": δεν αλλάζει απλά status — μετακινεί το ΙΔΙΟ ραντεβού σε
   // νέα ημέρα/ώρα (ο χρήστης το ζήτησε ρητά αντί για δημιουργία νέου
-  // ραντεβού). Το νέο start_time ξεκινάει αυτόματα νέο "cycle" για τα
-  // appointment-automations emails (confirmation/instructions), όπως γίνεται
-  // ήδη με κάθε reschedule στο σύστημα — καμία επιπλέον αλλαγή δεν χρειάζεται
-  // στα edge functions.
+  // ραντεβού). Στη νέα θέση επιστρέφει σε 'booked' (Κλεισμένο) — δεν μένει
+  // μόνιμα μαρκαρισμένο "Μεταφέρθηκε" — και το νέο start_time ξεκινάει
+  // αυτόματα νέο "cycle" για τα appointment-automations emails
+  // (confirmation/instructions), όπως γίνεται ήδη με κάθε reschedule στο
+  // σύστημα — καμία επιπλέον αλλαγή δεν χρειάζεται στα edge functions.
+  // Η ίδια η μεταφορά καταγράφεται στο communication_log (automation_type
+  // 'rescheduled', channel 'manual') ώστε να μείνει ορατή σαν ξεχωριστό
+  // γεγονός στο Timeline της καρτέλας ασθενή, ακόμα κι αφού το ραντεβού
+  // δείχνει πλέον απλό "Κλεισμένο" στη νέα ώρα.
   if (newStatus === 'rescheduled') {
     const picked = await openRescheduleApptPicker(appt);
     if (!picked) return null;
     const newStart = new Date(`${picked.date}T${picked.time}:00`);
     const durMin = (appt && appt.duration_minutes) || 60;
     const newEnd = new Date(newStart.getTime() + durMin*60000);
-    return {status:'rescheduled', start_time:newStart.toISOString(), end_time:newEnd.toISOString()};
+    if (appt) {
+      try {
+        await sb.from('communication_log').insert({
+          clinic_id: appt.clinic_id || clinicId(),
+          appointment_id: appt.id,
+          patient_id: appt.patient_id,
+          automation_type: 'rescheduled',
+          channel: 'manual',
+          status: 'sent',
+          metadata: { from_start_time: appt.start_time, to_start_time: newStart.toISOString() },
+        });
+      } catch(e) { /* η καταγραφή στο timeline δεν πρέπει ποτέ να μπλοκάρει τη μεταφορά */ }
+    }
+    return {status:'booked', start_time:newStart.toISOString(), end_time:newEnd.toISOString()};
   }
   const upd = {status: newStatus};
   if (newStatus==='completed' && appt && !appt.package_id && !(parseFloat(appt.price)>0)) {
