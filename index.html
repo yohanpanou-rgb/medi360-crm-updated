@@ -816,6 +816,12 @@ async function loadPageData() {
     S.ssvOverrides=[]; S.ssvTimeOff=[]; S.ssvStatsAppointments=[]; S.staffTimeOffAll=[];
     return;
   }
+  // Υποκαταστήματα — ελαφρύ reference-list φόρτωμα, πάντα διαθέσιμο (Ρυθμίσεις,
+  // Πρόγραμμα, Νέο Ραντεβού, Ωράριο Προσωπικού, Timeline πελάτη).
+  {
+    const {data:branches} = await sb.from('clinic_branches').select('*').eq('clinic_id',cid).order('name');
+    S.clinicBranches = branches||[];
+  }
   if (S.page==='patients' || S.page==='dashboard') {
     const {data} = await sb.from('patients').select('*').eq('clinic_id',cid).order('created_at',{ascending:false});
     S.patients = data||[];
@@ -2457,9 +2463,10 @@ function renderPatientDetail() {
         // Appointments
         (p.appointments||[]).forEach(a=>{
           const st=STATUS_APPT[a.status]||STATUS_APPT.confirmed;
+          const branchName = a.branch_id ? (((S.clinicBranches||[]).find(b=>b.id===a.branch_id)||{}).name) : null;
           events.push({date:a.start_time,type:'appt',icon:'◷',color:st.c,bg:st.bg,
             title:a.service_name||'Ραντεβού',
-            desc:`${fmtDt(a.start_time)}${canSeeFinancials&&a.price?' · '+euro(a.price):''}`,
+            desc:`${fmtDt(a.start_time)}${canSeeFinancials&&a.price?' · '+euro(a.price):''}${branchName?' · 🏢 '+branchName:''}`,
             badge:apptBadge(a.status)});
         });
         // Laser forms
@@ -3124,7 +3131,10 @@ function renderCalendar() {
   const calDate = parseCalDate(S.calDate);
   const staff = S.staff||[];
   const hideCancelled = !!S.calHideCancelled;
-  const appts = (S.appointments||[]).filter(a => !hideCancelled || (a.status!=='cancelled' && a.status!=='no_show'));
+  const branches = S.clinicBranches||[];
+  const branchFilter = (S.calBranchFilter && branches.some(b=>b.id===S.calBranchFilter)) ? S.calBranchFilter : 'all';
+  const appts = (S.appointments||[]).filter(a => !hideCancelled || (a.status!=='cancelled' && a.status!=='no_show'))
+    .filter(a => branchFilter==='all' || a.branch_id===branchFilter);
   const canSeeFinancials = canSee(['super_admin','clinic_admin']);
 
   // Date navigation helpers
@@ -3475,6 +3485,11 @@ function renderCalendar() {
       ${calView==='day'?`<select class="form-control" id="cal-staff-filter" style="width:auto;padding:6px 10px;font-size:12px">
         <option value="all" ${staffFilter==='all'?'selected':''}>Όλοι${cols.length>1?` (${cols.length})`:''}</option>
         ${cols.map(c=>`<option value="${esc(c.id)}" ${staffFilter===c.id?'selected':''}>${esc(c.full_name)}</option>`).join('')}
+      </select>`:''}
+
+      ${branches.length>1?`<select class="form-control" id="cal-branch-filter" style="width:auto;padding:6px 10px;font-size:12px" title="Υποκατάστημα">
+        <option value="all" ${branchFilter==='all'?'selected':''}>🏢 Όλα τα υποκαταστήματα</option>
+        ${branches.map(b=>`<option value="${esc(b.id)}" ${branchFilter===b.id?'selected':''}>${esc(b.name)}</option>`).join('')}
       </select>`:''}
 
       <button class="btn btn-primary btn-sm" data-modal="new-appt">+ Ραντεβού</button>
@@ -4319,7 +4334,19 @@ function computeScheduledMinutes(staffIds, fromStr, toStr, schedules, overrides,
 }
 
 function computeReportStats() {
-  const apts = S.reportAppointments||[];
+  const allApts = S.reportAppointments||[];
+  const branchFilter = S.reportBranchFilter||'all';
+  const apts = branchFilter==='all' ? allApts : allApts.filter(a=>a.branch_id===branchFilter);
+  // Ανάλυση ανά υποκατάστημα (ΠΑΝΤΑ στο σύνολο του διαστήματος, ανεξάρτητα από
+  // το επιλεγμένο φίλτρο υποκαταστήματος πάνω από τον πίνακα) — Ραντεβού + Έσοδα.
+  const branchBreakdown = (S.clinicBranches||[]).map(b=>{
+    const bApts = allApts.filter(a=>a.branch_id===b.id);
+    return {id:b.id, name:b.name, count:bApts.length, revenue:bApts.filter(a=>a.status==='completed').reduce((s,a)=>s+(a.price||0),0)};
+  });
+  const unassignedApts = allApts.filter(a=>!a.branch_id);
+  if ((S.clinicBranches||[]).length && unassignedApts.length) {
+    branchBreakdown.push({id:null, name:'Χωρίς υποκατάστημα', count:unassignedApts.length, revenue:unassignedApts.filter(a=>a.status==='completed').reduce((s,a)=>s+(a.price||0),0)});
+  }
   const newPatients = S.reportNewPatients||[];
   const allPatients = S.reportAllPatients||[];
   const completedApts = apts.filter(a=>a.status==='completed');
@@ -4486,7 +4513,7 @@ function computeReportStats() {
     newPatientsDelta, newPatientsPct, consultations, prevConsultCount, consultDelta, consultPct,
     utilizationRate, utilizationIsReal, recommendedTotal, recommendedDone, consultPatients,
     completedCount, cancelledCount, pendingCount, patientCategoryGroups,
-    confirmSent, confirmReceived, confirmRate };
+    confirmSent, confirmReceived, confirmRate, branchFilter, branchBreakdown };
 }
 
 // 🎁 Δώρο γενεθλίων — εξαργύρωση
@@ -4940,9 +4967,29 @@ function renderReports() {
       <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
         <div class="form-group" style="margin:0"><label class="form-label">Από</label><input class="form-control" type="date" id="report-from" value="${range.from}"/></div>
         <div class="form-group" style="margin:0"><label class="form-label">Έως</label><input class="form-control" type="date" id="report-to" value="${range.to}"/></div>
+        ${(S.clinicBranches||[]).length>1?`<div class="form-group" style="margin:0"><label class="form-label">Υποκατάστημα</label>
+          <select class="form-control" id="report-branch-filter">
+            <option value="all" ${s.branchFilter==='all'?'selected':''}>Όλα τα υποκαταστήματα</option>
+            ${(S.clinicBranches||[]).map(b=>`<option value="${esc(b.id)}" ${s.branchFilter===b.id?'selected':''}>${esc(b.name)}</option>`).join('')}
+          </select>
+        </div>`:''}
         <button class="btn btn-primary" id="report-refresh">🔄 Ενημέρωση</button>
       </div>
     </div>
+
+    ${(S.clinicBranches||[]).length?`<div class="card" style="padding:16px;margin-bottom:16px">
+      <div class="card-title" style="margin-bottom:10px">🏢 Ανά Υποκατάστημα</div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Υποκατάστημα</th><th>Ραντεβού</th>${canFin?'<th>Έσοδα</th>':''}</tr></thead>
+        <tbody>
+          ${s.branchBreakdown.map(b=>`<tr>
+            <td>${esc(b.name)}</td>
+            <td>${b.count}</td>
+            ${canFin?`<td>${euro(b.revenue)}</td>`:''}
+          </tr>`).join('')}
+        </tbody>
+      </table></div>
+    </div>`:''}
 
     <div class="stats-grid" style="margin-bottom:16px">
       <div class="stat-card">
@@ -5725,6 +5772,10 @@ function renderSsvScheduleTab() {
             <input class="form-control ssv-sched-start" data-day="${i}" type="time" value="${r&&r.start_time?r.start_time.slice(0,5):'09:00'}" style="max-width:110px"/>
             <span style="color:var(--text-2)">–</span>
             <input class="form-control ssv-sched-end" data-day="${i}" type="time" value="${r&&r.end_time?r.end_time.slice(0,5):'17:00'}" style="max-width:110px"/>
+            ${(S.clinicBranches||[]).length>1?`<select class="form-control ssv-sched-branch" data-day="${i}" style="max-width:150px">
+              <option value="">Υποκατάστημα...</option>
+              ${(S.clinicBranches||[]).map(b=>`<option value="${b.id}" ${r&&r.branch_id===b.id?'selected':''}>${esc(b.name)}</option>`).join('')}
+            </select>`:''}
           </div>`;
         }).join('')}
         <button class="btn btn-primary btn-sm" style="margin-top:12px" onclick="saveStaffSchedule('${sel.id}')">Αποθήκευση Ωραρίου</button>
@@ -5735,10 +5786,12 @@ function renderSsvScheduleTab() {
           <div class="card-title">Μεμονωμένες Αλλαγές Ωραρίου</div>
           <button class="btn btn-ghost btn-sm" onclick="openScheduleOverrideModal('${sel.id}')">+ Προσθήκη</button>
         </div>
-        ${overrides.length?overrides.map(o=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border-2);font-size:12px;gap:8px">
-          <span>${new Date(o.date).toLocaleDateString('el-GR')} — ${o.is_working?esc((o.start_time?o.start_time.slice(0,5):'')+'–'+(o.end_time?o.end_time.slice(0,5):'')):'Ρεπό'}${o.notes?' · '+esc(o.notes):''}</span>
+        ${overrides.length?overrides.map(o=>{
+          const branchName = o.branch_id ? (((S.clinicBranches||[]).find(b=>b.id===o.branch_id)||{}).name) : null;
+          return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border-2);font-size:12px;gap:8px">
+          <span>${new Date(o.date).toLocaleDateString('el-GR')} — ${o.is_working?esc((o.start_time?o.start_time.slice(0,5):'')+'–'+(o.end_time?o.end_time.slice(0,5):'')):'Ρεπό'}${o.notes?' · '+esc(o.notes):''}${branchName?' · 🏢 '+esc(branchName):''}</span>
           <button class="btn btn-ghost btn-sm" onclick="deleteScheduleOverride('${o.id}')" style="color:var(--red)">🗑</button>
-        </div>`).join(''):'<div style="color:var(--text-2);font-size:12px">Καμία καταχώρηση.</div>'}
+        </div>`;}).join(''):'<div style="color:var(--text-2);font-size:12px">Καμία καταχώρηση.</div>'}
       </div>
 
       <div class="card" style="padding:16px">
@@ -6009,6 +6062,55 @@ async function deleteService(id) {
   await loadPageData(); render();
 }
 
+function openBranchFormModal(id) {
+  const b = id ? (S.clinicBranches||[]).find(x=>x.id===id) : null;
+  const old = document.getElementById('branch-overlay'); if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'branch-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9000;display:flex;align-items:center;justify-content:center;padding:12px';
+  ov.innerHTML = `
+    <div style="background:var(--white);border-radius:16px;max-width:440px;width:100%;padding:20px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div style="font-size:15px;font-weight:700">${b?'Επεξεργασία Υποκαταστήματος':'Νέο Υποκατάστημα'}</div>
+        <button onclick="document.getElementById('branch-overlay').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-2)">×</button>
+      </div>
+      <div class="form-group"><label class="form-label">Όνομα *</label><input class="form-control" id="branch-name" placeholder="π.χ. Κέντρο, Γλυφάδα..." value="${b?esc(b.name):''}"/></div>
+      <div class="form-group"><label class="form-label">Διεύθυνση</label><input class="form-control" id="branch-address" value="${b?esc(b.address||''):''}"/></div>
+      <div class="form-group"><label class="form-label">Τηλέφωνο</label><input class="form-control" id="branch-phone" value="${b?esc(b.phone||''):''}"/></div>
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer"><input type="checkbox" id="branch-active" ${!b||b.active?'checked':''}/> Ενεργό</label>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
+        <button class="btn btn-ghost" onclick="document.getElementById('branch-overlay').remove()">Ακύρωση</button>
+        <button class="btn btn-primary" onclick="saveBranch(${b?`'${b.id}'`:'null'})">Αποθήκευση</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+}
+
+async function saveBranch(id) {
+  const name = document.getElementById('branch-name').value.trim();
+  if (!name) { alert('Το όνομα είναι υποχρεωτικό.'); return; }
+  const payload = {
+    clinic_id: clinicId(),
+    name,
+    address: document.getElementById('branch-address').value.trim()||null,
+    phone: document.getElementById('branch-phone').value.trim()||null,
+    active: document.getElementById('branch-active').checked,
+  };
+  const {error} = id ? await sb.from('clinic_branches').update(payload).eq('id',id) : await sb.from('clinic_branches').insert(payload);
+  if (error) { alert('Σφάλμα: '+error.message); return; }
+  const ov = document.getElementById('branch-overlay'); if (ov) ov.remove();
+  await loadPageData(); render();
+}
+
+async function deleteBranch(id) {
+  if (!confirm('Διαγραφή αυτού του υποκαταστήματος; Τα ραντεβού/ωράρια που το είχαν επιλεγμένο θα μείνουν χωρίς υποκατάστημα.')) return;
+  const {error} = await sb.from('clinic_branches').delete().eq('id',id);
+  if (error) { alert('Σφάλμα: '+error.message); return; }
+  await loadPageData(); render();
+}
+
 function openStaffServicesModal(staffId) {
   const p = (S.ssvStaff||[]).find(x=>x.id===staffId); if (!p) return;
   const linked = new Set((S.ssvStaffServices||[]).filter(r=>r.staff_id===staffId).map(r=>r.service_id));
@@ -6053,7 +6155,8 @@ async function saveStaffSchedule(staffId) {
     const workingEl = document.querySelector(`.ssv-sched-working[data-day="${d}"]`);
     const startEl = document.querySelector(`.ssv-sched-start[data-day="${d}"]`);
     const endEl = document.querySelector(`.ssv-sched-end[data-day="${d}"]`);
-    rows.push({clinic_id:clinicId(), staff_id:staffId, day_of_week:d, is_working:workingEl.checked, start_time:startEl.value||null, end_time:endEl.value||null});
+    const branchEl = document.querySelector(`.ssv-sched-branch[data-day="${d}"]`);
+    rows.push({clinic_id:clinicId(), staff_id:staffId, day_of_week:d, is_working:workingEl.checked, start_time:startEl.value||null, end_time:endEl.value||null, branch_id: branchEl && branchEl.value ? branchEl.value : null});
   }
   const {error} = await sb.from('staff_schedules').upsert(rows, {onConflict:'staff_id,day_of_week'});
   if (error) { alert('Σφάλμα: '+error.message); return; }
@@ -6078,6 +6181,12 @@ function openScheduleOverrideModal(staffId) {
         <div class="form-group"><label class="form-label">Έως</label><input class="form-control" type="time" id="ssv-ovr-end" value="17:00"/></div>
       </div>
       <div class="form-group"><label class="form-label">Σημείωση</label><input class="form-control" id="ssv-ovr-notes" placeholder="προαιρετικό"/></div>
+      ${(S.clinicBranches||[]).length>1?`<div class="form-group"><label class="form-label">Υποκατάστημα</label>
+        <select class="form-control" id="ssv-ovr-branch">
+          <option value="">—</option>
+          ${(S.clinicBranches||[]).map(b=>`<option value="${b.id}">${esc(b.name)}</option>`).join('')}
+        </select>
+      </div>`:''}
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
         <button class="btn btn-ghost" onclick="document.getElementById('ssv-overlay').remove()">Ακύρωση</button>
         <button class="btn btn-primary" onclick="saveScheduleOverride('${staffId}')">Αποθήκευση</button>
@@ -6090,12 +6199,14 @@ async function saveScheduleOverride(staffId) {
   const date = document.getElementById('ssv-ovr-date').value;
   if (!date) { alert('Επίλεξε ημερομηνία.'); return; }
   const working = document.getElementById('ssv-ovr-working').checked;
+  const branchEl = document.getElementById('ssv-ovr-branch');
   const payload = {
     clinic_id: clinicId(), staff_id: staffId, date,
     is_working: working,
     start_time: working ? (document.getElementById('ssv-ovr-start').value||null) : null,
     end_time: working ? (document.getElementById('ssv-ovr-end').value||null) : null,
     notes: document.getElementById('ssv-ovr-notes').value.trim()||null,
+    branch_id: branchEl && branchEl.value ? branchEl.value : null,
   };
   const {error} = await sb.from('staff_schedule_overrides').upsert(payload, {onConflict:'staff_id,date'});
   if (error) { alert('Σφάλμα: '+error.message); return; }
@@ -6290,6 +6401,31 @@ function renderSettings() {
             </label>
           </div>
           <button class="btn btn-primary" id="save-consumables-settings">Αποθήκευση</button>
+        </div>
+      </div>
+
+      <!-- ΥΠΟΚΑΤΑΣΤΗΜΑΤΑ -->
+      <div class="card">
+        <div class="card-header"><span class="card-title">🏢 Υποκαταστήματα (${(S.clinicBranches||[]).length})</span>
+          <button class="btn btn-primary btn-sm" onclick="openBranchFormModal()">+ Νέο Υποκατάστημα</button>
+        </div>
+        <div style="padding:16px">
+          <div style="font-size:12px;color:var(--text-2);margin-bottom:14px">Αν η κλινική λειτουργεί σε περισσότερα από ένα φυσικά σημεία, καταχώρησέ τα εδώ — θα μπορείς μετά να επιλέγεις υποκατάστημα στο Πρόγραμμα, στο κλείσιμο ραντεβού και στο ωράριο προσωπικού.</div>
+          ${(S.clinicBranches||[]).length ? `<div class="table-wrap"><table>
+            <thead><tr><th>Όνομα</th><th>Διεύθυνση</th><th>Τηλέφωνο</th><th>Κατάσταση</th><th></th></tr></thead>
+            <tbody>
+              ${(S.clinicBranches||[]).map(b=>`<tr>
+                <td>${esc(b.name)}</td>
+                <td style="color:var(--text-2)">${esc(b.address||'—')}</td>
+                <td style="color:var(--text-2)">${esc(b.phone||'—')}</td>
+                <td>${b.active?'<span style="color:#0F6E56">Ενεργό</span>':'<span style="color:var(--text-3)">Ανενεργό</span>'}</td>
+                <td style="text-align:right;white-space:nowrap">
+                  <button class="btn btn-ghost btn-sm" onclick="openBranchFormModal('${b.id}')">✎</button>
+                  <button class="btn btn-ghost btn-sm" onclick="deleteBranch('${b.id}')" style="color:var(--red)">🗑</button>
+                </td>
+              </tr>`).join('')}
+            </tbody>
+          </table></div>` : `<div style="color:var(--text-2);font-size:13px">Δεν έχεις καταχωρήσει υποκαταστήματα ακόμα. Αν η κλινική έχει ένα μόνο σημείο εξυπηρέτησης δεν χρειάζεται να προσθέσεις τίποτα.</div>`}
         </div>
       </div>
 
@@ -6714,6 +6850,12 @@ function modalNewAppt() {
         <div id="a-patient-results" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--white);border:1px solid var(--border);border-radius:8px;z-index:10;box-shadow:var(--shadow);max-height:160px;overflow-y:auto"></div>
         <input type="hidden" id="a-patient-id"/>
       </div>
+      ${(S.clinicBranches||[]).length>1?`<div class="form-group"><label class="form-label">Υποκατάστημα</label>
+        <select class="form-control" id="a-branch">
+          <option value="">—</option>
+          ${(S.clinicBranches||[]).map(b=>`<option value="${b.id}" ${S.calBranchFilter&&S.calBranchFilter===b.id?'selected':''}>${esc(b.name)}</option>`).join('')}
+        </select>
+      </div>`:''}
       <div class="form-row">
         <div class="form-group"><label class="form-label">Προσωπικό</label>
           <select class="form-control" id="a-therapist">
@@ -7600,6 +7742,8 @@ function bindEvents() {
   });
   const _csf = document.getElementById('cal-staff-filter');
   if (_csf) _csf.addEventListener('change', () => { S.calStaffFilter=_csf.value; render(); });
+  const _cbf = document.getElementById('cal-branch-filter');
+  if (_cbf) _cbf.addEventListener('change', () => { S.calBranchFilter=_cbf.value; render(); });
   document.querySelectorAll('[data-cal-day]').forEach(el => {
     el.onclick = () => { S.calDate=el.dataset.calDay; S.calView='day'; render(); };
   });
@@ -7645,6 +7789,7 @@ function bindEvents() {
           ['Ώρα', start.toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'})+' – '+end.toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'})],
           ['Διάρκεια', (a.duration_minutes||60)+' λεπτά'],
           ['Κατάσταση', (STATUS_APPT[a.status]||STATUS_APPT.confirmed).l],
+          ...((S.clinicBranches||[]).length && a.branch_id ? [['Υποκατάστημα', ((S.clinicBranches||[]).find(b=>b.id===a.branch_id)||{}).name]] : []),
           ['GDPR', a.patients&&a.patients.gdpr_signed ? '✅ Υπογεγραμμένο' : '❌ Χωρίς GDPR'],
           ...(canFin && a.price ? [['Τιμή', euro(a.price)]] : []),
         ].map(([k,v])=>`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border-2);font-size:12px"><span style="color:var(--text-2)">${k}</span><span style="font-weight:500;text-align:right;max-width:180px">${esc(v||'—')}</span></div>`).join('')}
@@ -7665,6 +7810,13 @@ function bindEvents() {
             </select>
           </div>`;
         })()}
+        ${(S.clinicBranches||[]).length>1?`<div style="margin-top:8px">
+          <div style="font-size:11px;color:var(--text-2);margin-bottom:3px">Υποκατάστημα</div>
+          <select id="appt-branch-edit" style="width:100%;font-size:12px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-family:var(--font)">
+            <option value="">— Χωρίς υποκατάστημα —</option>
+            ${(S.clinicBranches||[]).map(b=>`<option value="${b.id}" ${a.branch_id===b.id?'selected':''}>${esc(b.name)}</option>`).join('')}
+          </select>
+        </div>`:''}
         <div style="margin-top:8px">
           <div style="font-size:11px;color:var(--text-2);margin-bottom:3px">Σημειώσεις</div>
           <textarea id="appt-notes-edit" rows="2" style="width:100%;font-size:12px;resize:vertical" placeholder="π.χ. προτιμήσεις, ευαισθησίες, παρατηρήσεις...">${esc((a.notes||'').replace(/Προσωπικό:\s*[^\n·|]+\n?/i,'').trim())}</textarea>
@@ -7708,6 +7860,14 @@ function bindEvents() {
         const {error} = await sb.from('appointments').update(upd).eq('id',a.id);
         if (error) { alert('✗ Η αλλαγή κατάστασης απέτυχε: '+error.message); ev.target.value = prevValue; return; }
         Object.assign(a, upd);
+        await loadPageData();
+      });
+      // Αλλαγή υποκαταστήματος από το popup
+      const _be=content.querySelector('#appt-branch-edit');if(_be)_be.addEventListener('change', async () => {
+        const newBranchId = _be.value||null;
+        const {error} = await sb.from('appointments').update({branch_id:newBranchId}).eq('id',a.id);
+        if (error) { alert('✗ Η αλλαγή υποκαταστήματος απέτυχε: '+error.message); return; }
+        a.branch_id = newBranchId;
         await loadPageData();
       });
       // Αλλαγή θεραπευτή από το popup — ίδια ενημέρωση με το drag & drop
@@ -8735,6 +8895,8 @@ function bindEvents() {
     S.reportRange = {from, to};
     loadPageData();
   });
+  const _rbf = document.getElementById('report-branch-filter');
+  if (_rbf) _rbf.addEventListener('change', () => { S.reportBranchFilter=_rbf.value; render(); });
 
   // Αναφορές — φίλτρο κατηγορίας υπηρεσιών (Κορυφαίες Υπηρεσίες)
   document.querySelectorAll('[data-report-cat]').forEach(el => {
@@ -9152,11 +9314,13 @@ function bindModalEvents() {
     const btn = document.getElementById('save-appt');
     btn.textContent='Αποθήκευση...'; btn.disabled=true;
     const pkgSel = document.getElementById('a-package');
+    const branchSel = document.getElementById('a-branch');
     const {error} = await sb.from('appointments').insert({
       clinic_id:clinicId(), patient_id:pid||null,
       service_name:serviceName,
       therapist_id: therapistSel ? (therapistSel.value||null) : null,
       package_id: pkgSel && pkgSel.value ? pkgSel.value : null,
+      branch_id: branchSel && branchSel.value ? branchSel.value : null,
       start_time:timeWithTz,
       duration_minutes:parseInt(document.getElementById('a-duration').value)||60,
       price:parseFloat(document.getElementById('a-price').value)||null,
