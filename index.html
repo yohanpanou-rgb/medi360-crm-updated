@@ -3259,8 +3259,9 @@ function renderCalendar() {
     roomMap[a.id] = r;
   });
 
-  // ΔΙΠΛΟΚΡΑΤΗΣΗ LASER — ένα μηχάνημα Alexandrite: εντοπισμός χρονικών επικαλύψεων
-  const laserAppts = dayAppts.filter(isLaserSvc);
+  // ΔΙΠΛΟΚΡΑΤΗΣΗ LASER — ένα μηχάνημα Alexandrite: εντοπισμός χρονικών επικαλύψεων.
+  // Μόνο ενεργά ραντεβού μετράνε — ένα ακυρωμένο δεν κρατάει πλέον το μηχάνημα.
+  const laserAppts = dayAppts.filter(a => isLaserSvc(a) && a.status!=='cancelled');
   const laserConflictIds = new Set();
   for (let i=0;i<laserAppts.length;i++) for (let j=i+1;j<laserAppts.length;j++) {
     if (overlaps(laserAppts[i],laserAppts[j])) { laserConflictIds.add(laserAppts[i].id); laserConflictIds.add(laserAppts[j].id); }
