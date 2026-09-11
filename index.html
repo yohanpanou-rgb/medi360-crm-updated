@@ -637,7 +637,7 @@ const euro = v => '€'+(v||0).toLocaleString('el-GR');
 
 const ROLES = {super_admin:'Super Admin',clinic_admin:'Διαχειριστής',therapist:'Θεραπευτής',receptionist:'Γραμματεία'};
 const STATUS_PAT = {active:{bg:'#E1F5EE',c:'#0F6E56',l:'Ενεργός'},vip:{bg:'#EEEDFE',c:'#3C3489',l:'VIP'},lead:{bg:'#E6F1FB',c:'#185FA5',l:'Lead'},inactive:{bg:'#FCEBEB',c:'#A32D2D',l:'Ανενεργός'}};
-const STATUS_APPT = {booked:{bg:'#FAEEDA',c:'#D97706',l:'Κλεισμένο'},confirmed:{bg:'#E1F5EE',c:'#0F6E56',l:'Επιβεβαιωμένο'},in_progress:{bg:'#E6F1FB',c:'#185FA5',l:'Σε εξέλιξη'},completed:{bg:'#E1F5EE',c:'#0F6E56',l:'Ολοκληρώθηκε'},cancelled:{bg:'#FCEBEB',c:'#A32D2D',l:'Ακυρώθηκε'},no_show:{bg:'#FCEBEB',c:'#A32D2D',l:'No Show'}};
+const STATUS_APPT = {booked:{bg:'#FAEEDA',c:'#D97706',l:'Κλεισμένο'},confirmed:{bg:'#E1F5EE',c:'#0F6E56',l:'Επιβεβαιωμένο'},in_progress:{bg:'#E6F1FB',c:'#185FA5',l:'Σε εξέλιξη'},completed:{bg:'#E1F5EE',c:'#0F6E56',l:'Ολοκληρώθηκε'},cancelled:{bg:'#FCEBEB',c:'#A32D2D',l:'Ακυρώθηκε'},no_show:{bg:'#FCEBEB',c:'#A32D2D',l:'No Show'},rescheduled:{bg:'#CFFAFE',c:'#0891B2',l:'Μεταφέρθηκε'}};
 const PIPELINE_STAGES = ['new_lead','contacted','interested','offer_sent','won','lost'];
 const STAGE_LABELS = {new_lead:'Νέο Lead',contacted:'Επαφή',interested:'Ενδιαφέρον',offer_sent:'Προσφορά',won:'✓ Κλείσιμο',lost:'✗ Απώλεια'};
 
@@ -1347,6 +1347,7 @@ function globalApptColor(a) {
   if (a.status==='completed') return {bg:'#E1F5EE',border:'#1D9E75',text:'#0F6E56'};
   if (a.status==='confirmed') return {bg:'#E6F1FB',border:'#2B3BF0',text:'#185FA5'};
   if (a.status==='in_progress') return {bg:'#EDE9FE',border:'#7C3AED',text:'#5B21B6'};
+  if (a.status==='rescheduled') return {bg:'#CFFAFE',border:'#0891B2',text:'#0E7490'};
   // Ανύπαρκτο/άγνωστο status (δεν πρέπει πια να συμβαίνει μετά την κατάργηση
   // του 'pending' — αμυντικό fallback, ουδέτερο γκρι αντί για το παλιό πορτοκαλί
   // που παρέπεμπε οπτικά στο πλέον ανύπαρκτο "Εκκρεμεί").
@@ -4551,7 +4552,58 @@ async function resendApptAutomation(aid, action) {
   }
 }
 
+// Μικρό αυτόνομο popup (πάνω στο document.body, εκτός S.modal — ίδιο πνεύμα
+// με το showCalTooltip) για να διαλέξει ο χρήστης νέα ημερομηνία/ώρα όταν
+// μαρκάρει ένα ραντεβού "Μεταφέρθηκε". Επιστρέφει Promise<{date,time}|null>
+// (null = πάτησε Άκυρο ή έκλεισε το popup χωρίς να διαλέξει).
+function openRescheduleApptPicker(appt) {
+  return new Promise((resolve) => {
+    const cur = appt && appt.start_time ? new Date(appt.start_time) : new Date();
+    const pad = n => String(n).padStart(2,'0');
+    const curDate = `${cur.getFullYear()}-${pad(cur.getMonth()+1)}-${pad(cur.getDate())}`;
+    const curTime = `${pad(cur.getHours())}:${pad(cur.getMinutes())}`;
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:9999;display:flex;align-items:center;justify-content:center';
+    overlay.innerHTML = `
+      <div style="background:var(--white);border-radius:12px;padding:20px;width:280px;max-width:90vw;box-shadow:0 10px 40px rgba(0,0,0,0.25)">
+        <div style="font-size:14px;font-weight:600;margin-bottom:12px">📅 Μεταφορά ραντεβού</div>
+        <div style="font-size:11px;color:var(--text-2);margin-bottom:4px">Νέα ημερομηνία</div>
+        <input type="date" id="resched-date" value="${curDate}" style="width:100%;margin-bottom:10px;font-family:var(--font)">
+        <div style="font-size:11px;color:var(--text-2);margin-bottom:4px">Νέα ώρα</div>
+        <input type="time" id="resched-time" value="${curTime}" style="width:100%;margin-bottom:16px;font-family:var(--font)">
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-ghost btn-sm" id="resched-cancel" style="flex:1;justify-content:center">Άκυρο</button>
+          <button class="btn btn-sm" id="resched-ok" style="flex:1;justify-content:center;background:#0891B2;color:#fff">Μετακίνηση</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const cleanup = (result) => { overlay.remove(); resolve(result); };
+    overlay.querySelector('#resched-cancel').onclick = () => cleanup(null);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(null); });
+    overlay.querySelector('#resched-ok').onclick = () => {
+      const d = overlay.querySelector('#resched-date').value;
+      const t = overlay.querySelector('#resched-time').value;
+      if (!d || !t) { alert('Συμπλήρωσε ημερομηνία και ώρα.'); return; }
+      cleanup({date:d, time:t});
+    };
+  });
+}
+
 async function apptStatusUpdatePayload(appt, newStatus) {
+  // "Μεταφέρθηκε": δεν αλλάζει απλά status — μετακινεί το ΙΔΙΟ ραντεβού σε
+  // νέα ημέρα/ώρα (ο χρήστης το ζήτησε ρητά αντί για δημιουργία νέου
+  // ραντεβού). Το νέο start_time ξεκινάει αυτόματα νέο "cycle" για τα
+  // appointment-automations emails (confirmation/instructions), όπως γίνεται
+  // ήδη με κάθε reschedule στο σύστημα — καμία επιπλέον αλλαγή δεν χρειάζεται
+  // στα edge functions.
+  if (newStatus === 'rescheduled') {
+    const picked = await openRescheduleApptPicker(appt);
+    if (!picked) return null;
+    const newStart = new Date(`${picked.date}T${picked.time}:00`);
+    const durMin = (appt && appt.duration_minutes) || 60;
+    const newEnd = new Date(newStart.getTime() + durMin*60000);
+    return {status:'rescheduled', start_time:newStart.toISOString(), end_time:newEnd.toISOString()};
+  }
   const upd = {status: newStatus};
   if (newStatus==='completed' && appt && !appt.package_id && !(parseFloat(appt.price)>0)) {
     // 1) Σιωπηλή αυτόματη τιμή από τον κατάλογο υπηρεσιών — για ΟΛΟΥΣ τους
@@ -6930,6 +6982,7 @@ function bindEvents() {
       const newValue = el.value;
       const appt = (S.appointments||[]).find(x=>String(x.id)===String(el.dataset.apptStatus));
       const upd = await apptStatusUpdatePayload(appt, newValue);
+      if (!upd) { el.value = prevValue; return; }
       const {error} = await sb.from('appointments').update(upd).eq('id',el.dataset.apptStatus);
       if (error) { alert('✗ Η αλλαγή κατάστασης απέτυχε: '+error.message); el.value = prevValue; return; }
       if (appt) Object.assign(appt, upd);
@@ -7604,6 +7657,7 @@ function bindEvents() {
       const _cs=content.querySelector('[data-appt-status]');if(_cs)_cs.addEventListener('change', async (ev) => {
         const prevValue = a.status;
         const upd = await apptStatusUpdatePayload(a, ev.target.value);
+        if (!upd) { ev.target.value = prevValue; return; }
         const {error} = await sb.from('appointments').update(upd).eq('id',a.id);
         if (error) { alert('✗ Η αλλαγή κατάστασης απέτυχε: '+error.message); ev.target.value = prevValue; return; }
         Object.assign(a, upd);
