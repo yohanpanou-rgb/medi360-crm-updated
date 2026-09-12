@@ -6903,7 +6903,10 @@ function modalNewPatient() {
     <div class="modal-header"><span class="modal-title">Νέος Ασθενής</span><button class="modal-close" onclick="closeModal()">×</button></div>
     <div class="modal-body">
       <div class="form-row">
-        <div class="form-group"><label class="form-label">Ονοματεπώνυμο *</label><input class="form-control" id="f-name" placeholder="Ονοματεπώνυμο"/></div>
+        <div class="form-group"><label class="form-label">Όνομα *</label><input class="form-control" id="f-first-name" placeholder="Όνομα"/></div>
+        <div class="form-group"><label class="form-label">Επώνυμο *</label><input class="form-control" id="f-last-name" placeholder="Επώνυμο"/></div>
+      </div>
+      <div class="form-row">
         <div class="form-group"><label class="form-label">Τηλέφωνο *</label><input class="form-control" id="f-phone" placeholder="69XXXXXXXX"/>
           <div id="f-phone-warning" style="display:none;font-size:11px;color:var(--amber-dark);margin-top:5px">⚠ Υπάρχει ήδη ασθενής με αυτό το τηλέφωνο</div>
         </div>
@@ -9198,10 +9201,12 @@ function bindModalEvents() {
 
   // Save patient
   const _sp=document.getElementById('save-patient');if(_sp)_sp.addEventListener('click', async () => {
-    const name = document.getElementById('f-name').value.trim();
+    const firstName = document.getElementById('f-first-name').value.trim();
+    const lastName = document.getElementById('f-last-name').value.trim();
+    const name = `${firstName} ${lastName}`.trim();
     const phone = document.getElementById('f-phone').value.trim();
     const email = document.getElementById('f-email').value.trim();
-    if (!name||!phone||!email) return alert('Συμπλήρωσε τα υποχρεωτικά πεδία: Ονοματεπώνυμο, Τηλέφωνο, Email');
+    if (!firstName||!lastName||!phone||!email) return alert('Συμπλήρωσε τα υποχρεωτικά πεδία: Όνομα, Επώνυμο, Τηλέφωνο, Email');
     if (!/^\S+@\S+\.\S+$/.test(email)) return alert('Το email δεν είναι έγκυρο');
     if (!/^\+?\d{10,13}$/.test(phone.replace(/\s/g,''))) return alert('Το τηλέφωνο δεν είναι έγκυρο (10-13 ψηφία)');
     const dup = await findDuplicatePatientByPhone(phone);
