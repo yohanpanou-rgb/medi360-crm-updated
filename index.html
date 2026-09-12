@@ -939,6 +939,10 @@ async function loadPageData() {
     if (error) console.error('Πρόγραμμα — σφάλμα φόρτωσης ραντεβού:', error);
     S.appointments = data||[];
     S.calRangeFrom = calFrom.getTime(); S.calRangeTo = calTo.getTime();
+    // 📷 Ένδειξη φωτογραφιών πάνω στην κάρτα ραντεβού — μόνο τα appointment_id
+    // που έχουν ήδη συνδεδεμένη φωτογραφία (ελαφρύ query, όχι τα ίδια τα αρχεία).
+    const {data:photoRows} = await sb.from('patient_photos').select('appointment_id').eq('clinic_id',cid).not('appointment_id','is',null);
+    S.apptPhotoIds = new Set((photoRows||[]).map(r=>r.appointment_id));
     // Ασθενείς με υπογεγραμμένη συναίνεση — για warnings σε ραντεβού που τις απαιτούν
     const {data:lcIds} = await sb.from('laser_consents').select('patient_id').eq('clinic_id',cid);
     S.laserConsentIds = new Set((lcIds||[]).map(r=>r.patient_id));
@@ -1176,6 +1180,26 @@ async function loadPageData() {
     S.reportScheduleOverrides = ovrRes2.data||[];
     S.reportTimeOff = toffRes2.data||[];
   }
+  if (S.page==='marketing-gallery') {
+    // Πελάτες που έχουν ΚΑΠΟΤΕ δηλώσει συναίνεση φωτογράφισης (Laser ή Υπηρεσία) —
+    // μόνο οι δικές τους φωτογραφίες επιτρέπεται να χρησιμοποιηθούν για marketing.
+    const [{data:lc}, {data:sc}] = await Promise.all([
+      sb.from('laser_consents').select('patient_id').eq('clinic_id',cid).eq('photo_consent', true),
+      sb.from('service_consents').select('patient_id').eq('clinic_id',cid).eq('photo_consent', true),
+    ]);
+    const consentedIds = [...new Set([...(lc||[]).map(r=>r.patient_id), ...(sc||[]).map(r=>r.patient_id)])];
+    S.marketingConsentedCount = consentedIds.length;
+    if (consentedIds.length) {
+      const {data:photos} = await sb.from('patient_photos').select('*, patients(full_name)').in('patient_id', consentedIds).order('taken_at',{ascending:false}).limit(300);
+      const rows = photos||[];
+      S.marketingPhotos = await Promise.all(rows.map(async ph => {
+        const {data:su} = await sb.storage.from('patient-photos').createSignedUrl(ph.storage_path, 3600);
+        return {...ph, url: su ? su.signedUrl : ''};
+      }));
+    } else {
+      S.marketingPhotos = [];
+    }
+  }
   if (S.page==='settings') {
     const {data:uc} = await sb.from('unmatched_consultations').select('*').eq('clinic_id',cid).order('received_at',{ascending:false});
     S.unmatchedConsultations = uc||[];
@@ -1395,6 +1419,7 @@ function render() {
       S.page==='consultations' ? renderConsultations() :
       S.page==='product-sale' ? renderProductSale() :
       S.page==='reports' ? renderReports() :
+      S.page==='marketing-gallery' ? renderMarketingGallery() :
       S.page==='staff-services' ? renderStaffServices() :
       S.page==='settings' ? renderSettings() :
       `<div class="page"><div class="empty-state"><div class="empty-icon">🚧</div><div>Σύντομα διαθέσιμο</div></div></div>`
@@ -1485,12 +1510,13 @@ function renderShell(content) {
     {page:'consents',icon:'✓',label:'Συναινέσεις',roles:['super_admin','clinic_admin','therapist']},
     {page:'product-sale',icon:'🧴',label:'Πώληση Καλλυντικού',roles:['super_admin','clinic_admin','receptionist','therapist']},
     {page:'reports',icon:'▤',label:'Αναφορές',roles:['super_admin','clinic_admin']},
+    {page:'marketing-gallery',icon:'📸',label:'Marketing Φωτογραφίες',roles:['super_admin','clinic_admin']},
     {page:'staff-services',icon:'🗂',label:'Προσωπικό & Υπηρεσίες',roles:['super_admin','clinic_admin']},
     {page:'clinics',icon:'⊞',label:'Κλινικές',roles:['super_admin']},
     {page:'settings',icon:'⚙',label:'Ρυθμίσεις',roles:['super_admin','clinic_admin']},
   ].filter(n => n.roles.includes(role) && (isSuperAdmin() && !cid ? ['dashboard','clinics'].includes(n.page) : true) && isModuleEnabled(n.page));
 
-  const PAGE_TITLES = {dashboard:'Dashboard',patients:'Ασθενείς','patient-detail':'Ασθενής',appointments:'Ραντεβού',calendar:'Πρόγραμμα',pipeline:'Pipeline',clinics:'Κλινικές',sms:'SMS & Αυτοματισμοί',laser:'Laser Forms',consultations:'Consultation',consents:'Συναινέσεις','product-sale':'Πώληση Καλλυντικού',reports:'Αναφορές','staff-services':'Προσωπικό & Υπηρεσίες',settings:'Ρυθμίσεις'};
+  const PAGE_TITLES = {dashboard:'Dashboard',patients:'Ασθενείς','patient-detail':'Ασθενής',appointments:'Ραντεβού',calendar:'Πρόγραμμα',pipeline:'Pipeline',clinics:'Κλινικές',sms:'SMS & Αυτοματισμοί',laser:'Laser Forms',consultations:'Consultation',consents:'Συναινέσεις','product-sale':'Πώληση Καλλυντικού',reports:'Αναφορές','marketing-gallery':'Marketing Φωτογραφίες','staff-services':'Προσωπικό & Υπηρεσίες',settings:'Ρυθμίσεις'};
 
   return `
   <div class="overlay ${S.sidebarOpen?'open':''}" id="overlay"></div>
@@ -3401,6 +3427,7 @@ function renderCalendar() {
                 data-notes="${esc(a.notes||'')}"
                 data-status="${a.status||'confirmed'}"
                 data-consent-missing="${missingGrp?CONSENT_GROUP_LABEL[missingGrp]:''}">
+                ${(S.apptPhotoIds&&S.apptPhotoIds.has(a.id))?'<div title="Έχει φωτογραφίες" style="position:absolute;top:2px;right:3px;font-size:10px;line-height:1">📷</div>':''}
                 <div style="font-size:10px;font-weight:500;color:${c.text};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
                   ${hasNoConsent?'<span style="font-size:13px;font-weight:700;color:#D97706">⚠</span> ':''}${isVip?'★ ':''}${esc(a.patients&&a.patients.full_name||'—')}${heightPx<=(hasNoConsent?58:30)&&metaText?`<span style="font-weight:400;opacity:0.75"> · ${esc(metaText)}</span>`:''}
                 </div>
@@ -4964,6 +4991,33 @@ function reportDeltaLabel(diff, pct) {
   const color = diff>0?'#0F6E56':diff<0?'var(--red)':'var(--text-3)';
   const arrow = diff>0?'▲':diff<0?'▼':'▬';
   return `<span style="font-weight:600;color:${color}">${diff>0?'+':''}${diff} (${arrow}${Math.abs(pct)}%)</span> vs προηγούμενη ισόχρονη περίοδο`;
+}
+
+// 📸 Marketing — before/after φωτογραφίες ΜΟΝΟ από πελάτες που έχουν δηλώσει
+// συναίνεση φωτογράφισης (photo_consent=true σε Laser ή Υπηρεσία), ώστε να
+// υπάρχει ένα ασφαλές σημείο για υλικό social media/παρουσιάσεων χωρίς να
+// χρειάζεται να ψάχνει κανείς πελάτη-πελάτη ποιος έχει συναινέσει.
+function renderMarketingGallery() {
+  if (!canSee(['super_admin','clinic_admin'])) return `<div class="page"><div class="empty-state"><div class="empty-icon">🔒</div><div>Δεν έχεις πρόσβαση</div></div></div>`;
+  const photos = S.marketingPhotos||[];
+  const consentedCount = S.marketingConsentedCount||0;
+  return `<div class="page">
+    <div class="page-header">
+      <div><h1 class="page-title">📸 Marketing Φωτογραφίες</h1><p class="page-sub">Before/After φωτογραφίες ΜΟΝΟ από πελάτες με δηλωμένη συναίνεση φωτογράφισης (${consentedCount} πελάτες)</p></div>
+    </div>
+    ${photos.length?`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:14px">
+      ${photos.map(ph=>`
+        <a href="${ph.url}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit">
+          <div class="card" style="overflow:hidden;padding:0">
+            <img src="${ph.url}" style="width:100%;aspect-ratio:1;object-fit:cover;display:block" loading="lazy"/>
+            <div style="padding:8px 10px">
+              <div style="font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc((ph.patients&&ph.patients.full_name)||'—')}</div>
+              <div style="font-size:11px;color:var(--text-2)">${new Date(ph.taken_at).toLocaleDateString('el-GR')}</div>
+            </div>
+          </div>
+        </a>`).join('')}
+    </div>`:`<div class="empty-state"><div class="empty-icon">📸</div><div>Δεν υπάρχουν φωτογραφίες από πελάτες με συναίνεση φωτογράφισης ακόμα.</div></div>`}
+  </div>`;
 }
 
 function renderReports() {
@@ -11921,15 +11975,25 @@ function exportPhotoComparisonPdf(beforeId, afterId) {
     const a = ph.appointment_id ? ((S.patientDetail&&S.patientDetail.appointments)||[]).find(x=>x.id===ph.appointment_id) : null;
     return a ? esc(a.service_name||'') : '';
   };
+  const brandName = (S.clinic&&S.clinic.settings&&S.clinic.settings.brand_name) || (S.clinic&&S.clinic.name) || 'Beauty Line by Lina Panou';
+  const brandColor = (S.clinic&&S.clinic.settings&&S.clinic.settings.brand_color) || '#C4618A';
+  const brandLogo = (S.clinic&&S.clinic.settings&&S.clinic.settings.brand_logo_url) || '';
   const w = window.open('', '_blank');
   if (!w) { alert('Επίτρεψε τα αναδυόμενα παράθυρα για την εξαγωγή PDF.'); return; }
   w.document.write(`<!doctype html><html><head><meta charset="utf-8">
     <title>Before / After — ${esc(patientName)}</title>
     <style>body{font-family:Arial,sans-serif;padding:24px;color:#111}
+    .brand-header{display:flex;align-items:center;gap:10px;border-bottom:3px solid ${esc(brandColor)};padding-bottom:12px;margin-bottom:16px}
+    .brand-header img{height:34px;width:auto;display:block}
+    .brand-header .name{font-size:14px;font-weight:700;color:${esc(brandColor)}}
     h1{font-size:18px;margin:0 0 4px}.sub{font-size:12px;color:#666;margin-bottom:20px}
     .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
     .col{text-align:center}.lbl{font-size:12px;font-weight:700;letter-spacing:.5px;margin-bottom:8px}
     img{width:100%;border-radius:8px;display:block}</style></head><body>
+    <div class="brand-header">
+      ${brandLogo?`<img src="${esc(brandLogo)}" alt="${esc(brandName)}"/>`:''}
+      <span class="name">${esc(brandName)}</span>
+    </div>
     <h1>Σύγκριση Before / After</h1>
     <div class="sub">${esc(patientName)}</div>
     <div class="grid">
