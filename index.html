@@ -90,6 +90,14 @@ html[data-theme="dark"] .page-header{background:var(--surface)}
   .btn{min-height:40px} .btn-sm{min-height:34px} .btn-xs{min-height:30px} /* touch targets */
   .modal{max-width:100%;border-radius:16px 16px 0 0;max-height:94vh;align-self:flex-end}
   .modal-overlay{align-items:flex-end;padding:0}
+  /* Παράθυρο λεπτομερειών ραντεβού (Πρόγραμμα): σε κινητό το inline
+     top:80px + max-height:calc(100vh-100px) υπολόγιζε λάθος το πραγματικό
+     ορατό ύψος (η γραμμή διεύθυνσης του κινητού browser δεν υπολογίζεται
+     στο 100vh) — το κάτω μέρος (κουμπιά Διαγραφή/Λήψη Φωτογραφιών κ.λπ.)
+     έμενε μόνιμα εκτός οθόνης, χωρίς δυνατότητα scroll να φανεί. Το dvh
+     αντανακλά το πραγματικό ορατό ύψος, με απόσταση κάτω ώστε να χωρά.
+  */
+  #appt-detail-panel{left:8px!important;right:8px!important;width:auto!important;top:auto!important;bottom:calc(8px + env(safe-area-inset-bottom))!important;max-height:min(calc(100vh - 100px),80dvh)!important}
 }
 button,.nav-item,.btn{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
 /* Κάρτες ραντεβού στο Πρόγραμμα: χωρίς iOS long-press menu/επιλογή κειμένου,
