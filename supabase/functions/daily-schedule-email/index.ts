@@ -92,6 +92,7 @@ interface Appt {
   duration_minutes?: number;
   therapist_id?: string | null;
   notes?: string | null;
+  price?: number | string | null;
   patients?: { full_name?: string; phone?: string } | null;
 }
 
@@ -121,7 +122,34 @@ function athensTime(iso: string): string {
 
 interface Brand { name: string; color: string; logoUrl: string }
 
-function scheduleEmailHtml(dayLabel: string, appts: Appt[], staffList: { id: string; full_name: string }[], brand: Brand): string {
+interface RevenueForecast {
+  bookedRevenue: number;
+  historicalAvg: number | null;
+  historicalCount: number;
+  weekdayLabel: string;
+}
+
+function euro(n: number): string {
+  return n.toLocaleString('el-GR', { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + '€';
+}
+
+function revenueForecastHtml(f: RevenueForecast, brand: Brand): string {
+  const estLow = f.historicalAvg != null ? Math.max(f.bookedRevenue, Math.round(f.historicalAvg * 0.9)) : f.bookedRevenue;
+  const estHigh = f.historicalAvg != null ? Math.round(Math.max(f.bookedRevenue, f.historicalAvg) * 1.15) : f.bookedRevenue;
+  return `
+  <tr><td style="padding:14px 16px;background-color:#FBEFF4;border-radius:12px;margin-bottom:6px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+      <tr><td style="font-size:13px;font-weight:bold;color:${esc(brand.color)};-webkit-text-fill-color:${esc(brand.color)};padding-bottom:6px;">💰 Εκτιμώμενος Τζίρος</td></tr>
+      <tr><td style="font-size:12.5px;color:#333333;-webkit-text-fill-color:#333333;line-height:1.6;">
+        Ήδη κλεισμένα: <b>${euro(f.bookedRevenue)}</b>
+        ${f.historicalAvg != null ? `<br/>Μέσος όρος ${esc(f.weekdayLabel)} (τελευταίες ${f.historicalCount}): ${euro(Math.round(f.historicalAvg))}<br/>Εκτίμηση τελικού τζίρου: <b>${euro(estLow)}–${euro(estHigh)}</b>` : ''}
+      </td></tr>
+      <tr><td style="font-size:10.5px;color:#8A6070;-webkit-text-fill-color:#8A6070;padding-top:4px;">στατιστική εκτίμηση βάσει ιστορικού — δεν υπολογίζει τυχόν ακυρώσεις</td></tr>
+    </table>
+  </td></tr>`;
+}
+
+function scheduleEmailHtml(dayLabel: string, appts: Appt[], staffList: { id: string; full_name: string }[], brand: Brand, forecast: RevenueForecast): string {
   const canon = (t: string | null) => FIXED.find((f) => sameStaffName(f, t || '')) || t || 'Μη ανατεθειμένα';
   const groups: Record<string, Appt[]> = {};
   appts.forEach((a) => { const k = canon(apptStaffName(a, staffList)); (groups[k] = groups[k] || []).push(a); });
@@ -155,6 +183,7 @@ function scheduleEmailHtml(dayLabel: string, appts: Appt[], staffList: { id: str
         </td></tr>
         <tr><td style="padding:10px 26px 26px;">
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+            ${revenueForecastHtml(forecast, brand)}
             ${order.map(section).join('')}
           </table>
         </td></tr>
@@ -217,7 +246,7 @@ Deno.serve(async (req: Request) => {
 
     const { data: allAppts, error: apptErr } = await supabase
       .from('appointments')
-      .select('start_time, status, service_name, duration_minutes, therapist_id, notes, patients(full_name, phone)')
+      .select('start_time, status, service_name, duration_minutes, therapist_id, notes, price, patients(full_name, phone)')
       .eq('clinic_id', cid)
       .gte('start_time', dstr(winFrom) + 'T00:00:00')
       .lt('start_time', dstr(winTo) + 'T00:00:00')
@@ -245,8 +274,42 @@ Deno.serve(async (req: Request) => {
 
       const dayNoon = new Date(dstr(day) + 'T12:00:00Z');
       const dayLabel = dayNoon.toLocaleDateString('el-GR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+      const weekdayLabel = dayNoon.toLocaleDateString('el-GR', { weekday: 'long', timeZone: 'UTC' });
 
-      const html = scheduleEmailHtml(dayLabel, appts, staff || [], brand);
+      const bookedRevenue = appts.reduce((s, a) => s + (Number(a.price) || 0), 0);
+
+      // Μέσος όρος τζίρου των τελευταίων ίδιων ημερών της εβδομάδας (π.χ. τελευταίες
+      // Τρίτες, 12 εβδομάδες πίσω) — ελαφριά, στατιστική βάση για την εκτίμηση
+      // τελικού τζίρου· δεν μπλοκάρει το email αν η ερώτηση αποτύχει.
+      let historicalAvg: number | null = null;
+      let historicalCount = 0;
+      try {
+        const histFrom = new Date(day); histFrom.setDate(histFrom.getDate() - 84);
+        const { data: histAppts } = await supabase
+          .from('appointments')
+          .select('start_time, status, price')
+          .eq('clinic_id', cid)
+          .gte('start_time', dstr(histFrom) + 'T00:00:00')
+          .lt('start_time', dstr(day) + 'T00:00:00')
+          .neq('status', 'cancelled')
+          .neq('status', 'no_show');
+        const targetDow = day.getDay();
+        const revByDay: Record<string, number> = {};
+        ((histAppts || []) as unknown as { start_time: string; price?: number | string | null }[]).forEach((a) => {
+          const k = athensDay(a.start_time);
+          if (new Date(k + 'T12:00:00Z').getUTCDay() !== targetDow) return;
+          revByDay[k] = (revByDay[k] || 0) + (Number(a.price) || 0);
+        });
+        const dayTotals = Object.values(revByDay);
+        if (dayTotals.length) {
+          historicalAvg = dayTotals.reduce((s, v) => s + v, 0) / dayTotals.length;
+          historicalCount = dayTotals.length;
+        }
+      } catch (e) {
+        console.error('daily-schedule-email: historical revenue lookup failed', e);
+      }
+
+      const html = scheduleEmailHtml(dayLabel, appts, staff || [], brand, { bookedRevenue, historicalAvg, historicalCount, weekdayLabel });
       const subject = `📋 Πρόγραμμα — ${dayLabel} · ${appts.length} ραντεβού`;
 
       const token = await getGmailAccessToken();
