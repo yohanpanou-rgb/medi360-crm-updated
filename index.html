@@ -2417,8 +2417,13 @@ function renderPatientDetail() {
   const medicalFormLink = ((S.clinic&&S.clinic.integrations)||{}).gdpr_form_link || 'https://docs.google.com/forms/d/e/1FAIpQLSe5XiCNxnDOYMxgUbzlOP8G8ZDe-R3VBaJPlZeM1gthPElHiA/viewform?usp=header';
 
   return `<div class="page">
+    <!-- Το header, το banner δώρου γενεθλίων και τα tabs «παγώνουν» μαζί σαν
+    ένα ενιαίο block κατά το scroll (όχι μόνο το header) — έτσι τα tabs
+    παραμένουν πάντα ορατά/πατήσιμα, αντί να χάνονται κάτω από το header
+    μόλις ο χρήστης κατεβεί λίγο στο περιεχόμενο μιας καρτέλας. -->
+    <div style="position:sticky;top:56px;z-index:45;background:var(--surface);margin-left:-24px;margin-right:-24px;margin-top:-24px;padding:16px 24px 0">
     <!-- Header -->
-    <div class="page-header">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:12px">
       <div style="display:flex;align-items:center;gap:12px">
         <button class="btn btn-ghost btn-sm" data-page="patients">← Πίσω</button>
         <div style="width:44px;height:44px;border-radius:50%;background:#E6F1FB;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:600;color:#185FA5">${initials(p.full_name)}</div>
@@ -2469,12 +2474,9 @@ function renderPatientDetail() {
       }
       return '';
     })()}
-    <!-- κενό κρυφό div: καταναλώνει το κλείσιμο του παλιού header container -->
-    <div style="display:none">>
-    </div>
 
     <!-- Tabs -->
-    <div style="display:flex;gap:0;border-bottom:1px solid var(--border-2);margin-bottom:20px;overflow-x:auto">
+    <div style="display:flex;gap:0;border-bottom:1px solid var(--border-2);overflow-x:auto">
       ${[
         {id:'overview',l:'Στοιχεία'},
         {id:'timeline',l:'Timeline'},
@@ -2487,6 +2489,8 @@ function renderPatientDetail() {
         {id:'consultation',l:`Consultation (${consultations.length})`},
       ].map(t=>`<button class="btn" style="border-radius:0;border-bottom:2px solid ${patTab===t.id?'var(--blue)':'transparent'};color:${patTab===t.id?'var(--blue)':'var(--text-2)'};background:transparent;padding:8px 14px;font-size:12px;white-space:nowrap" data-pat-tab="${t.id}">${t.l}</button>`).join('')}
     </div>
+    </div>
+    <div style="margin-top:20px">
 
     <!-- TIMELINE TAB -->
     ${patTab==='timeline'?`
@@ -3018,6 +3022,7 @@ function renderPatientDetail() {
         </div>
       </div>
     </div>`:''}
+  </div>
   </div>`;
 }
 
