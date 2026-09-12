@@ -1291,6 +1291,7 @@ async function loadPatientDetail(id, tab) {
     // Φωτογραφίες ασθενή — μεταδεδομένα + signed URLs (private bucket)
     S.patientPhotos = [];
     _selectedPhotoIds.clear();
+    S.patPhotoApptFilter = null;
     const {data:photos} = await sb.from('patient_photos').select('*').eq('patient_id',id).order('taken_at',{ascending:false});
     if (photos && photos.length) {
       const signed = await Promise.all(photos.map(async ph => {
@@ -2181,9 +2182,16 @@ function renderPatients() {
 
 // ── PATIENT DETAIL ──
 function renderPatientPhotosTab() {
-  const photos = S.patientPhotos||[];
+  const allPhotos = S.patientPhotos||[];
+  const apptFilter = S.patPhotoApptFilter||null;
+  const filteredAppt = apptFilter ? ((S.patientDetail&&S.patientDetail.appointments)||[]).find(a=>a.id===apptFilter) : null;
+  const photos = apptFilter ? allPhotos.filter(ph=>ph.appointment_id===apptFilter) : allPhotos;
   const selCount = _selectedPhotoIds.size;
   return `<div>
+    ${filteredAppt?`<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--surface-2);border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px">
+      <span>🗓 Φωτογραφίες ραντεβού: <b>${new Date(filteredAppt.start_time).toLocaleDateString('el-GR')} · ${esc(filteredAppt.service_name||'')}</b></span>
+      <button class="btn btn-ghost btn-sm" onclick="S.patPhotoApptFilter=null;render()">✕ Όλες οι φωτογραφίες</button>
+    </div>`:''}
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px">
       <span style="font-size:13px;color:var(--text-2)">${photos.length} φωτογραφίες${selCount?` · ${selCount} επιλεγμένες`:''}</span>
       <div style="display:flex;gap:8px">
@@ -2684,7 +2692,9 @@ function renderPatientDetail() {
       </div>
       <div style="max-height:600px;overflow-y:auto">
         ${(p.appointments||[]).length?
-          [...(p.appointments||[])].reverse().map(a=>`
+          [...(p.appointments||[])].reverse().map(a=>{
+            const apptPhotoCount = (S.patientPhotos||[]).filter(ph=>ph.appointment_id===a.id).length;
+            return `
           <div style="padding:14px 18px;border-bottom:1px solid var(--border-2);display:flex;align-items:center;gap:14px;cursor:pointer"
                title="Άνοιγμα στο Πρόγραμμα" onclick="gotoCalendarDay('${a.start_time}')">
             <div style="width:4px;align-self:stretch;border-radius:2px;background:${(STATUS_APPT[a.status]||STATUS_APPT.confirmed).c};flex-shrink:0"></div>
@@ -2692,9 +2702,10 @@ function renderPatientDetail() {
               <div style="font-size:13px;font-weight:500">${a.package_id?'<span title="Συνεδρία πακέτου">📦 </span>':''}${esc(a.service_name||'—')}</div>
               <div style="font-size:11px;color:var(--text-2)">${fmtDt(a.start_time)} · <span style="color:var(--blue)">προβολή στο Πρόγραμμα →</span>${a.created_by&&S.staffDirectory&&S.staffDirectory[a.created_by]?` · Καταχωρήθηκε από: ${esc(S.staffDirectory[a.created_by])}`:''}</div>
             </div>
+            <button class="btn btn-ghost btn-sm" title="Φωτογραφίες ραντεβού" onclick="event.stopPropagation();S.patTab='photos';S.patPhotoApptFilter='${a.id}';render()">📷${apptPhotoCount?` ${apptPhotoCount}`:''}</button>
             ${canSeeFinancials&&a.price?`<div style="font-size:13px;font-weight:500;color:#0F6E56">${euro(a.price)}</div>`:''}
             ${apptBadge(a.status)}
-          </div>`).join('')
+          </div>`;}).join('')
         :'<div style="padding:40px;text-align:center;color:var(--text-2)">Δεν υπάρχουν ραντεβού</div>'}
       </div>
     </div>`:''}
@@ -7274,11 +7285,14 @@ function bindEvents() {
     const statusEl = document.getElementById('photo-upload-status');
     if (statusEl) statusEl.style.display = 'block';
     const pid = S.patientDetail.id, cid = clinicId();
-    // Αυτόματη σύνδεση με το ραντεβού της ΙΔΙΑΣ ημέρας (οι φωτογραφίες
-    // τραβιούνται συνήθως κατά την επίσκεψη) — αλλάζει χειροκίνητα με το 🔗.
+    // Αν είμαστε φιλτραρισμένοι σε συγκεκριμένο ραντεβού (ήρθαμε εδώ από το
+    // κουμπί 📷 στο Ιστορικό Ραντεβού), οι νέες φωτογραφίες συνδέονται ΜΕ ΑΥΤΟ —
+    // αλλιώς αυτόματη σύνδεση με το ραντεβού της ΙΔΙΑΣ ημέρας (οι φωτογραφίες
+    // τραβιούνται συνήθως κατά την επίσκεψη). Αλλάζει πάντα χειροκίνητα με το 🔗.
     const todayStr = new Date().toDateString();
     const todaysAppt = ((S.patientDetail&&S.patientDetail.appointments)||[])
       .find(a=>a.status!=='cancelled' && new Date(a.start_time).toDateString()===todayStr);
+    const targetApptId = S.patPhotoApptFilter || (todaysAppt ? todaysAppt.id : null);
     for (const file of files) {
       const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g,'_');
       const path = `${cid}/${pid}/${Date.now()}_${safeName}`;
@@ -7288,7 +7302,7 @@ function bindEvents() {
         clinic_id: cid, patient_id: pid, storage_path: path,
         taken_at: new Date().toISOString(),
         uploaded_by: (S.profile&&S.profile.full_name)||'',
-        appointment_id: todaysAppt ? todaysAppt.id : null
+        appointment_id: targetApptId
       });
     }
     await loadPatientDetail(pid);
@@ -7752,6 +7766,11 @@ function bindEvents() {
   document.querySelectorAll('[data-appt-cal]').forEach(el => {
     el.onclick = (e) => {
       e.stopPropagation();
+      // Σε touch συσκευές το tap πυροδοτεί ΚΑΙ mouseover (tooltip) ΚΑΙ click (πλήρες
+      // παράθυρο) σχεδόν ταυτόχρονα, και το mouseout που θα το έκρυβε ποτέ δεν έρχεται
+      // αφού δεν υπάρχει «φευγαλέο» ποντίκι — το tooltip έμενε κολλημένο πάνω από το
+      // παράθυρο λεπτομερειών. Το κλείνουμε ρητά κάθε φορά που ανοίγει το παράθυρο.
+      const _tt = document.getElementById('cal-tooltip'); if (_tt) _tt.style.display = 'none';
       const id = el.dataset.apptCal;
       const a = (S.appointments||[]).find(x=>x.id===id||x.id==id);
       if (!a) return;
@@ -7795,6 +7814,13 @@ function bindEvents() {
         ].map(([k,v])=>`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border-2);font-size:12px"><span style="color:var(--text-2)">${k}</span><span style="font-weight:500;text-align:right;max-width:180px">${esc(v||'—')}</span></div>`).join('')}
         <div id="appt-receipt-area">${apptReceiptAreaHtml(a, canReceipt)}</div>
         ${apptConsumablesAreaHtml(a)}
+        ${a.patient_id?`<div style="margin-top:8px;display:flex;gap:6px">
+          <label class="btn btn-ghost btn-sm" style="cursor:pointer;flex:1;justify-content:center;margin:0">
+            📷 Λήψη Φωτογραφιών Ραντεβού
+            <input type="file" id="appt-photo-input" accept="image/*" capture="environment" multiple style="display:none"/>
+          </label>
+        </div>
+        <div id="appt-photo-status" style="display:none;font-size:11px;color:var(--blue);margin-top:4px;text-align:center">Μεταφόρτωση...</div>`:''}
         ${(()=>{
           // Θεραπευτής: δικό του πεδίο — η αλλαγή εδώ ισοδυναμεί με drag & drop
           // (ενημερώνει therapist_id + notes και μετακινεί την κάρτα στη στήλη του).
@@ -7841,6 +7867,31 @@ function bindEvents() {
       });
       bindApptReceiptButton(a, canReceipt);
       bindApptConsumablesArea(a);
+      // Λήψη φωτογραφιών απευθείας από το ραντεβού (Πρόγραμμα) — αποθηκεύονται
+      // στην καρτέλα του πελάτη, ήδη συνδεδεμένες με ΑΥΤΟ το ραντεβού (ίδιο
+      // patient_photos/appointment_id που χρησιμοποιεί και η καρτέλα πελάτη),
+      // ώστε η ημερομηνία/υπηρεσία της ετικέτας τους να εμφανίζεται αυτόματα εκεί.
+      const _api=content.querySelector('#appt-photo-input');if(_api)_api.addEventListener('change', async (ev) => {
+        const files = Array.from(ev.target.files||[]);
+        if (!files.length || !a.patient_id) return;
+        const statusEl = content.querySelector('#appt-photo-status'); if (statusEl) statusEl.style.display='block';
+        const cid = clinicId();
+        for (const file of files) {
+          const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g,'_');
+          const path = `${cid}/${a.patient_id}/${Date.now()}_${safeName}`;
+          const {error: upErr} = await sb.storage.from('patient-photos').upload(path, file);
+          if (upErr) { alert('Σφάλμα μεταφόρτωσης: '+upErr.message); continue; }
+          await sb.from('patient_photos').insert({
+            clinic_id: cid, patient_id: a.patient_id, storage_path: path,
+            taken_at: a.start_time,
+            uploaded_by: (S.profile&&S.profile.full_name)||'',
+            appointment_id: a.id,
+          });
+        }
+        if (statusEl) statusEl.style.display='none';
+        if (S.patientDetail && S.patientDetail.id===a.patient_id) await loadPatientDetail(a.patient_id, 'photos');
+        alert('✓ Οι φωτογραφίες αποθηκεύτηκαν στην καρτέλα του πελάτη.');
+      });
       // Οριστική διαγραφή ραντεβού — μόνο super_admin/clinic_admin (ίδιο gate
       // με την RLS delete policy στη βάση). Ξεχωριστό από «Ακυρώθηκε»: η
       // ακύρωση κρατάει ιστορικό, η διαγραφή αφαιρεί εντελώς την εγγραφή.
