@@ -2477,6 +2477,13 @@ function renderPatientDetail() {
             desc:`${fmtDt(a.start_time)}${canSeeFinancials&&a.price?' · '+euro(a.price):''}${branchName?' · 🏢 '+branchName:''}`,
             badge:apptBadge(a.status)});
         });
+        // 📷 Φωτογραφίες
+        (S.patientPhotos||[]).forEach(ph=>{
+          const linkedAppt = ph.appointment_id ? (p.appointments||[]).find(a=>a.id===ph.appointment_id) : null;
+          events.push({date:ph.taken_at,type:'photo',icon:'📷',color:'#BE185D',bg:'#FCE7F3',
+            title:'Φωτογραφία προστέθηκε',
+            desc:linkedAppt?`Ραντεβού: ${linkedAppt.service_name||'—'}`:'Χωρίς σύνδεση με ραντεβού'});
+        });
         // Laser forms
         laserForms.forEach(f=>{
           events.push({date:f.created_at,type:'laser',icon:'⚡',color:'#534AB7',bg:'#EEEDFE',
@@ -7282,6 +7289,7 @@ function bindEvents() {
   });
   const handlePatientPhotoFiles = async (files) => {
     if (!files.length) return;
+    if (!(await ensurePhotoConsentConfirmed(S.patientDetail.id))) return;
     const statusEl = document.getElementById('photo-upload-status');
     if (statusEl) statusEl.style.display = 'block';
     const pid = S.patientDetail.id, cid = clinicId();
@@ -7874,6 +7882,7 @@ function bindEvents() {
       const _api=content.querySelector('#appt-photo-input');if(_api)_api.addEventListener('change', async (ev) => {
         const files = Array.from(ev.target.files||[]);
         if (!files.length || !a.patient_id) return;
+        if (!(await ensurePhotoConsentConfirmed(a.patient_id))) { ev.target.value=''; return; }
         const statusEl = content.querySelector('#appt-photo-status'); if (statusEl) statusEl.style.display='block';
         const cid = clinicId();
         for (const file of files) {
@@ -11783,6 +11792,25 @@ function viewGroupConsent(groupKey) {
 // ── ΦΩΤΟΓΡΑΦΙΕΣ ΑΣΘΕΝΗ ──
 function clearPhotoSelection() { _selectedPhotoIds.clear(); render(); }
 
+// Έλεγχος συναίνεσης φωτογράφισης — δεν υπάρχει ενιαίο πεδίο στον πελάτη, η
+// συναίνεση φωτογραφιών δηλώνεται μέσα στη φόρμα συναίνεσης Laser ή σε μία
+// από τις 3 ομάδες συναίνεσης υπηρεσίας (καθαρισμού/peelings/οξυγόνου) — αν
+// ΟΠΟΙΑΔΗΠΟΤΕ από αυτές έχει photo_consent=true, θεωρούμε πως έχει δοθεί.
+async function hasPhotoConsent(patientId) {
+  const [{data:lc}, {data:sc}] = await Promise.all([
+    sb.from('laser_consents').select('id').eq('patient_id', patientId).eq('photo_consent', true).limit(1),
+    sb.from('service_consents').select('id').eq('patient_id', patientId).eq('photo_consent', true).limit(1),
+  ]);
+  return !!((lc&&lc.length) || (sc&&sc.length));
+}
+// Δεν μπλοκάρει τη λήψη — προειδοποιεί και αφήνει τον χρήστη να αποφασίσει
+// (ίδια φιλοσοφία με τις προειδοποιήσεις διπλοκράτησης/εκτός ωραρίου).
+async function ensurePhotoConsentConfirmed(patientId) {
+  try { if (await hasPhotoConsent(patientId)) return true; }
+  catch(e) { return true; }
+  return confirm('⚠ Ο πελάτης δεν έχει δηλώσει συναίνεση φωτογράφισης σε καμία συναίνεση Laser/Υπηρεσίας.\n\nΝα συνεχίσει η λήψη φωτογραφιών;');
+}
+
 async function deletePatientPhoto(id, path) {
   if (!confirm('Διαγραφή αυτής της φωτογραφίας; Η ενέργεια δεν αναιρείται.')) return;
   await sb.storage.from('patient-photos').remove([path]);
@@ -11862,7 +11890,10 @@ function openPhotoComparison() {
     <div style="background:var(--white);border-radius:16px;max-width:900px;width:100%;max-height:92vh;overflow-y:auto;padding:20px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
         <div style="font-size:15px;font-weight:700;color:var(--navy)">Σύγκριση Before / After — ${esc((S.patientDetail&&S.patientDetail.full_name)||'')}</div>
-        <button onclick="document.getElementById('lc-overlay').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-2)">×</button>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn btn-ghost btn-sm" onclick="exportPhotoComparisonPdf('${before.id}','${after.id}')">🖨 Εξαγωγή PDF</button>
+          <button onclick="document.getElementById('lc-overlay').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-2)">×</button>
+        </div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
         <div>
@@ -11876,6 +11907,47 @@ function openPhotoComparison() {
       </div>
     </div>`;
   document.body.appendChild(ov);
+}
+
+// Εξαγωγή της σύγκρισης Before/After ως PDF — ίδιο μοτίβο με printDaySchedule()
+// (νέο παράθυρο + window.print(), ο χρήστης επιλέγει «Αποθήκευση ως PDF» από
+// τον εκτυπωτή του browser· καμία εξωτερική βιβλιοθήκη PDF δεν χρειάζεται).
+function exportPhotoComparisonPdf(beforeId, afterId) {
+  const before = (S.patientPhotos||[]).find(p=>p.id===beforeId);
+  const after = (S.patientPhotos||[]).find(p=>p.id===afterId);
+  if (!before || !after) return;
+  const patientName = (S.patientDetail&&S.patientDetail.full_name)||'';
+  const apptLabel = (ph) => {
+    const a = ph.appointment_id ? ((S.patientDetail&&S.patientDetail.appointments)||[]).find(x=>x.id===ph.appointment_id) : null;
+    return a ? esc(a.service_name||'') : '';
+  };
+  const w = window.open('', '_blank');
+  if (!w) { alert('Επίτρεψε τα αναδυόμενα παράθυρα για την εξαγωγή PDF.'); return; }
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8">
+    <title>Before / After — ${esc(patientName)}</title>
+    <style>body{font-family:Arial,sans-serif;padding:24px;color:#111}
+    h1{font-size:18px;margin:0 0 4px}.sub{font-size:12px;color:#666;margin-bottom:20px}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+    .col{text-align:center}.lbl{font-size:12px;font-weight:700;letter-spacing:.5px;margin-bottom:8px}
+    img{width:100%;border-radius:8px;display:block}</style></head><body>
+    <h1>Σύγκριση Before / After</h1>
+    <div class="sub">${esc(patientName)}</div>
+    <div class="grid">
+      <div class="col"><div class="lbl">ΠΡΙΝ · ${new Date(before.taken_at).toLocaleDateString('el-GR')}${apptLabel(before)?' · '+apptLabel(before):''}</div>
+        <img src="${before.url}"/></div>
+      <div class="col"><div class="lbl">ΜΕΤΑ · ${new Date(after.taken_at).toLocaleDateString('el-GR')}${apptLabel(after)?' · '+apptLabel(after):''}</div>
+        <img src="${after.url}"/></div>
+    </div>
+    <scr`+`ipt>
+      var tries=0;
+      var iv=setInterval(function(){
+        tries++;
+        var imgs=document.images, ready=true;
+        for(var i=0;i<imgs.length;i++){ if(!imgs[i].complete){ ready=false; break; } }
+        if(ready||tries>40){ clearInterval(iv); window.print(); }
+      },150);
+    <\/scr`+`ipt></body></html>`);
+  w.document.close();
 }
 
 async function globalSearch(q) {
