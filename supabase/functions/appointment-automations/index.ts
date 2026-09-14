@@ -164,7 +164,10 @@ async function sendSms(phone: string | undefined | null, message: string): Promi
 
   const body = JSON.stringify({
     subscribers: [{ number: to }],
-    message: { text: message, sender_id: senderId },
+    // dc:2 = UCS-2 encoding — απαραίτητο για ελληνικό κείμενο (πεζά + τόνοι).
+    // Χωρίς αυτό το Apifon πέφτει στο βασικό GSM alphabet που δεν έχει
+    // πλήρες ελληνικό αλφάβητο και μεταγράφει σε κεφαλαία χωρίς τόνους.
+    message: { text: message, sender_id: senderId, dc: 2 },
   });
   const date = new Date().toUTCString();
   const stringToSign = ['POST', APIFON_SMS_PATH, body, date].join('\n');
