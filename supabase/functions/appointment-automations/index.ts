@@ -574,17 +574,13 @@ Deno.serve(async (req: Request) => {
     const sendInstructions = async (a: Appt, channel = 'email') => {
       const set = setForService(a.service_name || '');
 
-      // SMS3 — οδηγίες πριν/μετά: σύνδεσμος σε στατική σελίδα (instructions.html
-      // στο Netlify, ίδιο μοτίβο με το confirm.html) με τα ίδια δεδομένα του
-      // email μέσα στο URL — ανεξάρτητο από το email, best effort.
-      const insLink = `${SITE_URL}/instructions.html`
-        + `?service=${encodeURIComponent(a.service_name || '')}`
-        + `&when=${encodeURIComponent(athensDT(a.start_time))}`
-        + `&pre=${encodeURIComponent((set && set.pre_instructions) || '')}`
-        + `&post=${encodeURIComponent((set && set.post_instructions) || '')}`
-        + `&brand=${encodeURIComponent(brand.name)}`
-        + `&color=${encodeURIComponent(brand.color)}`
-        + (brand.logoUrl ? `&logo=${encodeURIComponent(brand.logoUrl)}` : '');
+      // SMS3 — οδηγίες πριν/μετά: ΜΙΚΡΟΣ σύνδεσμος στο appointment-confirm
+      // (?view=instructions, ίδιο μοτίβο με τα confirm/cancel links) — αυτό
+      // κάνει server-side redirect στο instructions.html με όλα τα (μεγάλα,
+      // με ελληνικά) στοιχεία στο URL, ώστε το SMS να μη γεμίζει με ένα
+      // τεράστιο κωδικοποιημένο link.
+      const insTs = Math.floor(new Date(a.start_time).getTime() / 1000);
+      const insLink = `${CONFIRM_URL}?id=${a.id}&ts=${insTs}&view=instructions`;
       const smsPhone = a.patients && a.patients.phone;
       const smsMsg = `Οι οδηγίες πριν και μετά τη θεραπεία σας: ${insLink}`;
       const smsResult = await sendSms(smsPhone, smsMsg);
@@ -598,7 +594,6 @@ Deno.serve(async (req: Request) => {
         await notifyGiveUp(a, 'instructions', fails, 'Επαναλαμβανόμενη αποτυχία αποστολής');
         results.errors++; return;
       }
-      const insTs = Math.floor(new Date(a.start_time).getTime() / 1000);
       const insIcsUrl = `${CONFIRM_URL}?id=${a.id}&ts=${insTs}&ics=1`;
       const { gcal, outlook, ics } = buildCalendarBits([a], clinicAddress, brand);
       const html = instructionsEmailHtml((a.patients && a.patients.full_name) || '', a.service_name || '', athensDT(a.start_time), a.status, (set && set.pre_instructions) || '', (set && set.post_instructions) || '', calendarButtonHtml(gcal, outlook, insIcsUrl), brand);

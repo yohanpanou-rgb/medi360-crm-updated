@@ -166,6 +166,32 @@ Deno.serve(async (req: Request) => {
 
   const { brand, address } = await loadBrand(supabase, appt.clinic_id);
 
+  // ── Οδηγίες πριν/μετά (σύνδεσμος SMS3) — ο ίδιος μηχανισμός με τα
+  // confirm/cancel links: το SMS κρατάει μόνο αυτό το ΜΙΚΡΟ σύνδεσμο, εδώ
+  // κοιτάμε το instruction set της υπηρεσίας και κάνουμε redirect στο
+  // instructions.html ΜΕ όλα τα (μεγάλα, με ελληνικά) στοιχεία στο URL —
+  // έτσι το SMS δεν γεμίζει ποτέ με ένα τεράστιο κωδικοποιημένο link.
+  // Read-only, χωρίς έλεγχο ts (ίδια λογική με το .ics παρακάτω).
+  if (url.searchParams.get('view') === 'instructions') {
+    const normalizeGreek = (s: string) => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
+    const { data: sets } = await supabase.from('instruction_sets').select('*').eq('active', true);
+    const { data: maps } = await supabase.from('service_instruction_map').select('service_id,instruction_set_id');
+    const { data: services } = await supabase.from('services').select('id,name');
+    const want = normalizeGreek(appt.service_name || '');
+    const svc = (services || []).find((s: { id: string; name: string }) => normalizeGreek(s.name) === want);
+    const map = svc ? (maps || []).find((m: { service_id: string; instruction_set_id: string }) => m.service_id === svc.id) : null;
+    const set = map ? (sets || []).find((s: { id: string; pre_instructions?: string; post_instructions?: string }) => s.id === map.instruction_set_id) : null;
+    const u = new URL(SITE_URL + '/instructions.html');
+    u.searchParams.set('service', appt.service_name || '');
+    u.searchParams.set('when', athensDT(appt.start_time));
+    if (set && set.pre_instructions) u.searchParams.set('pre', set.pre_instructions);
+    if (set && set.post_instructions) u.searchParams.set('post', set.post_instructions);
+    u.searchParams.set('brand', brand.name);
+    u.searchParams.set('color', brand.color);
+    if (brand.logoUrl) u.searchParams.set('logo', brand.logoUrl);
+    return new Response(null, { status: 302, headers: { Location: u.toString() } });
+  }
+
   // ── Λήψη .ics (κουμπί «iPhone / Apple» των emails) — δεν αγγίζει status,
   // απλώς σερβίρει το αρχείο ημερολογίου με το ίδιο περιεχόμενο του
   // συνημμένου. Ομαδοποιεί με τυχόν ραντεβού της ίδιας ημέρας, όπως το email.
