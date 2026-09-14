@@ -486,11 +486,11 @@ Deno.serve(async (req: Request) => {
     // (τηλέφωνο/κείμενο) αντί για το communication_log που είναι φτιαγμένο για
     // email (recipient/metadata). Best effort: ποτέ δεν πετάει exception προς
     // τα έξω, ώστε μια αποτυχία SMS να μη μπλοκάρει ποτέ το email flow.
-    const logSms = async (a: Appt, smsType: string, phone: string, message: string, status: string) => {
+    const logSms = async (a: Appt, smsType: string, phone: string, message: string, ok: boolean, error?: string) => {
       try {
         await supabase.from('sms_log').insert({
           clinic_id: a.clinic_id, patient_id: a.patient_id, appointment_id: a.id,
-          sms_type: smsType, phone, message, status,
+          sms_type: smsType, phone, message, status: ok ? 'sent' : 'failed', error: ok ? null : (error || null),
         });
       } catch { /* best effort — δεν μπλοκάρει τη ροή email */ }
     };
@@ -573,7 +573,7 @@ Deno.serve(async (req: Request) => {
       const smsLink = await makeShortLink(supabase, first.id, ts, 'confirm');
       const smsMsg = `Υπενθυμίζουμε το ραντεβού σας στη ${brandNameShort} για ${athensDT(first.start_time)}. Επιβεβαιώστε: ${smsLink}`;
       const smsResult = await sendSms(smsPhone, smsMsg);
-      for (const a of pending) await logSms(a, 'confirmation_request', smsPhone || '', smsMsg, smsResult.ok ? 'sent' : (smsResult.error || 'failed'));
+      for (const a of pending) await logSms(a, 'confirmation_request', smsPhone || '', smsMsg, smsResult.ok, smsResult.error);
 
       const email = first.patients && first.patients.email;
       if (!isValidEmail(email)) {
@@ -613,7 +613,7 @@ Deno.serve(async (req: Request) => {
       const smsPhone = a.patients && a.patients.phone;
       const smsMsg = `Οι οδηγίες πριν και μετά τη θεραπεία σας: ${insLink}`;
       const smsResult = await sendSms(smsPhone, smsMsg);
-      await logSms(a, 'instructions', smsPhone || '', smsMsg, smsResult.ok ? 'sent' : (smsResult.error || 'failed'));
+      await logSms(a, 'instructions', smsPhone || '', smsMsg, smsResult.ok, smsResult.error);
 
       const email = a.patients && a.patients.email;
       if (!isValidEmail(email)) { await log(a, 'instructions', channel, 'no_email', set ? { metadata: { instruction_set: set.name } } : undefined); results.no_email++; return; }
@@ -647,7 +647,7 @@ Deno.serve(async (req: Request) => {
       const smsPhone = a.patients && a.patients.phone;
       const smsMsg = `Ευχαριστούμε για την επίσκεψή σας στη ${brandNameShort}! Αξιολογήστε μας: ${reviewLink}`;
       const smsResult = await sendSms(smsPhone, smsMsg);
-      await logSms(a, 'review_request', smsPhone || '', smsMsg, smsResult.ok ? 'sent' : (smsResult.error || 'failed'));
+      await logSms(a, 'review_request', smsPhone || '', smsMsg, smsResult.ok, smsResult.error);
 
       const email = a.patients && a.patients.email;
       if (!isValidEmail(email)) { await log(a, 'review_request', channel, 'no_email'); results.no_email++; return; }
@@ -680,7 +680,7 @@ Deno.serve(async (req: Request) => {
       const smsIcsLink = await makeShortLink(supabase, a.id, bookTs, 'ics');
       const smsMsg = `Το ραντεβού σας στη ${brandNameShort} επιβεβαιώθηκε για ${athensDT(a.start_time)}. Ημερολόγιο: ${smsIcsLink}`;
       const smsResult = await sendSms(smsPhone, smsMsg);
-      await logSms(a, 'booking_confirmation', smsPhone || '', smsMsg, smsResult.ok ? 'sent' : (smsResult.error || 'failed'));
+      await logSms(a, 'booking_confirmation', smsPhone || '', smsMsg, smsResult.ok, smsResult.error);
 
       const email = a.patients && a.patients.email;
       if (!isValidEmail(email)) { await log(a, 'booking_confirmation', channel, 'no_email'); results.no_email++; return; }
