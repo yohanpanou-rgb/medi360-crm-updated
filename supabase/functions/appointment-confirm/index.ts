@@ -151,10 +151,27 @@ Deno.serve(async (req: Request) => {
 
   // ── GET ──
   const url = new URL(req.url);
-  const id = url.searchParams.get('id') || '';
-  const ts = url.searchParams.get('ts') || '';
-  const wantsIcs = url.searchParams.get('ics') === '1';
+  let id = url.searchParams.get('id') || '';
+  let ts = url.searchParams.get('ts') || '';
+  let wantsIcs = url.searchParams.get('ics') === '1';
+  let viewInstructions = url.searchParams.get('view') === 'instructions';
   const wantsCancel = url.searchParams.get('cancel') === '1';
+
+  // ── Σύντομος σύνδεσμος SMS (?c=<8-char code>) — λύνεται σε id/ts/kind μέσω
+  // του link_codes (βλ. makeShortLink στο appointment-automations). Το SMS
+  // κρατάει μόνο τον κωδικό· εδώ κάνουμε lookup και συνεχίζουμε σαν να είχε
+  // έρθει το πλήρες id&ts&... link.
+  const codeParam = url.searchParams.get('c') || '';
+  if (codeParam) {
+    const { data: codeRow } = await supabase.from('link_codes')
+      .select('appointment_id,ts,kind').eq('code', codeParam).single();
+    if (!codeRow) return redirectPage('invalid', DEFAULT_BRAND);
+    id = codeRow.appointment_id;
+    ts = String(codeRow.ts);
+    if (codeRow.kind === 'ics') wantsIcs = true;
+    else if (codeRow.kind === 'instructions') viewInstructions = true;
+  }
+
   if (!/^[0-9a-f-]{36}$/i.test(id) || !/^\d+$/.test(ts)) {
     return redirectPage('invalid', DEFAULT_BRAND);
   }
@@ -172,7 +189,7 @@ Deno.serve(async (req: Request) => {
   // instructions.html ΜΕ όλα τα (μεγάλα, με ελληνικά) στοιχεία στο URL —
   // έτσι το SMS δεν γεμίζει ποτέ με ένα τεράστιο κωδικοποιημένο link.
   // Read-only, χωρίς έλεγχο ts (ίδια λογική με το .ics παρακάτω).
-  if (url.searchParams.get('view') === 'instructions') {
+  if (viewInstructions) {
     const normalizeGreek = (s: string) => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
     const { data: sets } = await supabase.from('instruction_sets').select('*').eq('active', true);
     const { data: maps } = await supabase.from('service_instruction_map').select('service_id,instruction_set_id');

@@ -195,6 +195,34 @@ async function sendSms(phone: string | undefined | null, message: string): Promi
   }
 }
 
+const SHORT_CODE_CHARS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+
+// Σύντομος σύνδεσμος για SMS (όριο χαρακτήρων ανά τμήμα) — το domain του
+// Supabase functions είναι από μόνο του ~73 χαρακτήρες, οπότε id+ts+παράμετροι
+// στο URL κάνουν το SMS πολλαπλών τμημάτων. Αντ' αυτού αποθηκεύουμε ένα
+// τυχαίο 8-char κωδικό στο link_codes και το SMS κρατάει μόνο ?c=<code> —
+// το appointment-confirm το λύνει (lookup) στο GET. Email links δεν
+// χρειάζονται συντόμευση, μένουν όπως πριν.
+async function makeShortLink(
+  supabase: ReturnType<typeof createClient>,
+  appointmentId: string,
+  ts: number,
+  kind: 'confirm' | 'ics' | 'instructions',
+): Promise<string> {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    let code = '';
+    const bytes = new Uint8Array(8);
+    crypto.getRandomValues(bytes);
+    for (const b of bytes) code += SHORT_CODE_CHARS[b % SHORT_CODE_CHARS.length];
+    const { error } = await supabase.from('link_codes').insert({ code, appointment_id: appointmentId, ts, kind });
+    if (!error) return `${CONFIRM_URL}?c=${code}`;
+  }
+  // Απίθανη σύγκρουση κωδικών 5 φορές στη σειρά — fallback στον παλιό,
+  // μεγαλύτερο σύνδεσμο ώστε το SMS να φύγει έστω και έτσι.
+  const suffix = kind === 'ics' ? '&ics=1' : kind === 'instructions' ? '&view=instructions' : '';
+  return `${CONFIRM_URL}?id=${appointmentId}&ts=${ts}${suffix}`;
+}
+
 // Ίδια κανονικοποίηση με το index.html (normalizeGreek): πεζά + χωρίς τόνους —
 // έτσι το service_name του ραντεβού ταιριάζει με τον κατάλογο υπηρεσιών.
 function normalizeGreek(s: string): string {
@@ -540,8 +568,10 @@ Deno.serve(async (req: Request) => {
       // SMS2 — υπενθύμιση/επιβεβαίωση: ανεξάρτητο από το κανάλι email, best
       // effort (ένα SMS για όλη την ομάδα ραντεβού της ημέρας, καταγράφεται σε
       // κάθε ραντεβού του pending — ίδιο μοτίβο με το log() του email παρακάτω).
+      // Σύντομος σύνδεσμος (?c=) μόνο για το SMS — το email κρατάει το πλήρες link.
       const smsPhone = first.patients && first.patients.phone;
-      const smsMsg = `Υπενθυμίζουμε το ραντεβού σας στη ${brandNameShort} για ${athensDT(first.start_time)}. Επιβεβαιώστε: ${link}`;
+      const smsLink = await makeShortLink(supabase, first.id, ts, 'confirm');
+      const smsMsg = `Υπενθυμίζουμε το ραντεβού σας στη ${brandNameShort} για ${athensDT(first.start_time)}. Επιβεβαιώστε: ${smsLink}`;
       const smsResult = await sendSms(smsPhone, smsMsg);
       for (const a of pending) await logSms(a, 'confirmation_request', smsPhone || '', smsMsg, smsResult.ok ? 'sent' : (smsResult.error || 'failed'));
 
@@ -574,13 +604,12 @@ Deno.serve(async (req: Request) => {
     const sendInstructions = async (a: Appt, channel = 'email') => {
       const set = setForService(a.service_name || '');
 
-      // SMS3 — οδηγίες πριν/μετά: ΜΙΚΡΟΣ σύνδεσμος στο appointment-confirm
-      // (?view=instructions, ίδιο μοτίβο με τα confirm/cancel links) — αυτό
-      // κάνει server-side redirect στο instructions.html με όλα τα (μεγάλα,
-      // με ελληνικά) στοιχεία στο URL, ώστε το SMS να μη γεμίζει με ένα
-      // τεράστιο κωδικοποιημένο link.
+      // SMS3 — οδηγίες πριν/μετά: ΜΙΚΡΟΣ σύνδεσμος (?c=<8-char code> →
+      // link_codes) στο appointment-confirm, το οποίο κάνει lookup και
+      // server-side redirect στο instructions.html με όλα τα (μεγάλα, με
+      // ελληνικά) στοιχεία στο URL — έτσι το SMS κρατάει μόνο τον κοντό κωδικό.
       const insTs = Math.floor(new Date(a.start_time).getTime() / 1000);
-      const insLink = `${CONFIRM_URL}?id=${a.id}&ts=${insTs}&view=instructions`;
+      const insLink = await makeShortLink(supabase, a.id, insTs, 'instructions');
       const smsPhone = a.patients && a.patients.phone;
       const smsMsg = `Οι οδηγίες πριν και μετά τη θεραπεία σας: ${insLink}`;
       const smsResult = await sendSms(smsPhone, smsMsg);
@@ -646,8 +675,10 @@ Deno.serve(async (req: Request) => {
       const bookTs = Math.floor(new Date(a.start_time).getTime() / 1000);
       const bookIcsUrl = `${CONFIRM_URL}?id=${a.id}&ts=${bookTs}&ics=1`;
 
+      // Σύντομος σύνδεσμος (?c=) μόνο για το SMS — το email κρατάει το πλήρες bookIcsUrl.
       const smsPhone = a.patients && a.patients.phone;
-      const smsMsg = `Το ραντεβού σας στη ${brandNameShort} επιβεβαιώθηκε για ${athensDT(a.start_time)}. Ημερολόγιο: ${bookIcsUrl}`;
+      const smsIcsLink = await makeShortLink(supabase, a.id, bookTs, 'ics');
+      const smsMsg = `Το ραντεβού σας στη ${brandNameShort} επιβεβαιώθηκε για ${athensDT(a.start_time)}. Ημερολόγιο: ${smsIcsLink}`;
       const smsResult = await sendSms(smsPhone, smsMsg);
       await logSms(a, 'booking_confirmation', smsPhone || '', smsMsg, smsResult.ok ? 'sent' : (smsResult.error || 'failed'));
 
