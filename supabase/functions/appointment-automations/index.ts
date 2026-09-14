@@ -21,7 +21,7 @@
 // cycle = start_time — αλλαγή ώρας ραντεβού ξεκινά αυτόματα νέο κύκλο.
 //
 // Χειροκίνητες ενέργειες (από το CRM, με login): POST body
-// {action:'resend_confirmation'|'resend_instructions'|'resend_review_request', appointment_id} —
+// {action:'resend_confirmation'|'resend_instructions'|'resend_review_request'|'send_booking_confirmation', appointment_id} —
 // στέλνει ξανά αγνοώντας το idempotency (καταγράφεται με channel 'manual').
 //
 // Deploy with:
@@ -29,6 +29,9 @@
 // (in-code auth: x-cron-secret για το cron Ή Supabase JWT για χειροκίνητες)
 // Secrets: BIRTHDAY_CRON_SECRET (κοινό cron secret), GOOGLE_CLIENT_ID,
 //   GOOGLE_CLIENT_SECRET, BL_REFRESH_TOKEN — υπάρχουν ήδη.
+//   APIFON_TOKEN, APIFON_API_KEY (HMAC API Token/Key από Mookee →
+//   Προγραμματιστές, με ενεργοποιημένο scope SMS) και προαιρετικό
+//   APIFON_SENDER_ID — ΝΕΑ, πρέπει να μπουν για να ενεργοποιηθούν τα SMS.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -129,30 +132,64 @@ function normalizeSmsPhone(phone: string | undefined | null): string | null {
   return null;
 }
 
-// ── SMS μέσω Apifon — ΠΡΟΣΩΡΙΝΟ STUB μέχρι να έρθουν τα τεχνικά στοιχεία
-// (API token/key, ακριβές endpoint). Όλη η υπόλοιπη ροή — τα 4 σημεία
-// αποστολής, τα κείμενα, η καταγραφή στο sms_log — είναι ήδη έτοιμη και
-// περιμένει ΜΟΝΟ αυτή τη συνάρτηση. Μόλις οριστούν τα secrets APIFON_TOKEN
-// και APIFON_API_KEY (Project Settings → Edge Functions → Secrets) και
-// έρθει η τεχνική τεκμηρίωση του Apifon, αντικατέστησε το εσωτερικό της
-// με την πραγματική κλήση HTTP προς το Apifon API. Μέχρι τότε επιστρέφει
-// πάντα { ok:false, error:'not_configured' } χωρίς να σκάει τίποτα.
+// Apifon HMAC signing (βλ. docs.apifon.com/authentication.html): Authorization
+// header = "ApifonWS {token}:{signature}", signature = Base64(HMAC-SHA256(
+// secretKey, StringToSign)) όπου StringToSign = METHOD "\n" PATH "\n" BODY
+// "\n" DATE (DATE = X-ApifonWS-Date header, ίδια μορφή με Date#toUTCString()
+// — "Thu, 29 Sep 2016 12:18:56 GMT").
+async function hmacSha256Base64(secret: string, message: string): Promise<string> {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(message));
+  let bin = '';
+  new Uint8Array(sig).forEach((b) => { bin += String.fromCharCode(b); });
+  return btoa(bin);
+}
+
+const APIFON_SMS_PATH = '/services/api/v1/sms/send';
+
+// SMS μέσω Apifon (SMS Gateway REST API — docs.apifon.com). Χρειάζεται τα
+// secrets APIFON_TOKEN (API Token) και APIFON_API_KEY (το secret key του
+// token — HMAC type) στο Project Settings → Edge Functions → Secrets· χωρίς
+// αυτά επιστρέφει { ok:false, error:'not_configured' } χωρίς να σκάει τίποτα
+// (δεν μπλοκάρει ποτέ τα email). Προαιρετικό APIFON_SENDER_ID (έως 11 λατινικά
+// αλφαριθμητικά) — αλλιώς 'BeautyLine'.
 async function sendSms(phone: string | undefined | null, message: string): Promise<{ ok: boolean; error?: string; providerId?: string }> {
   const to = normalizeSmsPhone(phone);
   if (!to) return { ok: false, error: 'invalid_phone' };
   const token = Deno.env.get('APIFON_TOKEN');
   const apiKey = Deno.env.get('APIFON_API_KEY');
   if (!token || !apiKey) return { ok: false, error: 'not_configured' };
-  // TODO(Apifon): πραγματικό αίτημα εδώ, π.χ.
-  //   const res = await fetch('https://<apifon-endpoint>', {
-  //     method: 'POST',
-  //     headers: { Authorization: `ApifonWS ${apiKey}:<hmac-signature>`, 'Content-Type': 'application/json' },
-  //     body: JSON.stringify({ subscribers: [{ number: to }], text: message, sender_id: '<sender>' }),
-  //   });
-  //   const out = await res.json();
-  //   if (!res.ok) return { ok: false, error: JSON.stringify(out) };
-  //   return { ok: true, providerId: out.id };
-  return { ok: false, error: 'not_configured' };
+  const senderId = Deno.env.get('APIFON_SENDER_ID') || 'BeautyLine';
+
+  const body = JSON.stringify({
+    subscribers: [{ number: to }],
+    message: { text: message, sender_id: senderId },
+  });
+  const date = new Date().toUTCString();
+  const stringToSign = ['POST', APIFON_SMS_PATH, body, date].join('\n');
+  const signature = await hmacSha256Base64(apiKey, stringToSign);
+
+  try {
+    const res = await fetch('https://ars.apifon.com' + APIFON_SMS_PATH, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-ApifonWS-Date': date,
+        Authorization: `ApifonWS ${token}:${signature}`,
+      },
+      body,
+    });
+    const out = await res.json();
+    if (!res.ok || !out.result_info || out.result_info.status_code !== 200) {
+      return { ok: false, error: JSON.stringify(out) };
+    }
+    const results = out.results && out.results[to];
+    const providerId = results && results[0] && results[0].message_id;
+    return { ok: true, providerId };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 // Ίδια κανονικοποίηση με το index.html (normalizeGreek): πεζά + χωρίς τόνους —
