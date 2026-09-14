@@ -34,6 +34,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const SENDER = 'yourbeautyline@gmail.com';
 const CONFIRM_URL = 'https://kfidxwqgsaisbdgucsok.supabase.co/functions/v1/appointment-confirm';
+const SITE_URL = 'https://medi360-crm.netlify.app';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -114,6 +115,44 @@ async function sendEmail(token: string, to: string, subject: string, html: strin
   const out = await res.json();
   if (out.error) throw new Error(JSON.stringify(out.error));
   return out.id as string;
+}
+
+// Μορφή τηλεφώνου για SMS πάροχο: μόνο ψηφία, με κωδικό χώρας (30 για
+// Ελλάδα) χωρίς το "+". Δέχεται ό,τι μορφή κι αν έχει καταχωρηθεί στην
+// καρτέλα (με/χωρίς +30, κενά, παύλες).
+function normalizeSmsPhone(phone: string | undefined | null): string | null {
+  const digits = (phone || '').replace(/\D/g, '');
+  if (!digits) return null;
+  if (digits.startsWith('30') && digits.length === 12) return digits;
+  if (digits.length === 10 && digits.startsWith('69')) return '30' + digits;
+  if (digits.length >= 10) return digits; // ξένος αριθμός — ήδη με κωδικό χώρας
+  return null;
+}
+
+// ── SMS μέσω Apifon — ΠΡΟΣΩΡΙΝΟ STUB μέχρι να έρθουν τα τεχνικά στοιχεία
+// (API token/key, ακριβές endpoint). Όλη η υπόλοιπη ροή — τα 4 σημεία
+// αποστολής, τα κείμενα, η καταγραφή στο sms_log — είναι ήδη έτοιμη και
+// περιμένει ΜΟΝΟ αυτή τη συνάρτηση. Μόλις οριστούν τα secrets APIFON_TOKEN
+// και APIFON_API_KEY (Project Settings → Edge Functions → Secrets) και
+// έρθει η τεχνική τεκμηρίωση του Apifon, αντικατέστησε το εσωτερικό της
+// με την πραγματική κλήση HTTP προς το Apifon API. Μέχρι τότε επιστρέφει
+// πάντα { ok:false, error:'not_configured' } χωρίς να σκάει τίποτα.
+async function sendSms(phone: string | undefined | null, message: string): Promise<{ ok: boolean; error?: string; providerId?: string }> {
+  const to = normalizeSmsPhone(phone);
+  if (!to) return { ok: false, error: 'invalid_phone' };
+  const token = Deno.env.get('APIFON_TOKEN');
+  const apiKey = Deno.env.get('APIFON_API_KEY');
+  if (!token || !apiKey) return { ok: false, error: 'not_configured' };
+  // TODO(Apifon): πραγματικό αίτημα εδώ, π.χ.
+  //   const res = await fetch('https://<apifon-endpoint>', {
+  //     method: 'POST',
+  //     headers: { Authorization: `ApifonWS ${apiKey}:<hmac-signature>`, 'Content-Type': 'application/json' },
+  //     body: JSON.stringify({ subscribers: [{ number: to }], text: message, sender_id: '<sender>' }),
+  //   });
+  //   const out = await res.json();
+  //   if (!res.ok) return { ok: false, error: JSON.stringify(out) };
+  //   return { ok: true, providerId: out.id };
+  return { ok: false, error: 'not_configured' };
 }
 
 // Ίδια κανονικοποίηση με το index.html (normalizeGreek): πεζά + χωρίς τόνους —
@@ -307,10 +346,22 @@ function reviewRequestEmailHtml(name: string, service: string, reviewLink: strin
       </td></tr>`, brand);
 }
 
+// Στιγμή 1 — απλό, ενημερωτικό email κλεισίματος ραντεβού (χωρίς μεγάλο CTA
+// κουμπί, σε αντίθεση με το confirmationEmailHtml που ζητάει επιβεβαίωση) —
+// φεύγει αμέσως μόλις κλείνεται το ραντεβού από το CRM.
+function bookingConfirmationEmailHtml(name: string, service: string, whenStr: string, brand: Brand): string {
+  return shell(`
+      ${headerBand(brand, '✅', 'Το ραντεβού σας κλείστηκε')}
+      <tr><td style="padding:28px 30px;">
+        <p style="font-size:15px;line-height:1.7;color:#333333;-webkit-text-fill-color:#333333;margin:0 0 14px;">Αγαπητή/έ κε/κα <b>${esc(name)}</b>,</p>
+        <p style="font-size:14.5px;line-height:1.7;color:#333333;-webkit-text-fill-color:#333333;margin:0;">Το ραντεβού σας για <b>${esc(service)}</b> κλείστηκε για <b>${esc(whenStr)}</b>. Σας περιμένουμε! ✨</p>
+      </td></tr>`, brand);
+}
+
 interface Appt {
   id: string; clinic_id: string; patient_id: string; status: string;
   start_time: string; service_name?: string; duration_minutes?: number;
-  patients?: { full_name?: string; email?: string } | null;
+  patients?: { full_name?: string; email?: string; phone?: string } | null;
 }
 
 Deno.serve(async (req: Request) => {
@@ -360,6 +411,19 @@ Deno.serve(async (req: Request) => {
         .eq('appointment_id', a.id).eq('automation_type', type).eq('cycle', a.start_time)
         .in('status', ['sent', 'no_email', 'no_set', 'failed_final']).limit(1);
       return !!(data && data.length);
+    };
+
+    // Καταγραφή SMS σε ξεχωριστό πίνακα (sms_log) — δικό του σχήμα
+    // (τηλέφωνο/κείμενο) αντί για το communication_log που είναι φτιαγμένο για
+    // email (recipient/metadata). Best effort: ποτέ δεν πετάει exception προς
+    // τα έξω, ώστε μια αποτυχία SMS να μη μπλοκάρει ποτέ το email flow.
+    const logSms = async (a: Appt, smsType: string, phone: string, message: string, status: string) => {
+      try {
+        await supabase.from('sms_log').insert({
+          clinic_id: a.clinic_id, patient_id: a.patient_id, appointment_id: a.id,
+          sms_type: smsType, phone, message, status,
+        });
+      } catch { /* best effort — δεν μπλοκάρει τη ροή email */ }
     };
 
     // Μετά από MAX_ATTEMPTS αποτυχημένες προσπάθειες αποστολής (π.χ. Gmail
@@ -424,6 +488,19 @@ Deno.serve(async (req: Request) => {
     const sendConfirmation = async (dayAppts: Appt[], pending: Appt[], channel = 'email') => {
       const sorted = [...dayAppts].sort((x, y) => (x.start_time < y.start_time ? -1 : 1));
       const first = sorted[0];
+      const ts = Math.floor(new Date(first.start_time).getTime() / 1000);
+      const link = `${CONFIRM_URL}?id=${first.id}&ts=${ts}`;
+      const cancelLink = `${CONFIRM_URL}?id=${first.id}&ts=${ts}&cancel=1`;
+      const icsUrl = `${CONFIRM_URL}?id=${first.id}&ts=${ts}&ics=1`;
+
+      // SMS2 — υπενθύμιση/επιβεβαίωση: ανεξάρτητο από το κανάλι email, best
+      // effort (ένα SMS για όλη την ομάδα ραντεβού της ημέρας, καταγράφεται σε
+      // κάθε ραντεβού του pending — ίδιο μοτίβο με το log() του email παρακάτω).
+      const smsPhone = first.patients && first.patients.phone;
+      const smsMsg = `Υπενθυμίζουμε το ραντεβού σας στη ${brand.name} για ${athensDT(first.start_time)}. Επιβεβαιώστε: ${link}`;
+      const smsResult = await sendSms(smsPhone, smsMsg);
+      for (const a of pending) await logSms(a, 'confirmation_request', smsPhone || '', smsMsg, smsResult.ok ? 'sent' : (smsResult.error || 'failed'));
+
       const email = first.patients && first.patients.email;
       if (!isValidEmail(email)) {
         for (const a of pending) await log(a, 'confirmation_request', channel, 'no_email');
@@ -435,10 +512,6 @@ Deno.serve(async (req: Request) => {
         await notifyGiveUp(first, 'confirmation_request', fails, 'Επαναλαμβανόμενη αποτυχία αποστολής');
         results.errors++; return;
       }
-      const ts = Math.floor(new Date(first.start_time).getTime() / 1000);
-      const link = `${CONFIRM_URL}?id=${first.id}&ts=${ts}`;
-      const cancelLink = `${CONFIRM_URL}?id=${first.id}&ts=${ts}&cancel=1`;
-      const icsUrl = `${CONFIRM_URL}?id=${first.id}&ts=${ts}&ics=1`;
       const { gcal, outlook, ics } = buildCalendarBits(sorted, clinicAddress, brand);
       const html = confirmationEmailHtml((first.patients && first.patients.full_name) || '', sorted, link, cancelLink, calendarButtonHtml(gcal, outlook, icsUrl), brand);
       try {
@@ -456,6 +529,23 @@ Deno.serve(async (req: Request) => {
     // ο πελάτης δεν πρέπει να μένει χωρίς καμία ενημέρωση επειδή λείπει σετ.
     const sendInstructions = async (a: Appt, channel = 'email') => {
       const set = setForService(a.service_name || '');
+
+      // SMS3 — οδηγίες πριν/μετά: σύνδεσμος σε στατική σελίδα (instructions.html
+      // στο Netlify, ίδιο μοτίβο με το confirm.html) με τα ίδια δεδομένα του
+      // email μέσα στο URL — ανεξάρτητο από το email, best effort.
+      const insLink = `${SITE_URL}/instructions.html`
+        + `?service=${encodeURIComponent(a.service_name || '')}`
+        + `&when=${encodeURIComponent(athensDT(a.start_time))}`
+        + `&pre=${encodeURIComponent((set && set.pre_instructions) || '')}`
+        + `&post=${encodeURIComponent((set && set.post_instructions) || '')}`
+        + `&brand=${encodeURIComponent(brand.name)}`
+        + `&color=${encodeURIComponent(brand.color)}`
+        + (brand.logoUrl ? `&logo=${encodeURIComponent(brand.logoUrl)}` : '');
+      const smsPhone = a.patients && a.patients.phone;
+      const smsMsg = `Οι οδηγίες πριν και μετά τη θεραπεία σας: ${insLink}`;
+      const smsResult = await sendSms(smsPhone, smsMsg);
+      await logSms(a, 'instructions', smsPhone || '', smsMsg, smsResult.ok ? 'sent' : (smsResult.error || 'failed'));
+
       const email = a.patients && a.patients.email;
       if (!isValidEmail(email)) { await log(a, 'instructions', channel, 'no_email', set ? { metadata: { instruction_set: set.name } } : undefined); results.no_email++; return; }
       const fails = await failureCount(a, 'instructions');
@@ -484,6 +574,13 @@ Deno.serve(async (req: Request) => {
     // αποστολή, ούτε καν χειροκίνητα.
     const sendReviewRequest = async (a: Appt, channel = 'email') => {
       if (!reviewLink) { results.errors++; return; }
+
+      // SMS4 — ζήτηση αξιολόγησης: ανεξάρτητο από το email, best effort.
+      const smsPhone = a.patients && a.patients.phone;
+      const smsMsg = `Ευχαριστούμε για την επίσκεψή σας στη ${brand.name}! Αξιολογήστε μας: ${reviewLink}`;
+      const smsResult = await sendSms(smsPhone, smsMsg);
+      await logSms(a, 'review_request', smsPhone || '', smsMsg, smsResult.ok ? 'sent' : (smsResult.error || 'failed'));
+
       const email = a.patients && a.patients.email;
       if (!isValidEmail(email)) { await log(a, 'review_request', channel, 'no_email'); results.no_email++; return; }
       const fails = await failureCount(a, 'review_request');
@@ -503,16 +600,39 @@ Deno.serve(async (req: Request) => {
       }
     };
 
+    // Στιγμή 1 — αμέσως μετά το κλείσιμο ραντεβού από το CRM. ΔΕΝ περνάει από
+    // failureCount/MAX_ATTEMPTS (καλείται μία φορά, χειροκίνητα από το
+    // save-appt του index.html — όχι από τη σάρωση cron).
+    const sendBookingConfirmation = async (a: Appt, channel = 'email') => {
+      const smsPhone = a.patients && a.patients.phone;
+      const smsMsg = `Το ραντεβού σας στη ${brand.name} επιβεβαιώθηκε για ${athensDT(a.start_time)}.`;
+      const smsResult = await sendSms(smsPhone, smsMsg);
+      await logSms(a, 'booking_confirmation', smsPhone || '', smsMsg, smsResult.ok ? 'sent' : (smsResult.error || 'failed'));
+
+      const email = a.patients && a.patients.email;
+      if (!isValidEmail(email)) { await log(a, 'booking_confirmation', channel, 'no_email'); results.no_email++; return; }
+      const html = bookingConfirmationEmailHtml((a.patients && a.patients.full_name) || '', a.service_name || '', athensDT(a.start_time), brand);
+      try {
+        const msgId = await sendEmail(await gmail(), String(email), '✅ Το ραντεβού σας κλείστηκε — ' + brand.name, html, undefined, brand.name);
+        await log(a, 'booking_confirmation', channel, 'sent', { metadata: { gmail_id: msgId } });
+        results.booking_confirmations = (results.booking_confirmations || 0) + 1;
+      } catch (e) {
+        await log(a, 'booking_confirmation', channel, 'failed', { error: e instanceof Error ? e.message : String(e) });
+        results.errors++;
+      }
+    };
+
     // ── Χειροκίνητη ενέργεια από το CRM ──
     if (body.action && body.appointment_id) {
       const { data: appt } = await supabase.from('appointments')
-        .select('id,clinic_id,patient_id,status,start_time,service_name,duration_minutes,patients(full_name,email)')
+        .select('id,clinic_id,patient_id,status,start_time,service_name,duration_minutes,patients(full_name,email,phone)')
         .eq('id', body.appointment_id).single();
       if (!appt) return json({ error: 'Appointment not found' }, 404);
       const a = appt as unknown as Appt;
       if (body.action === 'resend_confirmation') await sendConfirmation([a], [a], 'manual');
       else if (body.action === 'resend_instructions') await sendInstructions(a, 'manual');
       else if (body.action === 'resend_review_request') await sendReviewRequest(a, 'manual');
+      else if (body.action === 'send_booking_confirmation') await sendBookingConfirmation(a, 'manual');
       else return json({ error: 'Unknown action' }, 400);
       return json({ ok: true, results });
     }
@@ -527,7 +647,7 @@ Deno.serve(async (req: Request) => {
     //    πελάτη+ημέρα: 2 ραντεβού την ίδια μέρα = ΕΝΑ email με ώρα προσέλευσης
     //    του πρώτου, ώστε να μην μπερδεύεται ο πελάτης.
     const { data: bookedRows } = await supabase.from('appointments')
-      .select('id,clinic_id,patient_id,status,start_time,service_name,duration_minutes,patients(full_name,email)')
+      .select('id,clinic_id,patient_id,status,start_time,service_name,duration_minutes,patients(full_name,email,phone)')
       .eq('status', 'booked').gte('start_time', now.toISOString()).lte('start_time', in48h.toISOString());
     const byPatientDay: Record<string, Appt[]> = {};
     for (const row of (bookedRows || []) as unknown as Appt[]) {
@@ -546,7 +666,7 @@ Deno.serve(async (req: Request) => {
     //    επιβεβαίωση) — κάποιες οδηγίες θέλουν μέρες προετοιμασία πριν τη
     //    θεραπεία, οπότε δεν έχει νόημα να φτάνουν 48ωρο πριν.
     const { data: confRows } = await supabase.from('appointments')
-      .select('id,clinic_id,patient_id,status,start_time,service_name,duration_minutes,patients(full_name,email)')
+      .select('id,clinic_id,patient_id,status,start_time,service_name,duration_minutes,patients(full_name,email,phone)')
       .in('status', ['booked', 'confirmed']).gte('start_time', now.toISOString()).lte('start_time', horizon.toISOString());
     for (const row of (confRows || []) as unknown as Appt[]) {
       if (await alreadyDone(row, 'instructions')) continue;
@@ -560,7 +680,7 @@ Deno.serve(async (req: Request) => {
       const reviewCutoff = new Date(now.getTime() - reviewRequestDelayDays * 86400 * 1000);
       const reviewHorizon = new Date(now.getTime() - 30 * 86400 * 1000);
       const { data: doneRows } = await supabase.from('appointments')
-        .select('id,clinic_id,patient_id,status,start_time,service_name,duration_minutes,patients(full_name,email)')
+        .select('id,clinic_id,patient_id,status,start_time,service_name,duration_minutes,patients(full_name,email,phone)')
         .eq('status', 'completed').lte('start_time', reviewCutoff.toISOString()).gte('start_time', reviewHorizon.toISOString());
       for (const row of (doneRows || []) as unknown as Appt[]) {
         if (await alreadyDone(row, 'review_request')) continue;

@@ -228,7 +228,7 @@ Deno.serve(async (req: Request) => {
   }
 
   if (appt.status === 'confirmed') {
-    return redirectPage('already', brand, { service: appt.service_name || '', when: whenStr });
+    return redirectPage('already', brand, { service: appt.service_name || '', when: whenStr, id, ts });
   }
   if (appt.status !== 'booked') {
     return redirectPage('unavailable', brand);
@@ -267,5 +267,5 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  return redirectPage('ok', brand, { service: appt.service_name || '', when: whenStr, extra: String(extra) });
+  return redirectPage('ok', brand, { service: appt.service_name || '', when: whenStr, extra: String(extra), id, ts });
 });

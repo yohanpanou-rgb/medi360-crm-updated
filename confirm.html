@@ -72,8 +72,21 @@
     document.getElementById('emoji').textContent = e[0];
     document.getElementById('title').textContent = e[1];
     document.getElementById('msg').innerHTML = e[2];
-    document.getElementById('actions').innerHTML = '';
     document.title = e[1] + ' — Beauty Line';
+    var actions = document.getElementById('actions');
+    // Στα «επιβεβαιωμένο» αποτελέσματα, δίνουμε στον πελάτη τρόπο να αλλάξει
+    // γνώμη ΧΩΡΙΣ να χρειάζεται να επιστρέψει στο αρχικό email — Ακύρωση
+    // (ήδη λειτουργεί, ίδιο flow με cancel_confirm) και Μεταφορά (θέση
+    // κρατημένη στη σελίδα, προς το παρόν ανενεργή μέχρι να αποφασιστεί πώς
+    // θα δουλεύει η αυτοεξυπηρέτηση αλλαγής ημερομηνίας).
+    if (key === 'ok' || key === 'already') {
+      actions.innerHTML =
+        '<button id="btn-cancel-from-ok" style="display:inline-block;background-color:#F0E2E9;color:#8A3B5E;border:none;font-size:13.5px;font-weight:bold;padding:11px 22px;border-radius:24px;margin:4px;cursor:pointer;">🚫 Ακύρωση ραντεβού</button>' +
+        '<button id="btn-reschedule" disabled title="Σύντομα διαθέσιμο" style="display:inline-block;background-color:#F5F0F2;color:#B39CA8;border:none;font-size:13.5px;font-weight:bold;padding:11px 22px;border-radius:24px;margin:4px;cursor:not-allowed;">🔀 Μεταφορά (σύντομα)</button>';
+      document.getElementById('btn-cancel-from-ok').onclick = renderCancelConfirm;
+    } else {
+      actions.innerHTML = '';
+    }
   }
 
   // Η ακύρωση θέλει ρητό δεύτερο κλικ εδώ — το link μέσα στο email ΔΕΝ

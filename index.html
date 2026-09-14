@@ -9447,7 +9447,7 @@ function bindModalEvents() {
     btn.textContent='Αποθήκευση...'; btn.disabled=true;
     const pkgSel = document.getElementById('a-package');
     const branchSel = document.getElementById('a-branch');
-    const {error} = await sb.from('appointments').insert({
+    const {data:newAppt, error} = await sb.from('appointments').insert({
       clinic_id:clinicId(), patient_id:pid||null,
       service_name:serviceName,
       therapist_id: therapistSel ? (therapistSel.value||null) : null,
@@ -9462,8 +9462,13 @@ function bindModalEvents() {
       // ραντεβού είναι εντός 48 ωρών ή στο παρελθόν (οι οδηγίες φεύγουν αμέσως).
       status: (new Date(timeWithTz).getTime() - Date.now() > 48*3600*1000) ? 'booked' : 'confirmed',
       created_by: S.user && S.user.id,
-    });
+    }).select('id').single();
     if (error) { alert(error.message); btn.textContent='Αποθήκευση'; btn.disabled=false; return; }
+    // Στιγμή 1 (κλείσιμο ραντεβού): email + SMS ενημέρωσης, αμέσως — fire-and-
+    // forget, δεν μπλοκάρει το κλείσιμο του modal αν αργήσει/αποτύχει.
+    if (newAppt && newAppt.id) {
+      sb.functions.invoke('appointment-automations', { body: { action: 'send_booking_confirmation', appointment_id: newAppt.id } }).catch(() => {});
+    }
     closeModal(); await loadPageData();
   });
 
