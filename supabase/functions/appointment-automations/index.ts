@@ -661,7 +661,7 @@ Deno.serve(async (req: Request) => {
       const { gcal, outlook } = buildCalendarBits([a], clinicAddress, brand);
       const html = bookingConfirmationEmailHtml((a.patients && a.patients.full_name) || '', a.service_name || '', athensDT(a.start_time), calendarButtonHtml(gcal, outlook, bookIcsUrl), brand);
       try {
-        const msgId = await sendEmail(await gmail(), String(email), '✅ Το ραντεβού σας κλείστηκε — ' + brand.name, html, undefined, brand.name);
+        const msgId = await sendEmail(await gmail(), String(email), 'Το ραντεβού σας κλείστηκε — ' + brand.name, html, undefined, brand.name);
         await log(a, 'booking_confirmation', channel, 'sent', { metadata: { gmail_id: msgId } });
         results.booking_confirmations = (results.booking_confirmations || 0) + 1;
       } catch (e) {
