@@ -389,12 +389,13 @@ function reviewRequestEmailHtml(name: string, service: string, reviewLink: strin
 // Στιγμή 1 — απλό, ενημερωτικό email κλεισίματος ραντεβού (χωρίς μεγάλο CTA
 // κουμπί, σε αντίθεση με το confirmationEmailHtml που ζητάει επιβεβαίωση) —
 // φεύγει αμέσως μόλις κλείνεται το ραντεβού από το CRM.
-function bookingConfirmationEmailHtml(name: string, service: string, whenStr: string, brand: Brand): string {
+function bookingConfirmationEmailHtml(name: string, service: string, whenStr: string, calBtn: string, brand: Brand): string {
   return shell(`
       ${headerBand(brand, '✅', 'Το ραντεβού σας κλείστηκε')}
       <tr><td style="padding:28px 30px;">
         <p style="font-size:15px;line-height:1.7;color:#333333;-webkit-text-fill-color:#333333;margin:0 0 14px;">Αγαπητή/έ κε/κα <b>${esc(name)}</b>,</p>
         <p style="font-size:14.5px;line-height:1.7;color:#333333;-webkit-text-fill-color:#333333;margin:0;">Το ραντεβού σας για <b>${esc(service)}</b> κλείστηκε για <b>${esc(whenStr)}</b>. Σας περιμένουμε! ✨</p>
+        ${calBtn}
       </td></tr>`, brand);
 }
 
@@ -503,6 +504,9 @@ Deno.serve(async (req: Request) => {
       color: (cRow.settings && cRow.settings.brand_color) || '#C4618A',
       logoUrl: (cRow.settings && cRow.settings.brand_logo_url) || '',
     };
+    // Στα SMS (όριο χαρακτήρων) χρησιμοποιούμε το σύντομο όνομα — «Beauty
+    // Line» αντί για «Beauty Line by Lina Panou» — τα emails κρατάνε το πλήρες.
+    const brandNameShort = brand.name.split(/\s+by\s+/i)[0];
     const reviewLink = (cRow.settings && cRow.settings.review_link) || '';
     const reviewRequestEnabled = !!(cRow.settings && cRow.settings.review_request_enabled) && !!reviewLink;
     const reviewRequestDelayDays = (cRow.settings && cRow.settings.review_request_delay_days) || 2;
@@ -537,7 +541,7 @@ Deno.serve(async (req: Request) => {
       // effort (ένα SMS για όλη την ομάδα ραντεβού της ημέρας, καταγράφεται σε
       // κάθε ραντεβού του pending — ίδιο μοτίβο με το log() του email παρακάτω).
       const smsPhone = first.patients && first.patients.phone;
-      const smsMsg = `Υπενθυμίζουμε το ραντεβού σας στη ${brand.name} για ${athensDT(first.start_time)}. Επιβεβαιώστε: ${link}`;
+      const smsMsg = `Υπενθυμίζουμε το ραντεβού σας στη ${brandNameShort} για ${athensDT(first.start_time)}. Επιβεβαιώστε: ${link}`;
       const smsResult = await sendSms(smsPhone, smsMsg);
       for (const a of pending) await logSms(a, 'confirmation_request', smsPhone || '', smsMsg, smsResult.ok ? 'sent' : (smsResult.error || 'failed'));
 
@@ -617,7 +621,7 @@ Deno.serve(async (req: Request) => {
 
       // SMS4 — ζήτηση αξιολόγησης: ανεξάρτητο από το email, best effort.
       const smsPhone = a.patients && a.patients.phone;
-      const smsMsg = `Ευχαριστούμε για την επίσκεψή σας στη ${brand.name}! Αξιολογήστε μας: ${reviewLink}`;
+      const smsMsg = `Ευχαριστούμε για την επίσκεψή σας στη ${brandNameShort}! Αξιολογήστε μας: ${reviewLink}`;
       const smsResult = await sendSms(smsPhone, smsMsg);
       await logSms(a, 'review_request', smsPhone || '', smsMsg, smsResult.ok ? 'sent' : (smsResult.error || 'failed'));
 
@@ -644,14 +648,18 @@ Deno.serve(async (req: Request) => {
     // failureCount/MAX_ATTEMPTS (καλείται μία φορά, χειροκίνητα από το
     // save-appt του index.html — όχι από τη σάρωση cron).
     const sendBookingConfirmation = async (a: Appt, channel = 'email') => {
+      const bookTs = Math.floor(new Date(a.start_time).getTime() / 1000);
+      const bookIcsUrl = `${CONFIRM_URL}?id=${a.id}&ts=${bookTs}&ics=1`;
+
       const smsPhone = a.patients && a.patients.phone;
-      const smsMsg = `Το ραντεβού σας στη ${brand.name} επιβεβαιώθηκε για ${athensDT(a.start_time)}.`;
+      const smsMsg = `Το ραντεβού σας στη ${brandNameShort} επιβεβαιώθηκε για ${athensDT(a.start_time)}. Ημερολόγιο: ${bookIcsUrl}`;
       const smsResult = await sendSms(smsPhone, smsMsg);
       await logSms(a, 'booking_confirmation', smsPhone || '', smsMsg, smsResult.ok ? 'sent' : (smsResult.error || 'failed'));
 
       const email = a.patients && a.patients.email;
       if (!isValidEmail(email)) { await log(a, 'booking_confirmation', channel, 'no_email'); results.no_email++; return; }
-      const html = bookingConfirmationEmailHtml((a.patients && a.patients.full_name) || '', a.service_name || '', athensDT(a.start_time), brand);
+      const { gcal, outlook } = buildCalendarBits([a], clinicAddress, brand);
+      const html = bookingConfirmationEmailHtml((a.patients && a.patients.full_name) || '', a.service_name || '', athensDT(a.start_time), calendarButtonHtml(gcal, outlook, bookIcsUrl), brand);
       try {
         const msgId = await sendEmail(await gmail(), String(email), '✅ Το ραντεβού σας κλείστηκε — ' + brand.name, html, undefined, brand.name);
         await log(a, 'booking_confirmation', channel, 'sent', { metadata: { gmail_id: msgId } });
