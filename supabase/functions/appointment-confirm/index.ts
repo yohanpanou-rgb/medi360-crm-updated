@@ -151,10 +151,27 @@ Deno.serve(async (req: Request) => {
 
   // ── GET ──
   const url = new URL(req.url);
-  const id = url.searchParams.get('id') || '';
-  const ts = url.searchParams.get('ts') || '';
-  const wantsIcs = url.searchParams.get('ics') === '1';
+  let id = url.searchParams.get('id') || '';
+  let ts = url.searchParams.get('ts') || '';
+  let wantsIcs = url.searchParams.get('ics') === '1';
+  let viewInstructions = url.searchParams.get('view') === 'instructions';
   const wantsCancel = url.searchParams.get('cancel') === '1';
+
+  // ── Σύντομος σύνδεσμος SMS (?c=<8-char code>) — λύνεται σε id/ts/kind μέσω
+  // του link_codes (βλ. makeShortLink στο appointment-automations). Το SMS
+  // κρατάει μόνο τον κωδικό· εδώ κάνουμε lookup και συνεχίζουμε σαν να είχε
+  // έρθει το πλήρες id&ts&... link.
+  const codeParam = url.searchParams.get('c') || '';
+  if (codeParam) {
+    const { data: codeRow } = await supabase.from('link_codes')
+      .select('appointment_id,ts,kind').eq('code', codeParam).single();
+    if (!codeRow) return redirectPage('invalid', DEFAULT_BRAND);
+    id = codeRow.appointment_id;
+    ts = String(codeRow.ts);
+    if (codeRow.kind === 'ics') wantsIcs = true;
+    else if (codeRow.kind === 'instructions') viewInstructions = true;
+  }
+
   if (!/^[0-9a-f-]{36}$/i.test(id) || !/^\d+$/.test(ts)) {
     return redirectPage('invalid', DEFAULT_BRAND);
   }
@@ -165,6 +182,32 @@ Deno.serve(async (req: Request) => {
   if (!appt) return redirectPage('notfound', DEFAULT_BRAND);
 
   const { brand, address } = await loadBrand(supabase, appt.clinic_id);
+
+  // ── Οδηγίες πριν/μετά (σύνδεσμος SMS3) — ο ίδιος μηχανισμός με τα
+  // confirm/cancel links: το SMS κρατάει μόνο αυτό το ΜΙΚΡΟ σύνδεσμο, εδώ
+  // κοιτάμε το instruction set της υπηρεσίας και κάνουμε redirect στο
+  // instructions.html ΜΕ όλα τα (μεγάλα, με ελληνικά) στοιχεία στο URL —
+  // έτσι το SMS δεν γεμίζει ποτέ με ένα τεράστιο κωδικοποιημένο link.
+  // Read-only, χωρίς έλεγχο ts (ίδια λογική με το .ics παρακάτω).
+  if (viewInstructions) {
+    const normalizeGreek = (s: string) => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
+    const { data: sets } = await supabase.from('instruction_sets').select('*').eq('active', true);
+    const { data: maps } = await supabase.from('service_instruction_map').select('service_id,instruction_set_id');
+    const { data: services } = await supabase.from('services').select('id,name');
+    const want = normalizeGreek(appt.service_name || '');
+    const svc = (services || []).find((s: { id: string; name: string }) => normalizeGreek(s.name) === want);
+    const map = svc ? (maps || []).find((m: { service_id: string; instruction_set_id: string }) => m.service_id === svc.id) : null;
+    const set = map ? (sets || []).find((s: { id: string; pre_instructions?: string; post_instructions?: string }) => s.id === map.instruction_set_id) : null;
+    const u = new URL(SITE_URL + '/instructions.html');
+    u.searchParams.set('service', appt.service_name || '');
+    u.searchParams.set('when', athensDT(appt.start_time));
+    if (set && set.pre_instructions) u.searchParams.set('pre', set.pre_instructions);
+    if (set && set.post_instructions) u.searchParams.set('post', set.post_instructions);
+    u.searchParams.set('brand', brand.name);
+    u.searchParams.set('color', brand.color);
+    if (brand.logoUrl) u.searchParams.set('logo', brand.logoUrl);
+    return new Response(null, { status: 302, headers: { Location: u.toString() } });
+  }
 
   // ── Λήψη .ics (κουμπί «iPhone / Apple» των emails) — δεν αγγίζει status,
   // απλώς σερβίρει το αρχείο ημερολογίου με το ίδιο περιεχόμενο του
@@ -228,7 +271,7 @@ Deno.serve(async (req: Request) => {
   }
 
   if (appt.status === 'confirmed') {
-    return redirectPage('already', brand, { service: appt.service_name || '', when: whenStr });
+    return redirectPage('already', brand, { service: appt.service_name || '', when: whenStr, id, ts });
   }
   if (appt.status !== 'booked') {
     return redirectPage('unavailable', brand);
@@ -267,5 +310,5 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  return redirectPage('ok', brand, { service: appt.service_name || '', when: whenStr, extra: String(extra) });
+  return redirectPage('ok', brand, { service: appt.service_name || '', when: whenStr, extra: String(extra), id, ts });
 });

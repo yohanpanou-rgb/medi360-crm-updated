@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="el">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Οδηγίες Ραντεβού — Beauty Line</title>
+</head>
+<body style="margin:0;font-family:Arial,Helvetica,sans-serif;background:#FAF3F6;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;">
+  <div style="max-width:460px;width:100%;background:#fff;border-radius:18px;overflow:hidden;box-shadow:0 10px 40px rgba(196,97,138,.18);">
+    <div id="band" style="background:#C4618A;padding:26px;text-align:center;">
+      <div id="logo"></div>
+      <div style="font-size:40px;line-height:1;">📋</div>
+      <div id="title" style="font-size:20px;font-weight:bold;color:#fff;margin-top:8px;">Οδηγίες για το ραντεβού σας</div>
+      <div id="subtitle" style="font-size:13.5px;color:#fff;opacity:.9;margin-top:6px;"></div>
+    </div>
+    <div style="padding:24px 26px;font-size:15px;line-height:1.7;color:#333;">
+      <div id="body"></div>
+      <div id="footer" style="margin-top:20px;font-size:12px;color:#8A6070;text-align:center;">Beauty Line by Lina Panou</div>
+    </div>
+  </div>
+<script>
+  function esc(s) {
+    return (s == null ? '' : String(s)).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  var p = new URLSearchParams(location.search);
+  var service = esc(p.get('service') || '');
+  var when = esc(p.get('when') || '');
+  var pre = p.get('pre') || '';
+  var post = p.get('post') || '';
+  var brandName = esc(p.get('brand') || 'Beauty Line by Lina Panou');
+  var brandColor = /^#[0-9a-fA-F]{3,8}$/.test(p.get('color') || '') ? p.get('color') : '#C4618A';
+  var brandLogo = p.get('logo') || '';
+
+  document.getElementById('band').style.background = brandColor;
+  document.getElementById('footer').textContent = p.get('brand') || 'Beauty Line by Lina Panou';
+  document.title = 'Οδηγίες Ραντεβού — ' + (p.get('brand') || 'Beauty Line');
+  if (service || when) {
+    document.getElementById('subtitle').textContent = [service, when].filter(Boolean).join(' — ');
+  }
+  if (brandLogo && /^https:\/\//i.test(brandLogo)) {
+    var img = document.createElement('img');
+    img.src = brandLogo;
+    img.alt = p.get('brand') || 'Beauty Line by Lina Panou';
+    img.style.maxHeight = '40px';
+    img.style.marginBottom = '8px';
+    document.getElementById('logo').appendChild(img);
+  }
+
+  function block(title, text, color, bg) {
+    if (!text) return '';
+    var items = text.split(/•|\r?\n/).map(function (s) { return s.trim(); }).filter(Boolean);
+    var rows = items.map(function (item) {
+      return '<li style="margin:0 0 6px;">' + esc(item) + '</li>';
+    }).join('');
+    return '<div style="font-size:14px;font-weight:bold;color:' + color + ';margin:16px 0 8px;">' + title + '</div>' +
+      '<ul style="margin:0;padding-left:20px;background:' + bg + ';border-radius:12px;padding:14px 18px 14px 30px;font-size:13.5px;color:#333;">' + rows + '</ul>';
+  }
+
+  var html = block('🌿 Πριν από τη θεραπεία', pre, '#0F6E56', '#E1F5EE') +
+    block('💛 Μετά τη θεραπεία', post, '#854F0B', '#FAEEDA');
+  if (!html) {
+    html = '<p style="color:#8A6070;text-align:center;">Δεν υπάρχουν ειδικές οδηγίες για αυτή τη θεραπεία.</p>';
+  }
+  document.getElementById('body').innerHTML = html;
+</script>
+</body>
+</html>
