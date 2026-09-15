@@ -2454,6 +2454,7 @@ function renderPatientDetail() {
         <button class="btn btn-ghost btn-sm" data-modal="new-appt">+ Ραντεβού</button>
         <button class="btn btn-ghost btn-sm" onclick="openPackageModal()">📦 + Πακέτο</button>
         <button class="btn btn-primary btn-sm" data-modal="new-laser">+ Laser Form</button>
+        ${canSee(['super_admin','clinic_admin']) ? `<button class="btn btn-ghost btn-sm" style="color:var(--red);border-color:var(--red)" onclick="deletePatientPermanently()">🗑 Διαγραφή</button>` : ''}
       </div>
     </div>
     ${(()=>{
@@ -9847,6 +9848,37 @@ async function mergePatients(primaryId, dupIds) {
   } catch (e) {
     return e.message || String(e);
   }
+}
+
+// ── ΟΡΙΣΤΙΚΗ ΔΙΑΓΡΑΦΗ ΑΣΘΕΝΗ (μόνο admin) ──
+// Πίνακες με FK patient_id χωρίς CASCADE — πρέπει να καθαριστούν πρώτα, αλλιώς
+// το DELETE στο patients αποτυγχάνει. Οι υπόλοιποι (gdpr_consents,
+// service_consents, medical_history, patient_relationships, patient_packages,
+// birthday_gifts, communication_log, patient_exams) έχουν ήδη ON DELETE CASCADE
+// στη βάση και καθαρίζονται αυτόματα.
+const PATIENT_DELETE_TABLES = ['appointments','laser_forms','photo_comparisons','sms_log','pipeline_deals','activity_log','laser_consents','patient_photos','medical_history_consents','product_sales','appointment_consumables'];
+
+async function deletePatientPermanently() {
+  const p = S.patientDetail;
+  if (!p) return;
+  if (!canSee(['super_admin','clinic_admin'])) { alert('Μόνο διαχειριστές μπορούν να διαγράψουν ασθενή.'); return; }
+  const typed = prompt(`💀 ΟΡΙΣΤΙΚΗ ΔΙΑΓΡΑΦΗ ΑΣΘΕΝΗ: ${p.full_name}\n\nΘα διαγραφούν ΜΟΝΙΜΑ όλα τα ραντεβού, laser forms, συναινέσεις, φωτογραφίες, εξετάσεις και SMS log του/της.\n\nΗ ενέργεια ΔΕΝ αναιρείται.\n\nΓια επιβεβαίωση πληκτρολόγησε: ΔΙΑΓΡΑΦΗ`);
+  if ((typed||'').trim().toUpperCase() !== 'ΔΙΑΓΡΑΦΗ') return;
+  if (!confirm(`Τελευταία επιβεβαίωση: οριστική διαγραφή του/της «${p.full_name}»;`)) return;
+
+  const errors = [];
+  for (const t of PATIENT_DELETE_TABLES) {
+    const {error} = await sb.from(t).delete().eq('patient_id', p.id);
+    if (error) errors.push(t+': '+error.message);
+  }
+  if (errors.length) { alert('Σφάλμα κατά τη διαγραφή σχετικών δεδομένων:\n'+errors.join('\n')+'\n\nΗ διαγραφή του ασθενή ακυρώθηκε.'); return; }
+
+  const {error: delErr} = await sb.from('patients').delete().eq('id', p.id);
+  if (delErr) { alert('Σφάλμα: '+delErr.message); return; }
+
+  alert('✓ Ο ασθενής διαγράφηκε οριστικά.');
+  S.page = 'patients'; S.patientDetail = null;
+  await loadPageData(); render();
 }
 
 let _gmailTokenClient = null;
