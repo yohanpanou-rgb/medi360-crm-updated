@@ -3855,13 +3855,16 @@ function addRegionRow() {
   container.appendChild(div);
 }
 
+// Τα πραγματικά 4 αυτοματισμοί που τρέχουν σήμερα (email + SMS μαζί) στο
+// appointment-automations edge function — τα sms_type keys ταιριάζουν 1-1 με
+// αυτά που γράφει το logSms() εκεί. Το SMS κείμενο φεύγει σε ΚΕΦΑΛΑΙΑ χωρίς
+// τόνους (βλ. smsCaps στο edge function) — ο πάροχος SMS δεν τηρεί σωστά το
+// πεζά/τόνοι encoding, οπότε το κάνουμε εμείς σκόπιμα για προβλέψιμο αποτέλεσμα.
 const SMS_AUTOMATIONS = [
-  {key:'sms1_info',label:'SMS 1 — Ενημέρωσης',desc:'Αμέσως μετά κλείσιμο ραντεβού',color:'#2B3BF0',bg:'#E6F1FB',tmpl:'Αγαπητέ/ή {name}, το ραντεβού σας στη {clinic} επιβεβαιώθηκε για {date} στις {time}.'},
-  {key:'sms2_confirm',label:'SMS 2 — Επιβεβαίωσης',desc:'3 μέρες πριν το ραντεβού',color:'#1D9E75',bg:'#E1F5EE',tmpl:'Αγαπητέ/ή {name}, υπενθυμίζουμε το ραντεβού σας στη {clinic} για {date} στις {time}. Επιβεβαιώστε: {confirm_link}'},
-  {key:'sms3_warning',label:'SMS 3 — Προειδοποίησης',desc:'Αν δεν επιβεβαιώθηκε',color:'#EF9F27',bg:'#FAEEDA',tmpl:'Αγαπητέ/ή {name}, το ραντεβού σας στη {clinic} για {date} δεν έχει επιβεβαιωθεί.'},
-  {key:'sms4_cancel',label:'SMS 4 — Ακύρωσης',desc:'Ακύρωση αν δεν επιβεβαιώθηκε',color:'#D85A30',bg:'#FAECE7',tmpl:'Αγαπητέ/ή {name}, το ραντεβού σας στη {clinic} για {date} ακυρώθηκε λόγω μη επιβεβαίωσης.'},
-  {key:'google_review',label:'Google Review',desc:'Μετά ολοκλήρωση ραντεβού',color:'#534AB7',bg:'#EEEDFE',tmpl:'Αγαπητέ/ή {name}, ευχαριστούμε για την επίσκεψή σας! Αξιολογήστε μας: {review_link}'},
-  {key:'health_history',label:'Health History',desc:'Για νέους ασθενείς',color:'#185FA5',bg:'#E6F1FB',tmpl:'Αγαπητέ/ή {name}, παρακαλούμε συμπληρώστε το ιατρικό σας ιστορικό: {history_link}'},
+  {key:'booking_confirmation',label:'SMS 1 — Κλείσιμο Ραντεβού',desc:'Αμέσως μετά το κλείσιμο του ραντεβού (μαζί με το email)',color:'#2B3BF0',bg:'#E6F1FB',tmpl:'ΤΟ ΡΑΝΤΕΒΟΥ ΣΑΣ ΣΤΟ {clinic} ΕΠΙΒΕΒΑΙΩΘΗΚΕ ΓΙΑ {date} ΣΤΙΣ {time}. ΗΜΕΡΟΛΟΓΙΟ: {calendar_link}'},
+  {key:'confirmation_request',label:'SMS 2 — Υπενθύμιση/Επιβεβαίωση',desc:'48 ώρες πριν το ραντεβού',color:'#1D9E75',bg:'#E1F5EE',tmpl:'ΥΠΕΝΘΥΜΙΖΟΥΜΕ ΤΟ ΡΑΝΤΕΒΟΥ ΣΑΣ ΣΤΟ {clinic} ΓΙΑ {date} ΣΤΙΣ {time}. ΕΠΙΒΕΒΑΙΩΣΤΕ: {confirm_link}'},
+  {key:'instructions',label:'SMS 3 — Οδηγίες Πριν/Μετά',desc:'Μαζί με το κλείσιμο του ραντεβού (δεν περιμένει επιβεβαίωση)',color:'#EF9F27',bg:'#FAEEDA',tmpl:'ΟΙ ΟΔΗΓΙΕΣ ΠΡΙΝ ΚΑΙ ΜΕΤΑ ΤΗ ΘΕΡΑΠΕΙΑ ΣΑΣ: {instructions_link}'},
+  {key:'review_request',label:'SMS 4 — Ζήτηση Αξιολόγησης',desc:'Μετά την ολοκλήρωση του ραντεβού — ενεργό μόνο αν έχει οριστεί link αξιολόγησης στις Ρυθμίσεις',color:'#534AB7',bg:'#EEEDFE',tmpl:'ΕΥΧΑΡΙΣΤΟΥΜΕ ΓΙΑ ΤΗΝ ΕΠΙΣΚΕΨΗ ΣΑΣ ΣΤΟ {clinic}! ΑΞΙΟΛΟΓΗΣΤΕ ΜΑΣ: {review_link}'},
 ];
 
 function renderSms() {
