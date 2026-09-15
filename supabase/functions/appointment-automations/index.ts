@@ -251,11 +251,57 @@ function athensDT(iso: string): string {
   return d.toLocaleDateString('el-GR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Athens' })
     + ' στις ' + d.toLocaleTimeString('el-GR', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Europe/Athens' });
 }
+function athensDateOnly(iso: string): string {
+  return new Date(iso).toLocaleDateString('el-GR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Athens' });
+}
 function athensTime(iso: string): string {
   return new Date(iso).toLocaleTimeString('el-GR', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Europe/Athens' });
 }
 function athensDay(iso: string): string {
   return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'Europe/Athens' });
+}
+
+// Προεπιλεγμένα κείμενα SMS (με μεταβλητές {name}/{clinic}/{date}/{time} +
+// το ειδικό link placeholder του καθενός) — χρησιμοποιούνται όταν η κλινική
+// δεν έχει ορίσει δικό της κείμενο στις Ρυθμίσεις (clinics.settings.sms_templates).
+const SMS_DEFAULT_TEMPLATES: Record<string, string> = {
+  booking_confirmation: 'Το ραντεβού σας στο {clinic} επιβεβαιώθηκε για {date} στις {time}. Ημερολόγιο: {calendar_link}',
+  confirmation_request: 'Υπενθυμίζουμε το ραντεβού σας στο {clinic} για {date} στις {time}. Επιβεβαιώστε: {confirm_link}',
+  instructions: 'Οι οδηγίες πριν και μετά τη θεραπεία σας: {instructions_link}',
+  review_request: 'Ευχαριστούμε για την επίσκεψή σας στο {clinic}! Αξιολογήστε μας: {review_link}',
+};
+const SMS_LINK_TOKEN: Record<string, string> = {
+  booking_confirmation: '{calendar_link}',
+  confirmation_request: '{confirm_link}',
+  instructions: '{instructions_link}',
+  review_request: '{review_link}',
+};
+
+interface SmsAutomationConfig { enabled?: boolean; text?: string }
+
+// Διαβάζει τις ρυθμίσεις SMS της κλινικής (on/off + custom κείμενο ανά τύπο) —
+// enabled=true αν δεν έχει οριστεί ρητά false· κείμενο = της κλινικής ή το
+// προεπιλεγμένο αν είναι κενό.
+function smsConfigFor(settings: Record<string, unknown> | undefined, key: string): { enabled: boolean; text: string } {
+  const all = (settings && (settings.sms_templates as Record<string, SmsAutomationConfig> | undefined)) || {};
+  const cfg = all[key] || {};
+  return {
+    enabled: cfg.enabled !== false,
+    text: (cfg.text && cfg.text.trim()) || SMS_DEFAULT_TEMPLATES[key],
+  };
+}
+
+// Γεμίζει το template με τις μεταβλητές κειμένου (πριν το smsCaps, ώστε και
+// αυτές να βγαίνουν σε κεφαλαία) και μετά βάζει το link ΑΚΡΙΒΩΣ όπως είναι
+// (μετά το smsCaps, ώστε να μην πειραχτεί ο case-sensitive ?c= κωδικός) — αν
+// το template δεν περιέχει το link placeholder, το προσθέτει στο τέλος ώστε
+// να μη χαθεί ποτέ σιωπηλά.
+function fillSmsTemplate(template: string, vars: Record<string, string>, linkToken: string, linkValue: string): string {
+  const MARK = 'ZZZSMSLINKZZZ';
+  let t = template.includes(linkToken) ? template.split(linkToken).join(MARK) : template + ' ' + MARK;
+  for (const [k, v] of Object.entries(vars)) t = t.split(k).join(v);
+  t = smsCaps(t);
+  return t.replace(MARK, linkValue);
 }
 
 // ── Ημερολόγιο: Google Calendar link + .ics με υπενθύμιση 1 ώρα πριν και
@@ -534,7 +580,8 @@ Deno.serve(async (req: Request) => {
     // Διεύθυνση ινστιτούτου για ημερολόγιο/χάρτες — fallback στο όνομα (το
     // Google Maps βρίσκει την επιχείρηση με αναζήτηση ονόματος).
     const { data: clinicRow } = await supabase.from('clinics').select('*').ilike('name', '%Beauty Line%').limit(1).single();
-    const cRow = (clinicRow || {}) as { name?: string; address?: string; settings?: { address?: string; brand_name?: string; brand_color?: string; brand_logo_url?: string; review_request_enabled?: boolean; review_link?: string; review_request_delay_days?: number } };
+    const cRow = (clinicRow || {}) as { name?: string; address?: string; settings?: { address?: string; brand_name?: string; brand_color?: string; brand_logo_url?: string; review_request_enabled?: boolean; review_link?: string; review_request_delay_days?: number; sms_templates?: Record<string, SmsAutomationConfig> } };
+    const clinicSettings = cRow.settings as Record<string, unknown> | undefined;
     const clinicAddress = cRow.address || (cRow.settings && cRow.settings.address) || 'Beauty Line by Lina Panou';
     const brand: Brand = {
       name: (cRow.settings && cRow.settings.brand_name) || cRow.name || 'Beauty Line by Lina Panou',
@@ -578,12 +625,20 @@ Deno.serve(async (req: Request) => {
       // effort (ένα SMS για όλη την ομάδα ραντεβού της ημέρας, καταγράφεται σε
       // κάθε ραντεβού του pending — ίδιο μοτίβο με το log() του email παρακάτω).
       // Σύντομος σύνδεσμος (?c=) μόνο για το SMS — το email κρατάει το πλήρες link.
-      const smsPhone = first.patients && first.patients.phone;
-      const smsLink = await makeShortLink(supabase, first.id, ts, 'confirm');
-      const smsText = `Υπενθυμίζουμε το ραντεβού σας στο ${brandNameShort} για ${athensDT(first.start_time)}. Επιβεβαιώστε:`;
-      const smsMsg = `${smsCaps(smsText)} ${smsLink}`;
-      const smsResult = await sendSms(smsPhone, smsMsg);
-      for (const a of pending) await logSms(a, 'confirmation_request', smsPhone || '', smsMsg, smsResult.ok, smsResult.error);
+      // Κείμενο/on-off ρυθμίζονται από τη σελίδα SMS & Αυτοματισμοί (clinics.settings.sms_templates).
+      const smsCfg = smsConfigFor(clinicSettings, 'confirmation_request');
+      if (smsCfg.enabled) {
+        const smsPhone = first.patients && first.patients.phone;
+        const smsLink = await makeShortLink(supabase, first.id, ts, 'confirm');
+        const smsMsg = fillSmsTemplate(smsCfg.text, {
+          '{name}': (first.patients && first.patients.full_name) || '',
+          '{clinic}': brandNameShort,
+          '{date}': athensDateOnly(first.start_time),
+          '{time}': athensTime(first.start_time),
+        }, SMS_LINK_TOKEN.confirmation_request, smsLink);
+        const smsResult = await sendSms(smsPhone, smsMsg);
+        for (const a of pending) await logSms(a, 'confirmation_request', smsPhone || '', smsMsg, smsResult.ok, smsResult.error);
+      }
 
       const email = first.patients && first.patients.email;
       if (!isValidEmail(email)) {
@@ -619,11 +674,19 @@ Deno.serve(async (req: Request) => {
       // server-side redirect στο instructions.html με όλα τα (μεγάλα, με
       // ελληνικά) στοιχεία στο URL — έτσι το SMS κρατάει μόνο τον κοντό κωδικό.
       const insTs = Math.floor(new Date(a.start_time).getTime() / 1000);
-      const insLink = await makeShortLink(supabase, a.id, insTs, 'instructions');
-      const smsPhone = a.patients && a.patients.phone;
-      const smsMsg = `${smsCaps('Οι οδηγίες πριν και μετά τη θεραπεία σας:')} ${insLink}`;
-      const smsResult = await sendSms(smsPhone, smsMsg);
-      await logSms(a, 'instructions', smsPhone || '', smsMsg, smsResult.ok, smsResult.error);
+      const insCfg = smsConfigFor(clinicSettings, 'instructions');
+      if (insCfg.enabled) {
+        const insLink = await makeShortLink(supabase, a.id, insTs, 'instructions');
+        const smsPhone = a.patients && a.patients.phone;
+        const smsMsg = fillSmsTemplate(insCfg.text, {
+          '{name}': (a.patients && a.patients.full_name) || '',
+          '{clinic}': brandNameShort,
+          '{date}': athensDateOnly(a.start_time),
+          '{time}': athensTime(a.start_time),
+        }, SMS_LINK_TOKEN.instructions, insLink);
+        const smsResult = await sendSms(smsPhone, smsMsg);
+        await logSms(a, 'instructions', smsPhone || '', smsMsg, smsResult.ok, smsResult.error);
+      }
 
       const email = a.patients && a.patients.email;
       if (!isValidEmail(email)) { await log(a, 'instructions', channel, 'no_email', set ? { metadata: { instruction_set: set.name } } : undefined); results.no_email++; return; }
@@ -654,11 +717,18 @@ Deno.serve(async (req: Request) => {
       if (!reviewLink) { results.errors++; return; }
 
       // SMS4 — ζήτηση αξιολόγησης: ανεξάρτητο από το email, best effort.
-      const smsPhone = a.patients && a.patients.phone;
-      const smsText = `Ευχαριστούμε για την επίσκεψή σας στο ${brandNameShort}! Αξιολογήστε μας:`;
-      const smsMsg = `${smsCaps(smsText)} ${reviewLink}`;
-      const smsResult = await sendSms(smsPhone, smsMsg);
-      await logSms(a, 'review_request', smsPhone || '', smsMsg, smsResult.ok, smsResult.error);
+      const revCfg = smsConfigFor(clinicSettings, 'review_request');
+      if (revCfg.enabled) {
+        const smsPhone = a.patients && a.patients.phone;
+        const smsMsg = fillSmsTemplate(revCfg.text, {
+          '{name}': (a.patients && a.patients.full_name) || '',
+          '{clinic}': brandNameShort,
+          '{date}': athensDateOnly(a.start_time),
+          '{time}': athensTime(a.start_time),
+        }, SMS_LINK_TOKEN.review_request, reviewLink);
+        const smsResult = await sendSms(smsPhone, smsMsg);
+        await logSms(a, 'review_request', smsPhone || '', smsMsg, smsResult.ok, smsResult.error);
+      }
 
       const email = a.patients && a.patients.email;
       if (!isValidEmail(email)) { await log(a, 'review_request', channel, 'no_email'); results.no_email++; return; }
@@ -687,12 +757,19 @@ Deno.serve(async (req: Request) => {
       const bookIcsUrl = `${CONFIRM_URL}?id=${a.id}&ts=${bookTs}&ics=1`;
 
       // Σύντομος σύνδεσμος (?c=) μόνο για το SMS — το email κρατάει το πλήρες bookIcsUrl.
-      const smsPhone = a.patients && a.patients.phone;
-      const smsIcsLink = await makeShortLink(supabase, a.id, bookTs, 'ics');
-      const smsText = `Το ραντεβού σας στο ${brandNameShort} επιβεβαιώθηκε για ${athensDT(a.start_time)}. Ημερολόγιο:`;
-      const smsMsg = `${smsCaps(smsText)} ${smsIcsLink}`;
-      const smsResult = await sendSms(smsPhone, smsMsg);
-      await logSms(a, 'booking_confirmation', smsPhone || '', smsMsg, smsResult.ok, smsResult.error);
+      const bookCfg = smsConfigFor(clinicSettings, 'booking_confirmation');
+      if (bookCfg.enabled) {
+        const smsPhone = a.patients && a.patients.phone;
+        const smsIcsLink = await makeShortLink(supabase, a.id, bookTs, 'ics');
+        const smsMsg = fillSmsTemplate(bookCfg.text, {
+          '{name}': (a.patients && a.patients.full_name) || '',
+          '{clinic}': brandNameShort,
+          '{date}': athensDateOnly(a.start_time),
+          '{time}': athensTime(a.start_time),
+        }, SMS_LINK_TOKEN.booking_confirmation, smsIcsLink);
+        const smsResult = await sendSms(smsPhone, smsMsg);
+        await logSms(a, 'booking_confirmation', smsPhone || '', smsMsg, smsResult.ok, smsResult.error);
+      }
 
       const email = a.patients && a.patients.email;
       if (!isValidEmail(email)) { await log(a, 'booking_confirmation', channel, 'no_email'); results.no_email++; return; }

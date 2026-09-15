@@ -2454,6 +2454,7 @@ function renderPatientDetail() {
         <button class="btn btn-ghost btn-sm" data-modal="new-appt">+ Ραντεβού</button>
         <button class="btn btn-ghost btn-sm" onclick="openPackageModal()">📦 + Πακέτο</button>
         <button class="btn btn-primary btn-sm" data-modal="new-laser">+ Laser Form</button>
+        ${canSee(['super_admin','clinic_admin']) ? `<button class="btn btn-ghost btn-sm" style="color:var(--red);border-color:var(--red)" onclick="deletePatientPermanently()">🗑 Διαγραφή</button>` : ''}
       </div>
     </div>
     ${(()=>{
@@ -3879,22 +3880,32 @@ function renderSms() {
     </div>
     ${smsTab==='instructions'?renderInstructionSetsTab():smsTab==='automations'?`
     <div style="display:flex;flex-direction:column;gap:12px">
-      ${SMS_AUTOMATIONS.map(a=>`<div class="card" style="padding:16px">
+      ${SMS_AUTOMATIONS.map(a=>{
+        const cfg = ((S.clinic&&S.clinic.settings&&S.clinic.settings.sms_templates)||{})[a.key]||{};
+        const enabled = cfg.enabled !== false;
+        const text = (cfg.text&&cfg.text.trim()) || a.tmpl;
+        return `<div class="card" style="padding:16px" data-sms-auto-key="${a.key}">
         <div style="display:flex;align-items:center;gap:12px">
           <div style="width:36px;height:36px;border-radius:8px;background:${a.bg};display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">✉</div>
           <div style="flex:1">
             <div style="font-size:13px;font-weight:500;color:${a.color}">${a.label}</div>
             <div style="font-size:11px;color:var(--text-2)">${a.desc}</div>
           </div>
-          <div style="display:flex;align-items:center;gap:6px">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none">
             <span style="font-size:11px;color:var(--text-2)">Ενεργό</span>
-            <div style="width:32px;height:18px;border-radius:9px;background:var(--blue);position:relative;cursor:pointer">
-              <div style="width:14px;height:14px;border-radius:50%;background:#fff;position:absolute;right:2px;top:2px"></div>
-            </div>
-          </div>
+            <input type="checkbox" class="sms-auto-enabled" ${enabled?'checked':''} style="width:16px;height:16px;accent-color:var(--blue);cursor:pointer"/>
+          </label>
         </div>
-        <div style="margin-top:12px;padding:10px;background:var(--surface);border-radius:8px;font-size:12px;color:var(--text-2);font-family:var(--mono)">${esc(a.tmpl)}</div>
-      </div>`).join('')}
+        <div style="margin-top:12px">
+          <textarea class="form-control sms-auto-text" rows="3" style="font-size:12px;font-family:var(--mono);width:100%">${esc(text)}</textarea>
+          <div style="font-size:10.5px;color:var(--text-2);margin-top:4px">Μεταβλητές: {name}, {clinic}, {date}, {time}, {${a.key==='booking_confirmation'?'calendar_link':a.key==='confirmation_request'?'confirm_link':a.key==='instructions'?'instructions_link':'review_link'}} — το κείμενο φεύγει πάντα σε ΚΕΦΑΛΑΙΑ.</div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-top:10px">
+          <span class="sms-auto-saved" style="font-size:11px;color:#0F6E56"></span>
+          <button class="btn btn-primary btn-sm sms-auto-save">Αποθήκευση</button>
+        </div>
+      </div>`;
+      }).join('')}
     </div>`:`
     <div class="card">
       <div class="table-wrap"><table>
@@ -8177,6 +8188,27 @@ function bindEvents() {
     el.onclick = () => { S.settingsTab=el.dataset.settingsTab; render(); };
   });
 
+  // Save SMS automation on/off + custom text (σελίδα SMS & Αυτοματισμοί) —
+  // clinics.settings.sms_templates[key] = {enabled, text}, διαβάζεται από το
+  // appointment-automations edge function (smsConfigFor).
+  document.querySelectorAll('.sms-auto-save').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const card = btn.closest('[data-sms-auto-key]');
+      const key = card.dataset.smsAutoKey;
+      const enabled = card.querySelector('.sms-auto-enabled').checked;
+      const text = card.querySelector('.sms-auto-text').value.trim();
+      const smsTemplates = Object.assign({}, (S.clinic&&S.clinic.settings&&S.clinic.settings.sms_templates)||{});
+      smsTemplates[key] = { enabled, text };
+      const settings = Object.assign({}, (S.clinic&&S.clinic.settings)||{}, { sms_templates: smsTemplates });
+      const {error} = await sb.from('clinics').update({settings}).eq('id',clinicId());
+      const savedEl = card.querySelector('.sms-auto-saved');
+      if (error) { alert(error.message); return; }
+      if (S.clinic) S.clinic.settings = settings;
+      savedEl.textContent = '✓ Αποθηκεύτηκε!';
+      setTimeout(()=>{ savedEl.textContent=''; }, 2000);
+    });
+  });
+
   // Save clinic settings (hours/slot)
   const _scs = document.getElementById('save-clinic-settings');
   if (_scs) _scs.addEventListener('click', async () => {
@@ -9847,6 +9879,37 @@ async function mergePatients(primaryId, dupIds) {
   } catch (e) {
     return e.message || String(e);
   }
+}
+
+// ── ΟΡΙΣΤΙΚΗ ΔΙΑΓΡΑΦΗ ΑΣΘΕΝΗ (μόνο admin) ──
+// Πίνακες με FK patient_id χωρίς CASCADE — πρέπει να καθαριστούν πρώτα, αλλιώς
+// το DELETE στο patients αποτυγχάνει. Οι υπόλοιποι (gdpr_consents,
+// service_consents, medical_history, patient_relationships, patient_packages,
+// birthday_gifts, communication_log, patient_exams) έχουν ήδη ON DELETE CASCADE
+// στη βάση και καθαρίζονται αυτόματα.
+const PATIENT_DELETE_TABLES = ['appointments','laser_forms','photo_comparisons','sms_log','pipeline_deals','activity_log','laser_consents','patient_photos','medical_history_consents','product_sales','appointment_consumables'];
+
+async function deletePatientPermanently() {
+  const p = S.patientDetail;
+  if (!p) return;
+  if (!canSee(['super_admin','clinic_admin'])) { alert('Μόνο διαχειριστές μπορούν να διαγράψουν ασθενή.'); return; }
+  const typed = prompt(`💀 ΟΡΙΣΤΙΚΗ ΔΙΑΓΡΑΦΗ ΑΣΘΕΝΗ: ${p.full_name}\n\nΘα διαγραφούν ΜΟΝΙΜΑ όλα τα ραντεβού, laser forms, συναινέσεις, φωτογραφίες, εξετάσεις και SMS log του/της.\n\nΗ ενέργεια ΔΕΝ αναιρείται.\n\nΓια επιβεβαίωση πληκτρολόγησε: ΔΙΑΓΡΑΦΗ`);
+  if ((typed||'').trim().toUpperCase() !== 'ΔΙΑΓΡΑΦΗ') return;
+  if (!confirm(`Τελευταία επιβεβαίωση: οριστική διαγραφή του/της «${p.full_name}»;`)) return;
+
+  const errors = [];
+  for (const t of PATIENT_DELETE_TABLES) {
+    const {error} = await sb.from(t).delete().eq('patient_id', p.id);
+    if (error) errors.push(t+': '+error.message);
+  }
+  if (errors.length) { alert('Σφάλμα κατά τη διαγραφή σχετικών δεδομένων:\n'+errors.join('\n')+'\n\nΗ διαγραφή του ασθενή ακυρώθηκε.'); return; }
+
+  const {error: delErr} = await sb.from('patients').delete().eq('id', p.id);
+  if (delErr) { alert('Σφάλμα: '+delErr.message); return; }
+
+  alert('✓ Ο ασθενής διαγράφηκε οριστικά.');
+  S.page = 'patients'; S.patientDetail = null;
+  await loadPageData(); render();
 }
 
 let _gmailTokenClient = null;
