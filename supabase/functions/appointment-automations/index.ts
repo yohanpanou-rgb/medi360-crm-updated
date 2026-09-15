@@ -223,6 +223,15 @@ async function makeShortLink(
   return `${CONFIRM_URL}?id=${appointmentId}&ts=${ts}${suffix}`;
 }
 
+// SMS σε ΚΕΦΑΛΑΙΑ χωρίς τόνους — το Apifon (dc:2) δεν φαίνεται να τηρεί το
+// σωστό πεζά/τόνοι encoding στην πράξη (auto-downgrade σε GSM7-στυλ κεφαλαία
+// ό,τι κι αν στείλουμε), οπότε το κάνουμε εμείς σκόπιμα ώστε το αποτέλεσμα να
+// είναι το ίδιο και προβλέψιμο ανεξαρτήτως πραγματικού encoding. ΠΟΤΕ μην το
+// εφαρμόζεις σε link (τα ?c= codes είναι case-sensitive).
+function smsCaps(s: string): string {
+  return (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase();
+}
+
 // Ίδια κανονικοποίηση με το index.html (normalizeGreek): πεζά + χωρίς τόνους —
 // έτσι το service_name του ραντεβού ταιριάζει με τον κατάλογο υπηρεσιών.
 function normalizeGreek(s: string): string {
@@ -571,7 +580,8 @@ Deno.serve(async (req: Request) => {
       // Σύντομος σύνδεσμος (?c=) μόνο για το SMS — το email κρατάει το πλήρες link.
       const smsPhone = first.patients && first.patients.phone;
       const smsLink = await makeShortLink(supabase, first.id, ts, 'confirm');
-      const smsMsg = `Υπενθυμίζουμε το ραντεβού σας στη ${brandNameShort} για ${athensDT(first.start_time)}. Επιβεβαιώστε: ${smsLink}`;
+      const smsText = `Υπενθυμίζουμε το ραντεβού σας στο ${brandNameShort} για ${athensDT(first.start_time)}. Επιβεβαιώστε:`;
+      const smsMsg = `${smsCaps(smsText)} ${smsLink}`;
       const smsResult = await sendSms(smsPhone, smsMsg);
       for (const a of pending) await logSms(a, 'confirmation_request', smsPhone || '', smsMsg, smsResult.ok, smsResult.error);
 
@@ -611,7 +621,7 @@ Deno.serve(async (req: Request) => {
       const insTs = Math.floor(new Date(a.start_time).getTime() / 1000);
       const insLink = await makeShortLink(supabase, a.id, insTs, 'instructions');
       const smsPhone = a.patients && a.patients.phone;
-      const smsMsg = `Οι οδηγίες πριν και μετά τη θεραπεία σας: ${insLink}`;
+      const smsMsg = `${smsCaps('Οι οδηγίες πριν και μετά τη θεραπεία σας:')} ${insLink}`;
       const smsResult = await sendSms(smsPhone, smsMsg);
       await logSms(a, 'instructions', smsPhone || '', smsMsg, smsResult.ok, smsResult.error);
 
@@ -645,7 +655,8 @@ Deno.serve(async (req: Request) => {
 
       // SMS4 — ζήτηση αξιολόγησης: ανεξάρτητο από το email, best effort.
       const smsPhone = a.patients && a.patients.phone;
-      const smsMsg = `Ευχαριστούμε για την επίσκεψή σας στη ${brandNameShort}! Αξιολογήστε μας: ${reviewLink}`;
+      const smsText = `Ευχαριστούμε για την επίσκεψή σας στο ${brandNameShort}! Αξιολογήστε μας:`;
+      const smsMsg = `${smsCaps(smsText)} ${reviewLink}`;
       const smsResult = await sendSms(smsPhone, smsMsg);
       await logSms(a, 'review_request', smsPhone || '', smsMsg, smsResult.ok, smsResult.error);
 
@@ -678,7 +689,8 @@ Deno.serve(async (req: Request) => {
       // Σύντομος σύνδεσμος (?c=) μόνο για το SMS — το email κρατάει το πλήρες bookIcsUrl.
       const smsPhone = a.patients && a.patients.phone;
       const smsIcsLink = await makeShortLink(supabase, a.id, bookTs, 'ics');
-      const smsMsg = `Το ραντεβού σας στη ${brandNameShort} επιβεβαιώθηκε για ${athensDT(a.start_time)}. Ημερολόγιο: ${smsIcsLink}`;
+      const smsText = `Το ραντεβού σας στο ${brandNameShort} επιβεβαιώθηκε για ${athensDT(a.start_time)}. Ημερολόγιο:`;
+      const smsMsg = `${smsCaps(smsText)} ${smsIcsLink}`;
       const smsResult = await sendSms(smsPhone, smsMsg);
       await logSms(a, 'booking_confirmation', smsPhone || '', smsMsg, smsResult.ok, smsResult.error);
 
