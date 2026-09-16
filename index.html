@@ -2185,7 +2185,9 @@ function renderPatients() {
     </div>
     ${dupGroups.length?`<div style="background:#FFF4E5;border:1px solid #F5C77E;border-radius:10px;padding:12px 16px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
       <div style="font-size:12px;color:#8A5A00"><strong>⚠ ${dupGroups.length} πιθανά διπλότυπα</strong> — ίδιο τηλέφωνο σε περισσότερους από έναν ασθενείς.</div>
-      <button class="btn btn-sm" id="open-merge-duplicates" style="background:#D97706;color:#fff">Έλεγχος &amp; Συγχώνευση</button>
+      ${canSee(['super_admin','clinic_admin'])
+        ? `<button class="btn btn-sm" id="open-merge-duplicates" style="background:#D97706;color:#fff">Έλεγχος &amp; Συγχώνευση</button>`
+        : `<span style="font-size:11px;color:#8A5A00">Η συγχώνευση γίνεται από διαχειριστή.</span>`}
     </div>`:''}
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">
       ${[{l:'Σύνολο',v:S.patients.length,bg:'var(--surface)'},{l:'Ενεργοί',v:S.patients.filter(p=>p.status==='active').length,bg:'#E1F5EE'},{l:'VIP',v:S.patients.filter(p=>p.status==='vip').length,bg:'#EEEDFE'},{l:'Leads',v:S.patients.filter(p=>p.status==='lead').length,bg:'#E6F1FB'}].map(s=>`
@@ -9913,7 +9915,6 @@ async function findDuplicatePatientByPhone(phone) {
 }
 
 // ── ΣΥΓΧΩΝΕΥΣΗ ΔΙΠΛΟΤΥΠΩΝ ΑΣΘΕΝΩΝ ──
-const MERGE_REASSIGN_TABLES = ['appointments','laser_forms','laser_consents','service_consents','gdpr_consents','patient_photos','patient_exams','sms_log'];
 const MERGE_FILL_FIELDS = ['email','dob','city','source','medical_history','allergies','medications','previous_treatments','avoid_body_areas','gdpr_signed_at'];
 
 function detectDuplicatePatientGroups() {
@@ -9999,11 +10000,7 @@ function openMergeDuplicatesModal() {
 
 async function mergePatients(primaryId, dupIds) {
   try {
-    for (const table of MERGE_REASSIGN_TABLES) {
-      for (const dupId of dupIds) {
-        await sb.from(table).update({patient_id: primaryId}).eq('patient_id', dupId);
-      }
-    }
+    // Διαβάζουμε τα στοιχεία ΠΡΙΝ τη συγχώνευση — μετά ο διπλότυπος δεν υπάρχει.
     const {data: rows, error: fetchErr} = await sb.from('patients').select('*').in('id', [primaryId, ...dupIds]);
     if (fetchErr) return fetchErr.message;
     const primary = (rows||[]).find(r=>r.id===primaryId);
@@ -10033,9 +10030,13 @@ async function mergePatients(primaryId, dupIds) {
       const {error: updErr} = await sb.from('patients').update(patch).eq('id', primaryId);
       if (updErr) return updErr.message;
     }
+    // Μεταφορά ΟΛΩΝ των αναφορών του διπλότυπου στον κύριο και διαγραφή του, σε
+    // μία πράξη ανά διπλότυπο. Ο παλιός κώδικας μετέφερε μόνο 8 πίνακες και
+    // αγνοούσε τα σφάλματα — ό,τι δεν μεταφερόταν (π.χ. ιστορικό επικοινωνίας)
+    // χανόταν οριστικά όταν σβηνόταν ο διπλότυπος.
     for (const dupId of dupIds) {
-      const {error: delErr} = await sb.from('patients').delete().eq('id', dupId);
-      if (delErr) return delErr.message;
+      const {error: mergeErr} = await sb.rpc('merge_patient_records', {p_primary_id: primaryId, p_dup_id: dupId});
+      if (mergeErr) return mergeErr.message;
     }
     return null;
   } catch (e) {
@@ -10044,12 +10045,9 @@ async function mergePatients(primaryId, dupIds) {
 }
 
 // ── ΟΡΙΣΤΙΚΗ ΔΙΑΓΡΑΦΗ ΑΣΘΕΝΗ (μόνο admin) ──
-// Πίνακες με FK patient_id χωρίς CASCADE — πρέπει να καθαριστούν πρώτα, αλλιώς
-// το DELETE στο patients αποτυγχάνει. Οι υπόλοιποι (gdpr_consents,
-// service_consents, medical_history, patient_relationships, patient_packages,
-// birthday_gifts, communication_log, patient_exams) έχουν ήδη ON DELETE CASCADE
-// στη βάση και καθαρίζονται αυτόματα.
-const PATIENT_DELETE_TABLES = ['appointments','laser_forms','photo_comparisons','sms_log','pipeline_deals','activity_log','laser_consents','patient_photos','medical_history_consents','product_sales','appointment_consumables'];
+// Η δουλειά γίνεται στη βάση (delete_patient_completely): βρίσκει μόνη της κάθε
+// πίνακα που δείχνει σε ασθενή, οπότε δεν χρειάζεται λίστα εδώ που θα ξεχνιόταν
+// να ενημερωθεί όταν προστίθεται νέος πίνακας.
 
 async function deletePatientPermanently() {
   const p = S.patientDetail;
@@ -10059,15 +10057,11 @@ async function deletePatientPermanently() {
   if ((typed||'').trim().toUpperCase() !== 'ΔΙΑΓΡΑΦΗ') return;
   if (!confirm(`Τελευταία επιβεβαίωση: οριστική διαγραφή του/της «${p.full_name}»;`)) return;
 
-  const errors = [];
-  for (const t of PATIENT_DELETE_TABLES) {
-    const {error} = await sb.from(t).delete().eq('patient_id', p.id);
-    if (error) errors.push(t+': '+error.message);
-  }
-  if (errors.length) { alert('Σφάλμα κατά τη διαγραφή σχετικών δεδομένων:\n'+errors.join('\n')+'\n\nΗ διαγραφή του ασθενή ακυρώθηκε.'); return; }
-
-  const {error: delErr} = await sb.from('patients').delete().eq('id', p.id);
-  if (delErr) { alert('Σφάλμα: '+delErr.message); return; }
+  // Μία ενιαία πράξη στη βάση: ή σβήνονται όλα ή τίποτα. Ο παλιός βρόχος έσβηνε
+  // πίνακα-πίνακα από τον browser, οπότε μια αποτυχία στη μέση άφηνε τον ασθενή
+  // μισοδιαγραμμένο — και σε 3 πίνακες δεν είχε καν δικαίωμα, χωρίς μήνυμα.
+  const {error: delErr} = await sb.rpc('delete_patient_completely', {p_patient_id: p.id});
+  if (delErr) { alert('Σφάλμα: '+delErr.message+'\n\nΔεν διαγράφηκε τίποτα.'); return; }
 
   alert('✓ Ο ασθενής διαγράφηκε οριστικά.');
   S.page = 'patients'; S.patientDetail = null;
@@ -10766,15 +10760,12 @@ async function panicWipe() {
   if ((typed||'').trim().toUpperCase() !== 'ΔΙΑΓΡΑΦΗ') return;
   if (!confirm('Τελευταία επιβεβαίωση: διαγραφή ΟΛΩΝ των δεδομένων της κλινικής «'+clinicName+'»;')) return;
 
-  // Σειρά διαγραφής: πρώτα τα παιδιά (FK σε patients), τελευταίοι οι ασθενείς
-  const tables = ['appointments','laser_forms','gdpr_consents','sms_log','pipeline_deals','patients'];
-  const errors = [];
-  for (const t of tables) {
-    const {error} = await sb.from(t).delete().eq('clinic_id', cid);
-    if (error) errors.push(t+': '+error.message);
-  }
-  if (errors.length) alert('Ολοκληρώθηκε με σφάλματα:\n'+errors.join('\n'));
-  else alert('✓ Όλα τα δεδομένα της κλινικής διαγράφηκαν οριστικά.');
+  // Μία ενιαία πράξη: καθαρίζει κάθε πίνακα που δείχνει σε ασθενή αυτής της
+  // κλινικής και μετά τους ασθενείς. Ο παλιός βρόχος κάλυπτε μόνο 6 πίνακες,
+  // οπότε σκόνταφτε πάντα στα υπόλοιπα (συναινέσεις, φωτογραφίες κ.λπ.).
+  const {error} = await sb.rpc('wipe_clinic_patient_data', {p_clinic_id: cid});
+  if (error) { alert('Σφάλμα: '+error.message+'\n\nΔεν διαγράφηκε τίποτα.'); return; }
+  alert('✓ Όλα τα δεδομένα ασθενών της κλινικής διαγράφηκαν οριστικά.');
   await loadPageData(); render();
 }
 
