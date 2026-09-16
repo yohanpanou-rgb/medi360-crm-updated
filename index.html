@@ -611,14 +611,25 @@ function getCityFieldValue(prefix) {
   return sel.value;
 }
 
+// Ημερολογιακή ημέρα (Αθήνα) μιας χρονοσφραγίδας, ως 'YYYY-MM-DD' — συγκρίσιμη ως string.
+function athensDay(d) {
+  const dt = new Date(d);
+  return isNaN(dt) ? '' : dt.toLocaleDateString('en-CA', {timeZone:'Europe/Athens'});
+}
 function findServiceMatch(appointments, afterDateStr, treatmentText) {
-  const afterDate = new Date(afterDateStr);
+  // Το consultation υπογράφεται συνήθως ΜΕΤΑ τη θεραπεία της ίδιας επίσκεψης
+  // (π.χ. ραντεβού 17:00, υπογραφή πλάνου 19:28). Αν συγκρίναμε με την ακριβή
+  // ώρα υπογραφής, το ραντεβού εκείνης της μέρας έμενε απ' έξω και η υπηρεσία
+  // εμφανιζόταν «Δεν έχει κλειστεί» ενώ είχε ήδη γίνει. Μετράει λοιπόν ΟΛΗ η
+  // ημέρα του consultation και μετά.
+  const afterDay = athensDay(afterDateStr);
+  if (!afterDay) return null;
   const normTreatment = normalizeGreek(treatmentText);
   const treatWords = normTreatment.split(' ').filter(w=>w.length>=4);
   if (!treatWords.length) return null;
   // Ένα ακυρωμένο ραντεβού δεν αποδεικνύει τίποτα — δεν πρέπει να μετράει ούτε
   // ως "κλεισμένο" ούτε ως "έγινε", αλλιώς μια ακύρωση θα άφηνε λάθος badge.
-  const candidates = (appointments||[]).filter(a => a.start_time && a.status!=='cancelled' && new Date(a.start_time) > afterDate);
+  const candidates = (appointments||[]).filter(a => a.start_time && a.status!=='cancelled' && athensDay(a.start_time) >= afterDay);
   candidates.sort((a,b)=>new Date(a.start_time)-new Date(b.start_time)); // πιο κοντινό στο μέλλον πρώτα
   for (const a of candidates) {
     const normService = normalizeGreek(a.service_name||'');
@@ -634,11 +645,14 @@ function findServiceMatch(appointments, afterDateStr, treatmentText) {
 // ✓ Αγοράστηκε δίπλα σε κάθε προτεινόμενο προϊόν που όντως πωλήθηκε ΜΕΤΑ την
 // ημερομηνία αυτού του consultation.
 function findProductSaleMatch(productSales, afterDateStr, productText) {
-  const afterDate = new Date(afterDateStr);
+  // Ίδιος κανόνας ημέρας με το findServiceMatch: προϊόν που αγοράστηκε στην ίδια
+  // επίσκεψη, λίγο πριν την υπογραφή του πλάνου, μετράει ως αγορασμένο.
+  const afterDay = athensDay(afterDateStr);
+  if (!afterDay) return null;
   const normProduct = normalizeGreek(productText);
   const prodWords = normProduct.split(' ').filter(w=>w.length>=4);
   if (!prodWords.length) return null;
-  const candidates = (productSales||[]).filter(s => s.created_at && new Date(s.created_at) > afterDate);
+  const candidates = (productSales||[]).filter(s => s.created_at && athensDay(s.created_at) >= afterDay);
   candidates.sort((a,b)=>new Date(a.created_at)-new Date(b.created_at)); // πιο κοντινή πώληση πρώτα
   for (const s of candidates) {
     const normName = normalizeGreek(s.product_name||'');
@@ -664,6 +678,9 @@ function parseConsultInClinicSteps(text) {
 const initials = n => (n||'').split(' ').map(x=>x[0]).join('').toUpperCase().slice(0,2)||'?';
 const fmt = d => d ? new Date(d).toLocaleDateString('el-GR',{day:'2-digit',month:'2-digit',year:'numeric'}) : '—';
 const fmtDt = d => d ? new Date(d).toLocaleDateString('el-GR',{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '—';
+// Ημερομηνία ΚΑΙ ώρα σε αριθμητική μορφή (π.χ. «16/09/2026 18:49») — για logs,
+// όπου χρειάζεται η ακριβής στιγμή και όχι φιλική διατύπωση.
+const fmtDateTime = d => d ? new Date(d).toLocaleString('el-GR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',hour12:false}) : '—';
 const euro = v => '€'+(v||0).toLocaleString('el-GR');
 
 const ROLES = {super_admin:'Super Admin',clinic_admin:'Διαχειριστής',therapist:'Θεραπευτής',receptionist:'Γραμματεία'};
@@ -1053,7 +1070,9 @@ async function loadPageData() {
   if (S.page==='sms') {
     const {data:clinicData} = await sb.from('clinics').select('sms_settings').eq('id',cid).single();
     S.smsSettings = (clinicData&&clinicData.sms_settings) || null;
-    const {data:log} = await sb.from('sms_log').select('*, patients(full_name)').eq('clinic_id',cid).order('sent_at',{ascending:false}).limit(50);
+    // Ταξινόμηση σε created_at: το sent_at απέκτησε default μόλις τώρα, οπότε
+    // παλιές εγγραφές μπορεί να μην το έχουν — το created_at υπάρχει πάντα.
+    const {data:log} = await sb.from('sms_log').select('*, patients(full_name)').eq('clinic_id',cid).order('created_at',{ascending:false}).limit(50);
     S.smsLog = log||[];
     // Σετ οδηγιών πριν/μετά τη θεραπεία + αντιστοίχιση με υπηρεσίες
     try {
@@ -1930,6 +1949,7 @@ function renderDashboard() {
             const giftBadge = gift
               ? (gift.redeemed_at ? '<span style="font-size:9.5px;font-weight:700;color:#53586B;background:#E4E6ED;padding:1px 7px;border-radius:8px;flex-shrink:0">🎁 εξαργυρώθηκε</span>'
                 : gift.channel==='email' ? '<span style="font-size:9.5px;font-weight:700;color:#0F6E56;background:#E1F5EE;padding:1px 7px;border-radius:8px;flex-shrink:0">✉ εστάλη δώρο</span>'
+                : gift.channel==='sms' ? '<span style="font-size:9.5px;font-weight:700;color:#0F6E56;background:#E1F5EE;padding:1px 7px;border-radius:8px;flex-shrink:0">💬 εστάλη SMS</span>'
                 : '<span style="font-size:9.5px;font-weight:700;color:#A32D2D;background:#FCEBEB;padding:1px 7px;border-radius:8px;flex-shrink:0">📞 κάλεσε για το δώρο!</span>')
               : '';
             return `
@@ -3226,11 +3246,12 @@ function renderCalendar() {
   const calDay = calDate.getDay();
   weekStart.setDate(calDate.getDate() + (calDay===0?-6:1-calDay)); // Monday
 
-  // Clinic hours (configurable per clinic, default 09:00-20:00)
-  // Ωράριο ημερολογίου: πάντα τουλάχιστον 09:00–20:00. Αν οι ρυθμίσεις κλινικής
+  // Clinic hours (configurable per clinic, default 09:00-21:00)
+  // Ωράριο ημερολογίου: πάντα τουλάχιστον 09:00–21:00. Αν οι ρυθμίσεις κλινικής
   // ορίζουν ευρύτερο ωράριο (νωρίτερο άνοιγμα/αργότερο κλείσιμο), επεκτείνεται αντίστοιχα.
+  // endHour = η ΤΕΛΕΥΤΑΙΑ ζώνη μιας ώρας, οπότε 20 ⇒ το πλέγμα φτάνει ως τις 21:00.
   const startHour = Math.min(9, (S.clinic&&S.clinic.settings&&S.clinic.settings.start_hour) || 9);
-  const endHour = Math.max(19, ((S.clinic&&S.clinic.settings&&S.clinic.settings.end_hour) || 20) - 1);
+  const endHour = Math.max(20, ((S.clinic&&S.clinic.settings&&S.clinic.settings.end_hour) || 20) - 1);
   const hours = [];
   for (let h = startHour; h <= endHour; h++) hours.push(h);
 
@@ -3910,7 +3931,46 @@ const SMS_AUTOMATIONS = [
   {key:'confirmation_request',label:'SMS 2 — Υπενθύμιση/Επιβεβαίωση',desc:'48 ώρες πριν το ραντεβού',color:'#1D9E75',bg:'#E1F5EE',tmpl:'ΥΠΕΝΘΥΜΙΖΟΥΜΕ ΤΟ ΡΑΝΤΕΒΟΥ ΣΑΣ ΣΤΟ {clinic} ΓΙΑ {date} ΣΤΙΣ {time}. ΕΠΙΒΕΒΑΙΩΣΤΕ: {confirm_link}'},
   {key:'instructions',label:'SMS 3 — Οδηγίες Πριν/Μετά',desc:'Μαζί με το κλείσιμο του ραντεβού (δεν περιμένει επιβεβαίωση)',color:'#EF9F27',bg:'#FAEEDA',tmpl:'ΟΙ ΟΔΗΓΙΕΣ ΠΡΙΝ ΚΑΙ ΜΕΤΑ ΤΗ ΘΕΡΑΠΕΙΑ ΣΑΣ: {instructions_link}'},
   {key:'review_request',label:'SMS 4 — Ζήτηση Αξιολόγησης',desc:'Μετά την ολοκλήρωση του ραντεβού — ενεργό μόνο αν έχει οριστεί link αξιολόγησης στις Ρυθμίσεις',color:'#534AB7',bg:'#EEEDFE',tmpl:'ΕΥΧΑΡΙΣΤΟΥΜΕ ΓΙΑ ΤΗΝ ΕΠΙΣΚΕΨΗ ΣΑΣ ΣΤΟ {clinic}! ΑΞΙΟΛΟΓΗΣΤΕ ΜΑΣ: {review_link}'},
+  {key:'birthday_gift',label:'SMS 5 — Δώρο Γενεθλίων',desc:'Την ημέρα των γενεθλίων, ΜΟΝΟ σε όσες δεν έχουν email (όσες έχουν, παίρνουν το εορταστικό email)',color:'#C4618A',bg:'#FDF0F5',tmpl:'ΧΡΟΝΙΑ ΠΟΛΛΑ! ΔΩΡΟ {value}€ ΘΕΡΑΠΕΙΑ ΠΡΟΣΩΠΟΥ ΕΩΣ {expires}. ΤΗΛ {phone}'},
 ];
+
+// Ποιες μεταβλητές δέχεται κάθε τύπος SMS. Το δώρο γενεθλίων δεν έχει ραντεβού,
+// οπότε δεν έχει {date}/{time}/link — έχει αξία δώρου, λήξη και τηλέφωνο.
+function smsVarsFor(key) {
+  if (key==='birthday_gift') return '{value}, {expires}, {phone}';
+  const link = key==='booking_confirmation' ? 'calendar_link'
+    : key==='confirmation_request' ? 'confirm_link'
+    : key==='instructions' ? 'instructions_link' : 'review_link';
+  return `{name}, {clinic}, {date}, {time}, {${link}}`;
+}
+
+// Μετρητής χρέωσης: τα ελληνικά στέλνονται σε UCS-2, όπου ένα τμήμα SMS είναι
+// 70 χαρακτήρες. Μετράμε το ΤΕΛΙΚΟ κείμενο, με τις μεταβλητές αντικατεστημένες
+// από ρεαλιστικές τιμές — αλλιώς ένα «{value}» (7 χαρακτήρες) θα μετριόταν
+// βαρύτερα από το «60» που μπαίνει τελικά, και το αποτέλεσμα θα ήταν παραπλανητικό.
+const SMS_SAMPLE_VALUES = {
+  '{name}': 'ΜΑΡΙΑ ΠΑΠΑΔΟΠΟΥΛΟΥ',
+  '{clinic}': 'BEAUTY LINE',
+  '{date}': 'ΠΕΜΠΤΗ 18 ΣΕΠΤΕΜΒΡΙΟΥ 2026',
+  '{time}': '18:30',
+  '{value}': '60',
+  '{expires}': '16/10',
+  '{phone}': '2106135442',
+  // Σύντομος σύνδεσμος ?c=<8 χαρακτήρες> προς το appointment-confirm.
+  '{calendar_link}': 'https://kfidxwqgsaisbdgucsok.supabase.co/functions/v1/appointment-confirm?c=Ab3xY9Zq',
+  '{confirm_link}': 'https://kfidxwqgsaisbdgucsok.supabase.co/functions/v1/appointment-confirm?c=Ab3xY9Zq',
+  '{instructions_link}': 'https://kfidxwqgsaisbdgucsok.supabase.co/functions/v1/appointment-confirm?c=Ab3xY9Zq',
+  '{review_link}': 'https://g.page/r/BeautyLine/review',
+};
+function smsCountHtml(text) {
+  let t = text||'';
+  for (const [k,v] of Object.entries(SMS_SAMPLE_VALUES)) t = t.split(k).join(v);
+  const n = t.length;
+  const seg = Math.max(1, Math.ceil(n/70));
+  const color = seg===1 ? '#0F6E56' : seg===2 ? '#854F0B' : '#A32D2D';
+  return `<span style="color:${color};font-weight:600">≈ ${n} χαρακτήρες · ${seg} SMS</span>`
+    + `<span style="color:var(--text-2)"> (70 χαρ. ανά SMS στα ελληνικά)</span>`;
+}
 
 function renderSms() {
   const cid = clinicId();
@@ -3942,7 +4002,8 @@ function renderSms() {
         </div>
         <div style="margin-top:12px">
           <textarea class="form-control sms-auto-text" rows="3" style="font-size:12px;font-family:var(--mono);width:100%">${esc(text)}</textarea>
-          <div style="font-size:10.5px;color:var(--text-2);margin-top:4px">Μεταβλητές: {name}, {clinic}, {date}, {time}, {${a.key==='booking_confirmation'?'calendar_link':a.key==='confirmation_request'?'confirm_link':a.key==='instructions'?'instructions_link':'review_link'}} — το κείμενο φεύγει πάντα σε ΚΕΦΑΛΑΙΑ.</div>
+          <div style="font-size:10.5px;color:var(--text-2);margin-top:4px">Μεταβλητές: ${smsVarsFor(a.key)} — το κείμενο φεύγει πάντα σε ΚΕΦΑΛΑΙΑ.</div>
+          <div class="sms-auto-count" style="font-size:10.5px;margin-top:3px">${smsCountHtml(text)}</div>
         </div>
         <div style="display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-top:10px">
           <span class="sms-auto-saved" style="font-size:11px;color:#0F6E56"></span>
@@ -3953,13 +4014,13 @@ function renderSms() {
     </div>`:`
     <div class="card">
       <div class="table-wrap"><table>
-        <thead><tr><th>Ασθενής</th><th>Τύπος</th><th>Τηλέφωνο</th><th>Κατάσταση</th><th>Ημ/νία</th></tr></thead>
+        <thead><tr><th>Ασθενής</th><th>Τύπος</th><th>Τηλέφωνο</th><th>Κατάσταση</th><th>Ημ/νία &amp; Ώρα</th></tr></thead>
         <tbody>${log.length?log.map(l=>`<tr>
           <td style="font-weight:500">${esc((l.patients&&l.patients.full_name)||'—')}</td>
           <td>${badge(l.sms_type||'—','#E6F1FB','#185FA5')}</td>
           <td style="font-family:var(--mono);font-size:12px;color:var(--text-2)">${esc(l.phone||'—')}</td>
           <td>${l.status==='sent'?badge('Στάλθηκε','#E1F5EE','#0F6E56'):badge('Σφάλμα','#FCEBEB','#A32D2D')}</td>
-          <td style="font-size:12px;color:var(--text-2)">${fmt(l.sent_at)}</td>
+          <td style="font-size:12px;color:var(--text-2);white-space:nowrap">${fmtDateTime(l.sent_at||l.created_at)}</td>
         </tr>`).join(''):`<tr><td colspan="5"><div class="empty-state"><div class="empty-icon">✉</div><div>Δεν υπάρχουν SMS ακόμα</div></div></td></tr>`}
         </tbody>
       </table></div>
@@ -5616,8 +5677,9 @@ async function deletePackage(id) {
   render();
 }
 
-// Κλικαμπλ τηλέφωνα: ☎ κλήση (tel:) + Viber συνομιλία, παντού όπου φαίνεται
-// νούμερο. Το Viber θέλει διεθνή μορφή (+30...).
+// Κλικαμπλ τηλέφωνα: ☎ κλήση (tel:) + 💬 αποστολή SMS (sms:), παντού όπου
+// φαίνεται νούμερο — Dashboard, λίστα ασθενών, καρτέλα, παράθυρο ραντεβού.
+// Και τα δύο θέλουν διεθνή μορφή (+30...).
 function phoneIntl(p) {
   const d = normalizePhone(p);
   if (!d || d.length < 9) return '';
@@ -5627,7 +5689,11 @@ function phoneActionsHtml(p, size) {
   const intl = phoneIntl(p);
   if (!intl) return '';
   const fs = size || 13;
-  return `<a href="tel:${intl}" onclick="event.stopPropagation()" title="Κλήση" style="text-decoration:none;font-size:${fs}px;flex-shrink:0">☎️</a><a href="viber://chat?number=${encodeURIComponent(intl)}" onclick="event.stopPropagation()" title="Μήνυμα στο Viber" style="text-decoration:none;font-size:${fs}px;flex-shrink:0">💬</a>`;
+  // Το 💬 ανοίγει την εφαρμογή μηνυμάτων του κινητού με έτοιμο παραλήπτη (SMS).
+  // Ήταν viber://chat — αλλά προϋπέθετε ότι ο πελάτης έχει Viber, ενώ SMS
+  // λαμβάνουν όλοι· επίσης η κλινική στέλνει ήδη SMS μέσω του παρόχου, οπότε
+  // το κανάλι παραμένει ενιαίο.
+  return `<a href="tel:${intl}" onclick="event.stopPropagation()" title="Κλήση" style="text-decoration:none;font-size:${fs}px;flex-shrink:0">☎️</a><a href="sms:${intl}" onclick="event.stopPropagation()" title="Αποστολή SMS" style="text-decoration:none;font-size:${fs}px;flex-shrink:0">💬</a>`;
 }
 
 // Μετάβαση στο Πρόγραμμα, στην ημέρα ενός ραντεβού (κλικ από Ιστορικό Ραντεβού)
@@ -6598,7 +6664,7 @@ function renderSettings() {
       <div class="card">
         <div class="card-header"><span class="card-title">⭐ Ζήτηση Αξιολόγησης</span></div>
         <div style="padding:16px">
-          <div style="font-size:12px;color:var(--text-2);margin-bottom:14px">Στέλνει αυτόματα email στον πελάτη μετά την ολοκλήρωση ραντεβού, με σύνδεσμο για αξιολόγηση. Παραμένει ανενεργή μέχρι να τη θέσεις σε λειτουργία.</div>
+          <div style="font-size:12px;color:var(--text-2);margin-bottom:14px">Στέλνει αυτόματα email &amp; SMS στον πελάτη μετά την ολοκλήρωση του ραντεβού, με σύνδεσμο για αξιολόγηση. Αν ο πελάτης έχει <b>δύο ραντεβού την ίδια ημέρα</b>, φεύγει <b>ένα</b> μήνυμα, μετά το τέλος του τελευταίου. Παραμένει ανενεργή μέχρι να τη θέσεις σε λειτουργία.</div>
           <div class="form-group">
             <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
               <input type="checkbox" id="review-request-enabled" ${(c&&c.settings&&c.settings.review_request_enabled)?'checked':''}/>
@@ -6610,8 +6676,9 @@ function renderSettings() {
             <input class="form-control" id="review-request-link" placeholder="https://g.page/r/..." value="${esc((c&&c.settings&&c.settings.review_link)||'')}"/>
           </div>
           <div class="form-group">
-            <label class="form-label">Ημέρες μετά το ραντεβού</label>
-            <input class="form-control" type="number" min="0" id="review-request-delay" style="max-width:100px" value="${(c&&c.settings&&c.settings.review_request_delay_days)||2}"/>
+            <label class="form-label">Λεπτά μετά το τέλος του ραντεβού</label>
+            <input class="form-control" type="number" min="0" step="5" id="review-request-delay" style="max-width:100px" value="${(()=>{const s=(c&&c.settings)||{};return s.review_request_delay_minutes!=null?s.review_request_delay_minutes:(s.review_request_delay_days!=null?s.review_request_delay_days*1440:30);})()}"/>
+            <div style="font-size:11px;color:var(--text-2);margin-top:4px">π.χ. <b>30</b> = μισή ώρα αφού φύγει ο πελάτης. Ο έλεγχος τρέχει ανά 15 λεπτά, οπότε η πραγματική αποστολή είναι έως 15 λεπτά αργότερα.</div>
           </div>
           <button class="btn btn-primary" id="save-review-request-settings">Αποθήκευση</button>
         </div>
@@ -8352,9 +8419,18 @@ function bindEvents() {
     el.onclick = () => { S.settingsTab=el.dataset.settingsTab; render(); };
   });
 
+  // Ζωντανός μετρητής χαρακτήρων/τμημάτων καθώς γράφει η διαχείριση — το όριο
+  // των 70 χαρακτήρων ανά SMS δεν είναι προφανές και ένα κείμενο 71 χαρακτήρων
+  // χρεώνεται διπλά.
+  document.querySelectorAll('.sms-auto-text').forEach(ta => {
+    const card = ta.closest('[data-sms-auto-key]');
+    const out = card && card.querySelector('.sms-auto-count');
+    if (out) ta.addEventListener('input', () => { out.innerHTML = smsCountHtml(ta.value); });
+  });
+
   // Save SMS automation on/off + custom text (σελίδα SMS & Αυτοματισμοί) —
   // clinics.settings.sms_templates[key] = {enabled, text}, διαβάζεται από το
-  // appointment-automations edge function (smsConfigFor).
+  // appointment-automations edge function (smsConfigFor) και το birthday-emails.
   document.querySelectorAll('.sms-auto-save').forEach(btn => {
     btn.addEventListener('click', async () => {
       const card = btn.closest('[data-sms-auto-key]');
@@ -8416,11 +8492,15 @@ function bindEvents() {
     const enabled = document.getElementById('review-request-enabled');
     const link = document.getElementById('review-request-link');
     const delay = document.getElementById('review-request-delay');
+    // Αποθηκεύεται πλέον σε ΛΕΠΤΑ από το τέλος του τελευταίου ραντεβού της
+    // ημέρας. Το παλιό review_request_delay_days (ημέρες από την έναρξη)
+    // αφαιρείται, ώστε να μη μείνει να υπερισχύει ως fallback στο edge function.
     const settings = Object.assign({}, (S.clinic&&S.clinic.settings)||{}, {
       review_request_enabled: enabled ? enabled.checked : false,
       review_link: link ? link.value.trim() : '',
-      review_request_delay_days: delay ? (parseInt(delay.value)||0) : 2,
+      review_request_delay_minutes: delay ? Math.max(0, parseInt(delay.value)||0) : 30,
     });
+    delete settings.review_request_delay_days;
     const {error} = await sb.from('clinics').update({settings}).eq('id',clinicId());
     if (error) { alert(error.message); return; }
     if (S.clinic) S.clinic.settings = settings;

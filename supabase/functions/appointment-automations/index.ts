@@ -1,24 +1,17 @@
 // Supabase Edge Function — 📬 Αυτοματισμοί Ραντεβού (Beauty Line).
 //
-// Δύο δουλειές, μία σάρωση (καλείται ωριαία από pg_cron):
+// Καλείται ανά 15 λεπτά από pg_cron:
 //  1. ΑΙΤΗΜΑ ΕΠΙΒΕΒΑΙΩΣΗΣ: ραντεβού ΚΛΕΙΣΜΕΝΑ (booked) που μπαίνουν στο
-//     48ωρο πριν την ώρα τους → email με κουμπί «Επιβεβαιώνω το ραντεβού»
-//     (link στο appointment-confirm). Χωρίς email πελάτη → log 'no_email'
-//     ώστε η γραμματεία να τηλεφωνήσει (Dashboard widget).
-//  2. ΟΔΗΓΙΕΣ ΠΡΙΝ/ΜΕΤΑ: ραντεβού ΕΠΙΒΕΒΑΙΩΜΕΝΑ (confirmed) μελλοντικά που
-//     δεν έχουν πάρει οδηγίες στον τρέχοντα κύκλο → email με τις οδηγίες του
-//     Instruction Set της υπηρεσίας (πίνακες instruction_sets +
-//     service_instruction_map). Υπηρεσία χωρίς σετ → φεύγει ΚΑΙ ΤΟΤΕ email,
-//     απλό κλεισίματος ραντεβού χωρίς τμήματα πριν/μετά (όχι σιωπή).
-//  3. ΖΗΤΗΣΗ ΑΞΙΟΛΟΓΗΣΗΣ: ραντεβού ΟΛΟΚΛΗΡΩΜΕΝΑ (completed) που πέρασαν τις
-//     clinics.settings.review_request_delay_days ημέρες από την ώρα τους →
-//     email με σύνδεσμο αξιολόγησης (clinics.settings.review_link). Τρέχει
-//     ΜΟΝΟ όταν clinics.settings.review_request_enabled === true ΚΑΙ υπάρχει
-//     review_link — παραμένει ανενεργή μέχρι να ενεργοποιηθεί ρητά από τις
-//     Ρυθμίσεις της κλινικής.
+//     48ωρο → ΕΝΑ email/SMS ανά πελάτη+ημέρα, με ώρα προσέλευσης του πρώτου.
+//  2. ΟΔΗΓΙΕΣ ΠΡΙΝ/ΜΕΤΑ: μελλοντικά ραντεβού → ΕΝΑ email/SMS ανά
+//     πελάτη+ημέρα+σετ οδηγιών. Υπηρεσία χωρίς σετ → απλό email κλεισίματος.
+//  3. ΖΗΤΗΣΗ ΑΞΙΟΛΟΓΗΣΗΣ: ΟΛΟΚΛΗΡΩΜΕΝΑ → ΕΝΑ αίτημα ανά πελάτη+ημέρα,
+//     reviewDelayMinutes λεπτά μετά το ΤΕΛΟΣ του τελευταίου ραντεβού της
+//     ημέρας. Τρέχει ΜΟΝΟ όταν review_request_enabled === true ΚΑΙ υπάρχει
+//     review_link.
 //
 // Idempotency: μοναδικό (appointment_id, automation_type, cycle) με
-// cycle = start_time — αλλαγή ώρας ραντεβού ξεκινά αυτόματα νέο κύκλο.
+// cycle = start_time — αλλαγή ώρας ραντεβού ξεκινάει αυτόματα νέο κύκλο.
 //
 // Χειροκίνητες ενέργειες (από το CRM, με login): POST body
 // {action:'resend_confirmation'|'resend_instructions'|'resend_review_request'|'send_booking_confirmation', appointment_id} —
@@ -27,11 +20,8 @@
 // Deploy with:
 //   supabase functions deploy appointment-automations --no-verify-jwt
 // (in-code auth: x-cron-secret για το cron Ή Supabase JWT για χειροκίνητες)
-// Secrets: BIRTHDAY_CRON_SECRET (κοινό cron secret), GOOGLE_CLIENT_ID,
-//   GOOGLE_CLIENT_SECRET, BL_REFRESH_TOKEN — υπάρχουν ήδη.
-//   APIFON_TOKEN, APIFON_API_KEY (HMAC API Token/Key από Mookee →
-//   Προγραμματιστές, με ενεργοποιημένο scope SMS) και προαιρετικό
-//   APIFON_SENDER_ID — ΝΕΑ, πρέπει να μπουν για να ενεργοποιηθούν τα SMS.
+// Secrets: BIRTHDAY_CRON_SECRET, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
+//   BL_REFRESH_TOKEN, APIFON_TOKEN, APIFON_API_KEY, APIFON_SENDER_ID.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -165,8 +155,6 @@ async function sendSms(phone: string | undefined | null, message: string): Promi
   const body = JSON.stringify({
     subscribers: [{ number: to }],
     // dc:2 = UCS-2 encoding — απαραίτητο για ελληνικό κείμενο (πεζά + τόνοι).
-    // Χωρίς αυτό το Apifon πέφτει στο βασικό GSM alphabet που δεν έχει
-    // πλήρες ελληνικό αλφάβητο και μεταγράφει σε κεφαλαία χωρίς τόνους.
     message: { text: message, sender_id: senderId, dc: 2 },
   });
   const date = new Date().toUTCString();
@@ -197,12 +185,8 @@ async function sendSms(phone: string | undefined | null, message: string): Promi
 
 const SHORT_CODE_CHARS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 
-// Σύντομος σύνδεσμος για SMS (όριο χαρακτήρων ανά τμήμα) — το domain του
-// Supabase functions είναι από μόνο του ~73 χαρακτήρες, οπότε id+ts+παράμετροι
-// στο URL κάνουν το SMS πολλαπλών τμημάτων. Αντ' αυτού αποθηκεύουμε ένα
-// τυχαίο 8-char κωδικό στο link_codes και το SMS κρατάει μόνο ?c=<code> —
-// το appointment-confirm το λύνει (lookup) στο GET. Email links δεν
-// χρειάζονται συντόμευση, μένουν όπως πριν.
+// Σύντομος σύνδεσμος για SMS: αποθηκεύουμε τυχαίο 8-char κωδικό στο
+// link_codes και το SMS κρατάει μόνο ?c=<code>.
 async function makeShortLink(
   supabase: ReturnType<typeof createClient>,
   appointmentId: string,
@@ -217,31 +201,22 @@ async function makeShortLink(
     const { error } = await supabase.from('link_codes').insert({ code, appointment_id: appointmentId, ts, kind });
     if (!error) return `${CONFIRM_URL}?c=${code}`;
   }
-  // Απίθανη σύγκρουση κωδικών 5 φορές στη σειρά — fallback στον παλιό,
-  // μεγαλύτερο σύνδεσμο ώστε το SMS να φύγει έστω και έτσι.
   const suffix = kind === 'ics' ? '&ics=1' : kind === 'instructions' ? '&view=instructions' : '';
   return `${CONFIRM_URL}?id=${appointmentId}&ts=${ts}${suffix}`;
 }
 
-// SMS σε ΚΕΦΑΛΑΙΑ χωρίς τόνους — το Apifon (dc:2) δεν φαίνεται να τηρεί το
-// σωστό πεζά/τόνοι encoding στην πράξη (auto-downgrade σε GSM7-στυλ κεφαλαία
-// ό,τι κι αν στείλουμε), οπότε το κάνουμε εμείς σκόπιμα ώστε το αποτέλεσμα να
-// είναι το ίδιο και προβλέψιμο ανεξαρτήτως πραγματικού encoding. ΠΟΤΕ μην το
-// εφαρμόζεις σε link (τα ?c= codes είναι case-sensitive).
+// SMS σε ΚΕΦΑΛΑΙΑ χωρίς τόνους. ΠΟΤΕ μην το εφαρμόζεις σε link
+// (τα ?c= codes είναι case-sensitive).
 function smsCaps(s: string): string {
   return (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase();
 }
 
-// Ίδια κανονικοποίηση με το index.html (normalizeGreek): πεζά + χωρίς τόνους —
-// έτσι το service_name του ραντεβού ταιριάζει με τον κατάλογο υπηρεσιών.
+// Ίδια κανονικοποίηση με το index.html (normalizeGreek).
 function normalizeGreek(s: string): string {
   return (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
 }
 
-// Βασικός έλεγχος μορφής (όχι μόνο "περιέχει @") — ένα email με κενό ή χωρίς
-// domain (π.χ. καταχωρημένο λάθος στην καρτέλα) πρέπει να καταγράφεται ως
-// 'no_email' ΜΙΑ φορά, όχι να ξαναδοκιμάζεται κάθε 15 λεπτά επ' άπειρον αφού
-// το 'failed' δεν είναι τελική κατάσταση για το alreadyDone().
+// Βασικός έλεγχος μορφής email.
 function isValidEmail(email: unknown): boolean {
   return typeof email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 }
@@ -261,9 +236,8 @@ function athensDay(iso: string): string {
   return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'Europe/Athens' });
 }
 
-// Προεπιλεγμένα κείμενα SMS (με μεταβλητές {name}/{clinic}/{date}/{time} +
-// το ειδικό link placeholder του καθενός) — χρησιμοποιούνται όταν η κλινική
-// δεν έχει ορίσει δικό της κείμενο στις Ρυθμίσεις (clinics.settings.sms_templates).
+// Προεπιλεγμένα κείμενα SMS — χρησιμοποιούνται όταν η κλινική δεν έχει
+// ορίσει δικό της (clinics.settings.sms_templates).
 const SMS_DEFAULT_TEMPLATES: Record<string, string> = {
   booking_confirmation: 'Το ραντεβού σας στο {clinic} επιβεβαιώθηκε για {date} στις {time}. Ημερολόγιο: {calendar_link}',
   confirmation_request: 'Υπενθυμίζουμε το ραντεβού σας στο {clinic} για {date} στις {time}. Επιβεβαιώστε: {confirm_link}',
@@ -279,9 +253,6 @@ const SMS_LINK_TOKEN: Record<string, string> = {
 
 interface SmsAutomationConfig { enabled?: boolean; text?: string }
 
-// Διαβάζει τις ρυθμίσεις SMS της κλινικής (on/off + custom κείμενο ανά τύπο) —
-// enabled=true αν δεν έχει οριστεί ρητά false· κείμενο = της κλινικής ή το
-// προεπιλεγμένο αν είναι κενό.
 function smsConfigFor(settings: Record<string, unknown> | undefined, key: string): { enabled: boolean; text: string } {
   const all = (settings && (settings.sms_templates as Record<string, SmsAutomationConfig> | undefined)) || {};
   const cfg = all[key] || {};
@@ -291,11 +262,8 @@ function smsConfigFor(settings: Record<string, unknown> | undefined, key: string
   };
 }
 
-// Γεμίζει το template με τις μεταβλητές κειμένου (πριν το smsCaps, ώστε και
-// αυτές να βγαίνουν σε κεφαλαία) και μετά βάζει το link ΑΚΡΙΒΩΣ όπως είναι
-// (μετά το smsCaps, ώστε να μην πειραχτεί ο case-sensitive ?c= κωδικός) — αν
-// το template δεν περιέχει το link placeholder, το προσθέτει στο τέλος ώστε
-// να μη χαθεί ποτέ σιωπηλά.
+// Γεμίζει το template με τις μεταβλητές (πριν το smsCaps) και μετά βάζει το
+// link ΑΚΡΙΒΩΣ όπως είναι (case-sensitive ?c= κωδικός).
 function fillSmsTemplate(template: string, vars: Record<string, string>, linkToken: string, linkValue: string): string {
   const MARK = 'ZZZSMSLINKZZZ';
   let t = template.includes(linkToken) ? template.split(linkToken).join(MARK) : template + ' ' + MARK;
@@ -304,8 +272,7 @@ function fillSmsTemplate(template: string, vars: Record<string, string>, linkTok
   return t.replace(MARK, linkValue);
 }
 
-// ── Ημερολόγιο: Google Calendar link + .ics με υπενθύμιση 1 ώρα πριν και
-// τοποθεσία/οδηγίες Google Maps ──
+// ── Ημερολόγιο: Google Calendar link + .ics με υπενθύμιση 1 ώρα πριν ──
 function icsDate(d: Date): string {
   return d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z/, 'Z');
 }
@@ -328,8 +295,6 @@ function buildCalendarBits(appts: Appt[], address: string, brand: Brand) {
     + '&dates=' + icsDate(start) + '/' + icsDate(end)
     + '&details=' + encodeURIComponent(details)
     + '&location=' + encodeURIComponent(address);
-  // Outlook.com / Office 365 deeplink (web Outlook — το desktop Outlook
-  // ανοίγει το .ics)
   const outlook = 'https://outlook.live.com/calendar/0/deeplink/compose?path=/calendar/action/compose&rru=addevent'
     + '&subject=' + encodeURIComponent(title)
     + '&startdt=' + encodeURIComponent(start.toISOString())
@@ -351,9 +316,7 @@ function buildCalendarBits(appts: Appt[], address: string, brand: Brand) {
   ].join('\r\n');
   return { gcal, outlook, ics };
 }
-// Τρία κουμπιά: Google (web link), Outlook (web deeplink), Apple/iPhone
-// (σύνδεσμος .ics από το appointment-confirm — το iPhone τον ανοίγει
-// κατευθείαν στο Ημερολόγιο, με την υπενθύμιση 1 ώρας μέσα).
+
 function calendarButtonHtml(gcal: string, outlook: string, icsUrl: string): string {
   const pill = (href: string, label: string, bg: string) =>
     `<a href="${esc(href)}" style="display:inline-block;background-color:${bg};color:#FFFFFF;-webkit-text-fill-color:#FFFFFF;font-size:12.5px;font-weight:bold;text-decoration:none;padding:9px 16px;border-radius:22px;margin:3px 3px;">${label}</a>`;
@@ -366,9 +329,7 @@ function calendarButtonHtml(gcal: string, outlook: string, icsUrl: string): stri
         </td></tr><tr><td align="center" style="padding:6px 0 0;font-size:11px;color:#8A6070;-webkit-text-fill-color:#8A6070;">Με υπενθύμιση 1 ώρα πριν και οδηγίες Google Maps — ή ανοίξτε το συνημμένο αρχείο ημερολογίου</td></tr></table>`;
 }
 
-// ── Email templates (ίδιο ύφος για κάθε κλινική: solid hex + -webkit-text-
-// fill-color για iPhone dark mode· χρώμα/λογότυπο/όνομα έρχονται από τις
-// ρυθμίσεις branding της κλινικής — clinics.settings.brand_*) ──
+// ── Email templates (solid hex + -webkit-text-fill-color για iPhone dark mode) ──
 function shell(inner: string, brand: Brand): string {
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="margin:0;padding:0;background-color:#FAF3F6;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#FAF3F6;padding:24px 0;"><tr><td align="center">
@@ -389,8 +350,8 @@ function headerBand(brand: Brand, emoji: string, title: string): string {
       </td></tr>`;
 }
 
-// Δέχεται 1+ ραντεβού ΤΗΣ ΙΔΙΑΣ ΗΜΕΡΑΣ — σε πολλαπλά, ένα email με «ώρα
-// προσέλευσης» του πρώτου και λίστα όλων, για να μην μπερδεύεται ο πελάτης.
+// Δέχεται 1+ ραντεβού ΤΗΣ ΙΔΙΑΣ ΗΜΕΡΑΣ — ένα email με «ώρα προσέλευσης»
+// του πρώτου και λίστα όλων.
 function confirmationEmailHtml(name: string, appts: Appt[], confirmLink: string, cancelLink: string, calBtn: string, brand: Brand): string {
   const sorted = [...appts].sort((a, b) => (a.start_time < b.start_time ? -1 : 1));
   const first = sorted[0];
@@ -417,15 +378,7 @@ function confirmationEmailHtml(name: string, appts: Appt[], confirmLink: string,
 }
 
 function instructionsEmailHtml(name: string, service: string, whenStr: string, status: string, pre: string, post: string, calBtn: string, brand: Brand): string {
-  // Οι οδηγίες φεύγουν αμέσως με το κλείσιμο, όχι μόνο μετά την επιβεβαίωση
-  // (βλ. σάρωση cron πιο κάτω) — το κείμενο πρέπει να ταιριάζει με την
-  // πραγματική κατάσταση, αλλιώς λέει «επιβεβαιώθηκε» σε ραντεβού που είναι
-  // ακόμα μόνο Κλεισμένο.
   const statusVerb = status === 'confirmed' ? 'έχει επιβεβαιωθεί' : 'έχει κλειστεί';
-  // Κάθε bullet («•» ή αλλαγή γραμμής, ανάλογα πώς το έγραψε ο διαχειριστής στο
-  // Instruction Set) σε ΔΙΚΗ ΤΟΥ γραμμή, ευθυγραμμισμένη αριστερά — σε
-  // white-space:pre-line παράγραφο τα bullets συνέχιζαν σαν μία πρόταση και
-  // τύλιγαν άσχημα σε κινητό.
   const block = (title: string, text: string, color: string, bg: string) => {
     if (!text) return '';
     const items = text.split(/•|\r?\n/).map((s) => s.trim()).filter(Boolean);
@@ -440,8 +393,6 @@ function instructionsEmailHtml(name: string, service: string, whenStr: string, s
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows}</table>
         </td></tr></table>`;
   };
-  // Υπηρεσία χωρίς Instruction Set (κανένα pre/post) → απλό email κλεισίματος
-  // ραντεβού, χωρίς την πλαισίωση «οδηγιών» που δεν υπάρχουν.
   const hasInstructions = !!(pre || post);
   const introTail = hasInstructions ? ' Για την καλύτερη προετοιμασία και φροντίδα σας:' : '';
   return shell(`
@@ -469,9 +420,6 @@ function reviewRequestEmailHtml(name: string, service: string, reviewLink: strin
       </td></tr>`, brand);
 }
 
-// Στιγμή 1 — απλό, ενημερωτικό email κλεισίματος ραντεβού (χωρίς μεγάλο CTA
-// κουμπί, σε αντίθεση με το confirmationEmailHtml που ζητάει επιβεβαίωση) —
-// φεύγει αμέσως μόλις κλείνεται το ραντεβού από το CRM.
 function bookingConfirmationEmailHtml(name: string, service: string, whenStr: string, calBtn: string, brand: Brand): string {
   return shell(`
       ${headerBand(brand, '✅', 'Το ραντεβού σας κλείστηκε')}
@@ -497,7 +445,7 @@ Deno.serve(async (req: Request) => {
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
   );
 
-  // ── Auth: cron secret Ή συνδεδεμένος χρήστης του CRM (χειροκίνητες ενέργειες) ──
+  // ── Auth: cron secret Ή συνδεδεμένος χρήστης του CRM ──
   const secret = Deno.env.get('BIRTHDAY_CRON_SECRET');
   const isCron = !!secret && req.headers.get('x-cron-secret') === secret;
   let body: { action?: string; appointment_id?: string } = {};
@@ -537,23 +485,17 @@ Deno.serve(async (req: Request) => {
       return !!(data && data.length);
     };
 
-    // Καταγραφή SMS σε ξεχωριστό πίνακα (sms_log) — δικό του σχήμα
-    // (τηλέφωνο/κείμενο) αντί για το communication_log που είναι φτιαγμένο για
-    // email (recipient/metadata). Best effort: ποτέ δεν πετάει exception προς
-    // τα έξω, ώστε μια αποτυχία SMS να μη μπλοκάρει ποτέ το email flow.
+    // Καταγραφή SMS σε ξεχωριστό πίνακα (sms_log). Best effort: ποτέ δεν
+    // πετάει exception, ώστε μια αποτυχία SMS να μη μπλοκάρει το email flow.
     const logSms = async (a: Appt, smsType: string, phone: string, message: string, ok: boolean, error?: string) => {
       try {
         await supabase.from('sms_log').insert({
           clinic_id: a.clinic_id, patient_id: a.patient_id, appointment_id: a.id,
           sms_type: smsType, phone, message, status: ok ? 'sent' : 'failed', error: ok ? null : (error || null),
         });
-      } catch { /* best effort — δεν μπλοκάρει τη ροή email */ }
+      } catch { /* best effort */ }
     };
 
-    // Μετά από MAX_ATTEMPTS αποτυχημένες προσπάθειες αποστολής (π.χ. Gmail
-    // API σφάλμα, όχι θέμα μορφής email — αυτό το πιάνει ήδη το isValidEmail),
-    // σταματάμε να ξαναδοκιμάζουμε κάθε 15 λεπτά επ' άπειρον· καταγράφεται ως
-    // τελικό 'failed_final' και ειδοποιείται η κλινική με email.
     const MAX_ATTEMPTS = 3;
     const failureCount = async (a: Appt, type: string) => {
       const { count } = await supabase.from('communication_log').select('id', { count: 'exact', head: true })
@@ -574,13 +516,11 @@ Deno.serve(async (req: Request) => {
           <p style="font-size:13.5px;line-height:1.7;color:#8A6070;-webkit-text-fill-color:#8A6070;margin:0;">Σφάλμα: ${esc(lastError)}</p>
           <p style="font-size:13.5px;line-height:1.7;color:#333333;-webkit-text-fill-color:#333333;margin:14px 0 0;">Παρακαλώ ελέγξτε/ενημερώστε χειροκίνητα.</p>
         </td></tr>`, brand);
-      try { await sendEmail(await gmail(), SENDER, '⚠️ Απέτυχε αυτόματο email — ' + name, html, undefined, brand.name); } catch { /* best effort, δεν μπλοκάρει τη σάρωση */ }
+      try { await sendEmail(await gmail(), SENDER, '⚠️ Απέτυχε αυτόματο email — ' + name, html, undefined, brand.name); } catch { /* best effort */ }
     };
 
-    // Διεύθυνση ινστιτούτου για ημερολόγιο/χάρτες — fallback στο όνομα (το
-    // Google Maps βρίσκει την επιχείρηση με αναζήτηση ονόματος).
     const { data: clinicRow } = await supabase.from('clinics').select('*').ilike('name', '%Beauty Line%').limit(1).single();
-    const cRow = (clinicRow || {}) as { name?: string; address?: string; settings?: { address?: string; brand_name?: string; brand_color?: string; brand_logo_url?: string; review_request_enabled?: boolean; review_link?: string; review_request_delay_days?: number; sms_templates?: Record<string, SmsAutomationConfig> } };
+    const cRow = (clinicRow || {}) as { name?: string; address?: string; settings?: { address?: string; brand_name?: string; brand_color?: string; brand_logo_url?: string; review_request_enabled?: boolean; review_link?: string; review_request_delay_days?: number; review_request_delay_minutes?: number; sms_templates?: Record<string, SmsAutomationConfig> } };
     const clinicSettings = cRow.settings as Record<string, unknown> | undefined;
     const clinicAddress = cRow.address || (cRow.settings && cRow.settings.address) || 'Beauty Line by Lina Panou';
     const brand: Brand = {
@@ -588,12 +528,19 @@ Deno.serve(async (req: Request) => {
       color: (cRow.settings && cRow.settings.brand_color) || '#C4618A',
       logoUrl: (cRow.settings && cRow.settings.brand_logo_url) || '',
     };
-    // Στα SMS (όριο χαρακτήρων) χρησιμοποιούμε το σύντομο όνομα — «Beauty
-    // Line» αντί για «Beauty Line by Lina Panou» — τα emails κρατάνε το πλήρες.
+    // Στα SMS χρησιμοποιούμε το σύντομο όνομα — τα emails το πλήρες.
     const brandNameShort = brand.name.split(/\s+by\s+/i)[0];
     const reviewLink = (cRow.settings && cRow.settings.review_link) || '';
     const reviewRequestEnabled = !!(cRow.settings && cRow.settings.review_request_enabled) && !!reviewLink;
-    const reviewRequestDelayDays = (cRow.settings && cRow.settings.review_request_delay_days) || 2;
+    // Καθυστέρηση ζήτησης αξιολόγησης, σε ΛΕΠΤΑ από το ΤΕΛΟΣ του τελευταίου
+    // ραντεβού της ημέρας. Το παλιό review_request_delay_days (ημέρες από την
+    // ΕΝΑΡΞΗ) διατηρείται ως fallback για κλινικές που το έχουν ήδη ορίσει.
+    const reviewDelayMinutes = (() => {
+      const s = (cRow.settings || {}) as { review_request_delay_minutes?: number; review_request_delay_days?: number };
+      if (typeof s.review_request_delay_minutes === 'number' && s.review_request_delay_minutes >= 0) return s.review_request_delay_minutes;
+      if (typeof s.review_request_delay_days === 'number' && s.review_request_delay_days >= 0) return s.review_request_delay_days * 1440;
+      return 30;
+    })();
 
     // ── Φόρτωση instruction sets + καταλόγου για την αντιστοίχιση ──
     const { data: sets } = await supabase.from('instruction_sets').select('*').eq('active', true);
@@ -609,10 +556,8 @@ Deno.serve(async (req: Request) => {
       return (sets || []).find((x) => x.id === m.instruction_set_id) || null;
     };
 
-    // Δέχεται ΟΛΑ τα ραντεβού μιας ημέρας του πελάτη (dayAppts) και στέλνει ΕΝΑ
-    // email· pending = όσα δεν έχουν πάρει ακόμα αίτημα στον κύκλο τους (μόνο
-    // αυτά καταγράφονται). Το κουμπί επιβεβαιώνει όλη την ημέρα (βλ.
-    // appointment-confirm).
+    // Δέχεται ΟΛΑ τα ραντεβού μιας ημέρας (dayAppts) και στέλνει ΈΝΑ email·
+    // pending = όσα δεν έχουν πάρει ακόμα αίτημα στον κύκλο τους.
     const sendConfirmation = async (dayAppts: Appt[], pending: Appt[], channel = 'email') => {
       const sorted = [...dayAppts].sort((x, y) => (x.start_time < y.start_time ? -1 : 1));
       const first = sorted[0];
@@ -621,11 +566,6 @@ Deno.serve(async (req: Request) => {
       const cancelLink = `${CONFIRM_URL}?id=${first.id}&ts=${ts}&cancel=1`;
       const icsUrl = `${CONFIRM_URL}?id=${first.id}&ts=${ts}&ics=1`;
 
-      // SMS2 — υπενθύμιση/επιβεβαίωση: ανεξάρτητο από το κανάλι email, best
-      // effort (ένα SMS για όλη την ομάδα ραντεβού της ημέρας, καταγράφεται σε
-      // κάθε ραντεβού του pending — ίδιο μοτίβο με το log() του email παρακάτω).
-      // Σύντομος σύνδεσμος (?c=) μόνο για το SMS — το email κρατάει το πλήρες link.
-      // Κείμενο/on-off ρυθμίζονται από τη σελίδα SMS & Αυτοματισμοί (clinics.settings.sms_templates).
       const smsCfg = smsConfigFor(clinicSettings, 'confirmation_request');
       if (smsCfg.enabled) {
         const smsPhone = first.patients && first.patients.phone;
@@ -664,15 +604,18 @@ Deno.serve(async (req: Request) => {
     };
 
     // Υπηρεσία χωρίς Instruction Set: στέλνεται ΚΑΙ ΤΟΤΕ email, απλό
-    // κλεισίματος ραντεβού χωρίς τμήματα πριν/μετά (βλ. instructionsEmailHtml) —
-    // ο πελάτης δεν πρέπει να μένει χωρίς καμία ενημέρωση επειδή λείπει σετ.
-    const sendInstructions = async (a: Appt, channel = 'email') => {
+    // κλεισίματος ραντεβού — ο πελάτης δεν πρέπει να μένει χωρίς ενημέρωση.
+    const sendInstructions = async (a: Appt, channel = 'email', groupAppts?: Appt[]) => {
       const set = setForService(a.service_name || '');
 
-      // SMS3 — οδηγίες πριν/μετά: ΜΙΚΡΟΣ σύνδεσμος (?c=<8-char code> →
-      // link_codes) στο appointment-confirm, το οποίο κάνει lookup και
-      // server-side redirect στο instructions.html με όλα τα (μεγάλα, με
-      // ελληνικά) στοιχεία στο URL — έτσι το SMS κρατάει μόνο τον κοντό κωδικό.
+      // Τα ραντεβού που καλύπτει ΑΥΤΟ το μήνυμα (ίδιος πελάτης, ίδια ημέρα,
+      // ίδιο σετ). Η καταγραφή γίνεται σε ΟΛΑ, ώστε να μη φύγει δεύτερο
+      // πανομοιότυπο στον επόμενο κύκλο.
+      const logGroup = (groupAppts && groupAppts.length) ? groupAppts : [a];
+      const logAll = async (status: string, extra?: Record<string, unknown>) => {
+        for (const g of logGroup) await log(g, 'instructions', channel, status, extra);
+      };
+
       const insTs = Math.floor(new Date(a.start_time).getTime() / 1000);
       const insCfg = smsConfigFor(clinicSettings, 'instructions');
       if (insCfg.enabled) {
@@ -689,10 +632,10 @@ Deno.serve(async (req: Request) => {
       }
 
       const email = a.patients && a.patients.email;
-      if (!isValidEmail(email)) { await log(a, 'instructions', channel, 'no_email', set ? { metadata: { instruction_set: set.name } } : undefined); results.no_email++; return; }
+      if (!isValidEmail(email)) { await logAll('no_email', set ? { metadata: { instruction_set: set.name } } : undefined); results.no_email++; return; }
       const fails = await failureCount(a, 'instructions');
       if (fails >= MAX_ATTEMPTS) {
-        await log(a, 'instructions', channel, 'failed_final', { error: `Εγκατάλειψη μετά από ${fails} αποτυχημένες προσπάθειες` });
+        await logAll('failed_final', { error: `Εγκατάλειψη μετά από ${fails} αποτυχημένες προσπάθειες` });
         await notifyGiveUp(a, 'instructions', fails, 'Επαναλαμβανόμενη αποτυχία αποστολής');
         results.errors++; return;
       }
@@ -702,21 +645,28 @@ Deno.serve(async (req: Request) => {
       const subject = set ? '📋 Οδηγίες για το ραντεβού σας — ' + brand.name : '✅ Το ραντεβού σας — ' + brand.name;
       try {
         const msgId = await sendEmail(await gmail(), String(email), subject, html, ics, brand.name);
-        await log(a, 'instructions', channel, 'sent', { metadata: { gmail_id: msgId, instruction_set: set ? set.name : null } });
+        await logAll('sent', { metadata: { gmail_id: msgId, instruction_set: set ? set.name : null, grouped: logGroup.length } });
         results.instructions++;
       } catch (e) {
-        await log(a, 'instructions', channel, 'failed', { error: e instanceof Error ? e.message : String(e) });
+        await logAll('failed', { error: e instanceof Error ? e.message : String(e) });
         results.errors++;
       }
     };
 
     // ⭐ Ζήτηση αξιολόγησης: μόνο για ολοκληρωμένα ραντεβού, με τον σύνδεσμο
-    // από τις Ρυθμίσεις (review_link) — χωρίς σύνδεσμο δεν έχει νόημα η
-    // αποστολή, ούτε καν χειροκίνητα.
-    const sendReviewRequest = async (a: Appt, channel = 'email') => {
+    // από τις Ρυθμίσεις (review_link).
+    const sendReviewRequest = async (a: Appt, channel = 'email', groupAppts?: Appt[]) => {
       if (!reviewLink) { results.errors++; return; }
 
-      // SMS4 — ζήτηση αξιολόγησης: ανεξάρτητο από το email, best effort.
+      // Τα ραντεβού που καλύπτει ΑΥΤΟ το μήνυμα (ίδιος πελάτης, ίδια ημέρα). Το
+      // κείμενο φτιάχνεται από το ραντεβού a — το ΤΕΛΕΥΤΑΙΟ της ημέρας, δηλαδή
+      // την πιο πρόσφατη εμπειρία της πελάτισσας· η καταγραφή γίνεται σε ΟΛΑ,
+      // ώστε μια επίσκεψη με δύο θεραπείες να μη στείλει δύο αιτήματα.
+      const logGroup = (groupAppts && groupAppts.length) ? groupAppts : [a];
+      const logAll = async (status: string, extra?: Record<string, unknown>) => {
+        for (const g of logGroup) await log(g, 'review_request', channel, status, extra);
+      };
+
       const revCfg = smsConfigFor(clinicSettings, 'review_request');
       if (revCfg.enabled) {
         const smsPhone = a.patients && a.patients.phone;
@@ -731,32 +681,29 @@ Deno.serve(async (req: Request) => {
       }
 
       const email = a.patients && a.patients.email;
-      if (!isValidEmail(email)) { await log(a, 'review_request', channel, 'no_email'); results.no_email++; return; }
+      if (!isValidEmail(email)) { await logAll('no_email'); results.no_email++; return; }
       const fails = await failureCount(a, 'review_request');
       if (fails >= MAX_ATTEMPTS) {
-        await log(a, 'review_request', channel, 'failed_final', { error: `Εγκατάλειψη μετά από ${fails} αποτυχημένες προσπάθειες` });
+        await logAll('failed_final', { error: `Εγκατάλειψη μετά από ${fails} αποτυχημένες προσπάθειες` });
         await notifyGiveUp(a, 'review_request', fails, 'Επαναλαμβανόμενη αποτυχία αποστολής');
         results.errors++; return;
       }
       const html = reviewRequestEmailHtml((a.patients && a.patients.full_name) || '', a.service_name || '', reviewLink, brand);
       try {
         const msgId = await sendEmail(await gmail(), String(email), '⭐ Πώς ήταν η εμπειρία σας; — ' + brand.name, html, undefined, brand.name);
-        await log(a, 'review_request', channel, 'sent', { metadata: { gmail_id: msgId } });
+        await logAll('sent', { metadata: { gmail_id: msgId, grouped: logGroup.length } });
         results.review_requests = (results.review_requests || 0) + 1;
       } catch (e) {
-        await log(a, 'review_request', channel, 'failed', { error: e instanceof Error ? e.message : String(e) });
+        await logAll('failed', { error: e instanceof Error ? e.message : String(e) });
         results.errors++;
       }
     };
 
-    // Στιγμή 1 — αμέσως μετά το κλείσιμο ραντεβού από το CRM. ΔΕΝ περνάει από
-    // failureCount/MAX_ATTEMPTS (καλείται μία φορά, χειροκίνητα από το
-    // save-appt του index.html — όχι από τη σάρωση cron).
+    // Στιγμή 1 — αμέσως μετά το κλείσιμο ραντεβού από το CRM.
     const sendBookingConfirmation = async (a: Appt, channel = 'email') => {
       const bookTs = Math.floor(new Date(a.start_time).getTime() / 1000);
       const bookIcsUrl = `${CONFIRM_URL}?id=${a.id}&ts=${bookTs}&ics=1`;
 
-      // Σύντομος σύνδεσμος (?c=) μόνο για το SMS — το email κρατάει το πλήρες bookIcsUrl.
       const bookCfg = smsConfigFor(clinicSettings, 'booking_confirmation');
       if (bookCfg.enabled) {
         const smsPhone = a.patients && a.patients.phone;
@@ -807,47 +754,98 @@ Deno.serve(async (req: Request) => {
     const horizon = new Date(now.getTime() + 14 * 86400 * 1000);
 
     // 1) ΚΛΕΙΣΜΕΝΑ μέσα στο 48ωρο → αίτημα επιβεβαίωσης — ΟΜΑΔΟΠΟΙΗΜΕΝΑ ανά
-    //    πελάτη+ημέρα: 2 ραντεβού την ίδια μέρα = ΕΝΑ email με ώρα προσέλευσης
-    //    του πρώτου, ώστε να μην μπερδεύεται ο πελάτης.
+    //    πελάτη+ημέρα: 2 ραντεβού την ίδια μέρα = ΈΝΑ email με ώρα προσέλευσης
+    //    του πρώτου.
+    //
+    //    ΠΡΟΣΟΧΗ στο παράθυρο: το 48ωρο μετριέται ανά ΡΑΝΤΕΒΟΥ. Σε ραντεβού
+    //    11:00 και 12:30 της ίδιας ημέρας, το δεύτερο μπαίνει στο παράθυρο 1,5
+    //    ώρα μετά το πρώτο — σε ΑΛΛΟΝ κύκλο του cron. Αν τραβούσαμε μόνο όσα
+    //    χωράνε στο παράθυρο, η ομάδα της ημέρας ήταν ελλιπής, ξαναδουλευόταν
+    //    στον επόμενο κύκλο και ο πελάτης έπαιρνε ΔΕΥΤΕΡΟ μήνυμα. Γι' αυτό
+    //    τραβάμε 72 ώρες (48 + όλη την υπόλοιπη ημέρα) και κρατάμε ΜΟΝΟ τις
+    //    ημέρες που έχουν έστω ένα ραντεβού μέσα στο πραγματικό 48ωρο.
+    const fetchHorizon = new Date(in48h.getTime() + 24 * 3600 * 1000);
     const { data: bookedRows } = await supabase.from('appointments')
       .select('id,clinic_id,patient_id,status,start_time,service_name,duration_minutes,patients(full_name,email,phone)')
-      .eq('status', 'booked').gte('start_time', now.toISOString()).lte('start_time', in48h.toISOString());
+      .eq('status', 'booked').gte('start_time', now.toISOString()).lte('start_time', fetchHorizon.toISOString());
     const byPatientDay: Record<string, Appt[]> = {};
+    const dueDays = new Set<string>();
     for (const row of (bookedRows || []) as unknown as Appt[]) {
       const k = row.patient_id + '|' + athensDay(row.start_time);
       (byPatientDay[k] = byPatientDay[k] || []).push(row);
+      if (new Date(row.start_time) <= in48h) dueDays.add(k);
     }
-    for (const group of Object.values(byPatientDay)) {
+    for (const [k, group] of Object.entries(byPatientDay)) {
+      if (!dueDays.has(k)) continue; // ημέρα ακόμα εκτός 48ώρου
+      const sorted = [...group].sort((x, y) => (x.start_time < y.start_time ? -1 : 1));
+      // Αν το ΠΡΩΤΟ ραντεβού έχει ήδη πάρει μήνυμα, ο πελάτης γνωρίζει ήδη
+      // τη σωστή ώρα προσέλευσης. Αν όμως κλείστηκε αργότερα ραντεβού
+      // ΝΩΡΙΤΕΡΟ, το sorted[0] αλλάζει και φεύγει διορθωτικό μήνυμα.
+      if (await alreadyDone(sorted[0], 'confirmation_request')) continue;
       const pending: Appt[] = [];
-      for (const a of group) if (!(await alreadyDone(a, 'confirmation_request'))) pending.push(a);
+      for (const a of sorted) if (!(await alreadyDone(a, 'confirmation_request'))) pending.push(a);
       if (!pending.length) continue;
-      await sendConfirmation(group, pending);
+      await sendConfirmation(sorted, pending);
     }
 
-    // 2) ΚΛΕΙΣΜΕΝΑ Ή ΕΠΙΒΕΒΑΙΩΜΕΝΑ μελλοντικά χωρίς οδηγίες στον κύκλο τους →
-    //    οδηγίες. Φεύγουν ΜΑΖΙ με το email κράτησης (δεν περιμένουν
-    //    επιβεβαίωση) — κάποιες οδηγίες θέλουν μέρες προετοιμασία πριν τη
-    //    θεραπεία, οπότε δεν έχει νόημα να φτάνουν 48ωρο πριν.
+    // 2) ΚΛΕΙΣΜΕΝΑ Ή ΕΠΙΒΕΒΑΙΩΜΕΝΑ μελλοντικά → οδηγίες.
     const { data: confRows } = await supabase.from('appointments')
       .select('id,clinic_id,patient_id,status,start_time,service_name,duration_minutes,patients(full_name,email,phone)')
       .in('status', ['booked', 'confirmed']).gte('start_time', now.toISOString()).lte('start_time', horizon.toISOString());
+    //    ΟΜΑΔΟΠΟΙΗΣΗ ανά πελάτη + ημέρα + ΣΕΤ ΟΔΗΓΙΩΝ: δύο ραντεβού την ίδια
+    //    ημέρα με το ίδιο σετ έστελναν δύο ΠΑΝΟΜΟΙΟΤΥΠΑ email/SMS.
+    const byInstructionGroup: Record<string, Appt[]> = {};
     for (const row of (confRows || []) as unknown as Appt[]) {
-      if (await alreadyDone(row, 'instructions')) continue;
-      await sendInstructions(row);
+      const set = setForService(row.service_name || '');
+      const k = row.patient_id + '|' + athensDay(row.start_time) + '|' + (set ? set.id : 'noset');
+      (byInstructionGroup[k] = byInstructionGroup[k] || []).push(row);
+    }
+    for (const group of Object.values(byInstructionGroup)) {
+      const sorted = [...group].sort((x, y) => (x.start_time < y.start_time ? -1 : 1));
+      if (await alreadyDone(sorted[0], 'instructions')) continue;
+      const pending: Appt[] = [];
+      for (const a of sorted) if (!(await alreadyDone(a, 'instructions'))) pending.push(a);
+      if (!pending.length) continue;
+      await sendInstructions(sorted[0], 'email', pending);
     }
 
-    // 3) ΟΛΟΚΛΗΡΩΜΕΝΑ που πέρασαν τις καθορισμένες ημέρες από την ώρα τους →
-    //    ζήτηση αξιολόγησης. Παραμένει ανενεργή μέχρι να ενεργοποιηθεί ρητά
-    //    (review_request_enabled) και να οριστεί σύνδεσμος (review_link).
+    // 3) ΟΛΟΚΛΗΡΩΜΕΝΑ → ζήτηση αξιολόγησης, ΟΜΑΔΟΠΟΙΗΜΕΝΑ ανά πελάτη+ημέρα:
+    //    μία επίσκεψη = ΕΝΑ αίτημα, ακόμα κι αν έγιναν δύο θεραπείες. Φεύγει
+    //    reviewDelayMinutes λεπτά μετά το ΤΕΛΟΣ του τελευταίου ραντεβού της
+    //    ημέρας (start_time + duration), όχι μετά την έναρξη — ώστε να μην
+    //    φτάνει όσο η πελάτισσα είναι ακόμα στην καμπίνα.
     if (reviewRequestEnabled) {
-      const reviewCutoff = new Date(now.getTime() - reviewRequestDelayDays * 86400 * 1000);
       const reviewHorizon = new Date(now.getTime() - 30 * 86400 * 1000);
-      const { data: doneRows } = await supabase.from('appointments')
+      // Τραβάμε ΟΛΑ τα ραντεβού της περιόδου (όχι μόνο τα completed): ένα
+      // ραντεβού που εκκρεμεί ακόμα κρατάει την ημέρα «ανοιχτή».
+      const { data: dayRows } = await supabase.from('appointments')
         .select('id,clinic_id,patient_id,status,start_time,service_name,duration_minutes,patients(full_name,email,phone)')
-        .eq('status', 'completed').lte('start_time', reviewCutoff.toISOString()).gte('start_time', reviewHorizon.toISOString());
-      for (const row of (doneRows || []) as unknown as Appt[]) {
-        if (await alreadyDone(row, 'review_request')) continue;
-        await sendReviewRequest(row);
+        .gte('start_time', reviewHorizon.toISOString()).lte('start_time', now.toISOString());
+      const apptEnd = (a: Appt) => new Date(a.start_time).getTime() + ((a.duration_minutes || 60) * 60000);
+      const byReviewDay: Record<string, Appt[]> = {};
+      for (const row of (dayRows || []) as unknown as Appt[]) {
+        const k = row.patient_id + '|' + athensDay(row.start_time);
+        (byReviewDay[k] = byReviewDay[k] || []).push(row);
+      }
+      // Ραντεβού ξεχασμένο σε booked/confirmed που τελείωσε πριν από πολλές
+      // ώρες δεν πρέπει να μπλοκάρει για πάντα την αξιολόγηση της ημέρας.
+      const STALE_MS = 12 * 3600 * 1000;
+      for (const group of Object.values(byReviewDay)) {
+        const stillOpen = group.some((a) =>
+          (a.status === 'booked' || a.status === 'confirmed' || a.status === 'in_progress') &&
+          apptEnd(a) > now.getTime() - STALE_MS);
+        if (stillOpen) continue;
+        const done = group.filter((a) => a.status === 'completed');
+        if (!done.length) continue;
+        const lastEnd = Math.max(...done.map(apptEnd));
+        if (now.getTime() < lastEnd + reviewDelayMinutes * 60000) continue;
+        const sorted = [...done].sort((x, y) => (x.start_time < y.start_time ? -1 : 1));
+        if (await alreadyDone(sorted[0], 'review_request')) continue;
+        const pending: Appt[] = [];
+        for (const a of sorted) if (!(await alreadyDone(a, 'review_request'))) pending.push(a);
+        if (!pending.length) continue;
+        // Το κείμενο αναφέρει την ΤΕΛΕΥΤΑΙΑ θεραπεία της ημέρας.
+        await sendReviewRequest(sorted[sorted.length - 1], 'email', pending);
       }
     }
 
