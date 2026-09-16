@@ -3226,11 +3226,12 @@ function renderCalendar() {
   const calDay = calDate.getDay();
   weekStart.setDate(calDate.getDate() + (calDay===0?-6:1-calDay)); // Monday
 
-  // Clinic hours (configurable per clinic, default 09:00-20:00)
-  // Ωράριο ημερολογίου: πάντα τουλάχιστον 09:00–20:00. Αν οι ρυθμίσεις κλινικής
+  // Clinic hours (configurable per clinic, default 09:00-21:00)
+  // Ωράριο ημερολογίου: πάντα τουλάχιστον 09:00–21:00. Αν οι ρυθμίσεις κλινικής
   // ορίζουν ευρύτερο ωράριο (νωρίτερο άνοιγμα/αργότερο κλείσιμο), επεκτείνεται αντίστοιχα.
+  // endHour = η ΤΕΛΕΥΤΑΙΑ ζώνη μιας ώρας, οπότε 20 ⇒ το πλέγμα φτάνει ως τις 21:00.
   const startHour = Math.min(9, (S.clinic&&S.clinic.settings&&S.clinic.settings.start_hour) || 9);
-  const endHour = Math.max(19, ((S.clinic&&S.clinic.settings&&S.clinic.settings.end_hour) || 20) - 1);
+  const endHour = Math.max(20, ((S.clinic&&S.clinic.settings&&S.clinic.settings.end_hour) || 20) - 1);
   const hours = [];
   for (let h = startHour; h <= endHour; h++) hours.push(h);
 
