@@ -5774,12 +5774,14 @@ function renderSsvStaffTab() {
           const isActive = p.active!==false;
           return `<tr style="${isActive?'':'opacity:.55'}">
             <td>${esc(p.full_name)}</td>
-            <td style="color:var(--text-2)">${ROLES[p.role]||p.role}</td>
-            <td>${isActive?'<span style="color:#0F6E56">Ενεργή</span>':'<span style="color:var(--text-3)">Ανενεργή</span>'}</td>
+            <td>${roleCellHtml(p)}</td>
+            <td>
+              <label class="tglsw" title="${isActive?'Απενεργοποίηση — φεύγει από το Πρόγραμμα, τα στατιστικά της μένουν':'Ενεργοποίηση — επιστρέφει στο Πρόγραμμα'}"><input type="checkbox" ${isActive?'checked':''} onchange="toggleStaffActive('${p.id}', this.checked)"/><span class="tglsw-track"></span></label>
+              <span style="margin-left:8px;font-size:12px;color:${isActive?'#0F6E56':'var(--text-3)'}">${isActive?'Ενεργή':'Ανενεργή'}</span>
+            </td>
             <td>${svcNames.length?`<span style="display:inline-block;background:var(--surface-2);border-radius:8px;padding:3px 10px;font-size:12px;font-weight:500;white-space:nowrap">${svcNames.length} υπηρεσί${svcNames.length===1?'α':'ες'}</span>`:'<span style="color:var(--text-3)">Καμία</span>'}</td>
             <td style="text-align:right;white-space:nowrap">
               <button class="btn btn-ghost btn-sm" onclick="openStaffServicesModal('${p.id}')">Ανάθεση υπηρεσιών</button>
-              <button class="btn btn-ghost btn-sm" title="${isActive?'Απενεργοποίηση — φεύγει από το Πρόγραμμα, τα στατιστικά της μένουν':'Ενεργοποίηση — επιστρέφει στο Πρόγραμμα'}" onclick="toggleStaffActive('${p.id}', ${isActive?'false':'true'})">${isActive?'⏸':'▶'}</button>
             </td>
           </tr>`;
         }).join(''):`<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-2)">Δεν υπάρχει προσωπικό σε αυτή την κλινική ακόμα. Πρόσθεσε από τη <a href="#" onclick="goToUsersSettings();return false" style="color:var(--blue)">Διαχείριση Χρηστών</a>.</td></tr>`}
@@ -5789,9 +5791,53 @@ function renderSsvStaffTab() {
   </div>`;
 }
 
+// Μέσω RPC και όχι απευθείας update στο profiles: το RLS του profiles επιτρέπει
+// update μόνο στο δικό σου προφίλ, οπότε ένα απευθείας update σε άλλον χρήστη
+// περνούσε "επιτυχώς" χωρίς να αλλάζει τίποτα. Η set_staff_active ελέγχει
+// δικαιώματα admin και γράφει μόνο τη στήλη active.
 async function toggleStaffActive(staffId, makeActive) {
-  const {error} = await sb.from('profiles').update({active: makeActive}).eq('id', staffId);
-  if (error) { alert('Σφάλμα: '+error.message); return; }
+  const {error} = await sb.rpc('set_staff_active', {p_staff_id: staffId, p_active: makeActive});
+  // Σε σφάλμα κάνουμε render() ώστε ο διακόπτης να γυρίσει πίσω στην πραγματική
+  // κατάσταση — ο browser τον έχει ήδη γυρίσει οπτικά με το κλικ.
+  if (error) { alert('Σφάλμα: '+error.message); render(); return; }
+  await loadPageData(); render();
+}
+
+// ── ΑΛΛΑΓΗ ΡΟΛΟΥ ──
+// Οι ίδιοι κανόνες επιβάλλονται και στη βάση (set_staff_role) — εδώ απλά δεν
+// δείχνουμε επιλογές που θα απορρίπτονταν:
+//  · μόνο Super Admin / Διαχειριστής βλέπουν dropdown
+//  · κανείς δεν αλλάζει τον δικό του ρόλο
+//  · μόνο ο Super Admin δίνει ή αλλάζει ρόλο Super Admin
+function canEditRoleOf(p) {
+  const me = (S.profile&&S.profile.id);
+  return canSee(['super_admin','clinic_admin'])
+    && p.id !== me
+    && (isSuperAdmin() || p.role !== 'super_admin');
+}
+function roleOptionsHtml(currentRole) {
+  return Object.keys(ROLES)
+    .filter(r => isSuperAdmin() || r !== 'super_admin')
+    .map(r => `<option value="${r}" ${currentRole===r?'selected':''}>${esc(ROLES[r])}</option>`).join('');
+}
+function roleCellHtml(p) {
+  if (!canEditRoleOf(p)) return `<span style="color:var(--text-2)">${esc(ROLES[p.role]||p.role||'—')}</span>`;
+  return `<select class="form-control" style="font-size:12px;padding:4px 6px;max-width:160px" onchange="changeStaffRole('${p.id}', this.value)">${roleOptionsHtml(p.role)}</select>`;
+}
+// Επιστρέφει true αν η αλλαγή έγινε. Η αλλαγή ρόλου δίνει/αφαιρεί δικαιώματα,
+// οπότε ζητάμε επιβεβαίωση πριν σταλεί.
+async function applyRoleChange(staffId, newRole, staffName) {
+  if (!confirm(`Αλλαγή ρόλου${staffName?' για «'+staffName+'»':''} σε «${ROLES[newRole]||newRole}»;`)) return false;
+  const {error} = await sb.rpc('set_staff_role', {p_staff_id: staffId, p_role: newRole});
+  if (error) { alert('Σφάλμα: '+error.message); return false; }
+  return true;
+}
+async function changeStaffRole(staffId, newRole) {
+  const p = (S.ssvStaff||[]).find(x=>x.id===staffId);
+  const ok = await applyRoleChange(staffId, newRole, p&&p.full_name);
+  // Και στις δύο περιπτώσεις ξανασχεδιάζουμε: σε ακύρωση/σφάλμα το dropdown
+  // πρέπει να γυρίσει στον πραγματικό ρόλο, ο browser το έχει ήδη αλλάξει.
+  if (!ok) { render(); return; }
   await loadPageData(); render();
 }
 
@@ -6451,7 +6497,9 @@ function editLeaveQuota(staffId) {
   if (v===null) return;
   const n = parseFloat(v);
   if (isNaN(n) || n<0) { alert('Μη έγκυρος αριθμός.'); return; }
-  sb.from('profiles').update({annual_leave_days:n}).eq('id',staffId).then(({error}) => {
+  // RPC και όχι απευθείας update: το profiles δέχεται πλέον απευθείας γραφή
+  // μόνο σε full_name/phone — τα υπόλοιπα περνούν από ελεγχόμενες functions.
+  sb.rpc('set_staff_annual_leave', {p_staff_id: staffId, p_days: n}).then(({error}) => {
     if (error) { alert('Σφάλμα: '+error.message); return; }
     loadPageData().then(render);
   });
@@ -8204,12 +8252,16 @@ function bindEvents() {
         <span style="font-weight:500;font-size:13px">${esc(u.full_name||'—')}</span>
       </div></td>
       <td style="font-size:12px;color:var(--text-2)">${esc(u.email||'—')}</td>
-      <td>${badge(ROLES[u.role]||u.role,'#eef0fe','#2B3BF0')}</td>
+      <td>${canEditRoleOf(u)
+        ? `<select class="form-control" data-role-user="${u.id}" data-role-user-name="${esc(u.full_name||'')}" style="font-size:12px;padding:4px 6px;max-width:160px">${roleOptionsHtml(u.role)}</select>`
+        : badge(ROLES[u.role]||u.role,'#eef0fe','#2B3BF0')}</td>
       <td style="font-size:12px;color:var(--text-2)">${esc(u.clinics&&u.clinics.name||'—')}</td>
-      <td>${u.active!==false?badge('Ενεργός','#E1F5EE','#0F6E56'):badge('Ανενεργός','#FCEBEB','#A32D2D')}</td>
+      <td style="white-space:nowrap">
+        <label class="tglsw" title="${u.active!==false?'Απενεργοποίηση':'Ενεργοποίηση'}"><input type="checkbox" data-toggle-user="${u.id}" ${u.active!==false?'checked':''}/><span class="tglsw-track"></span></label>
+        <span style="margin-left:8px;font-size:12px;color:${u.active!==false?'#0F6E56':'var(--text-3)'}">${u.active!==false?'Ενεργός':'Ανενεργός'}</span>
+      </td>
       <td style="white-space:nowrap">
         <button class="btn btn-ghost btn-xs" data-edit-user="${u.id}">✏</button>
-        <button class="btn btn-ghost btn-xs" data-toggle-user="${u.id}" data-active="${u.active!==false}" title="${u.active!==false?'Απενεργοποίηση':'Ενεργοποίηση'}">${u.active!==false?'⏸':'▶'}</button>
       </td>
     </tr>`).join('');
     // Rebind edit buttons
@@ -8220,12 +8272,24 @@ function bindEvents() {
     // σελίδα Προσωπικό & Υπηρεσίες (toggleStaffActive), εδώ απλά ξαναφορτώνει
     // αυτόν τον πίνακα αντί να καλεί το render() της σελίδας staff-services.
     document.querySelectorAll('[data-toggle-user]').forEach(el => {
-      el.onclick = async () => {
+      el.onchange = async () => {
         const id = el.dataset.toggleUser;
-        const makeActive = el.dataset.active !== 'true';
+        const makeActive = el.checked;
         el.disabled = true;
-        const {error} = await sb.from('profiles').update({active: makeActive}).eq('id', id);
-        if (error) { alert('Σφάλμα: '+error.message); el.disabled=false; return; }
+        const {error} = await sb.rpc('set_staff_active', {p_staff_id: id, p_active: makeActive});
+        // Σε σφάλμα γυρίζουμε τον διακόπτη πίσω — ο browser τον έχει ήδη αλλάξει.
+        if (error) { alert('Σφάλμα: '+error.message); el.checked = !makeActive; el.disabled=false; return; }
+        _lub.click();
+      };
+    });
+    // Αλλαγή ρόλου — ίδιοι κανόνες με τη σελίδα Προσωπικό & Υπηρεσίες, αλλά
+    // εδώ ξαναφορτώνουμε αυτόν τον πίνακα αντί για render().
+    document.querySelectorAll('[data-role-user]').forEach(el => {
+      el.onchange = async () => {
+        el.disabled = true;
+        await applyRoleChange(el.dataset.roleUser, el.value, el.dataset.roleUserName);
+        // Ξαναφόρτωση σε κάθε περίπτωση: επαναφέρει το dropdown στον πραγματικό
+        // ρόλο αν η αλλαγή ακυρώθηκε ή απορρίφθηκε.
         _lub.click();
       };
     });
