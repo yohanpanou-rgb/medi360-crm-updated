@@ -18,7 +18,7 @@
 //     Ρυθμίσεις της κλινικής.
 //
 // Idempotency: μοναδικό (appointment_id, automation_type, cycle) με
-// cycle = start_time — αλλαγή ώρας ραντεβού ξεκινά αυτόματα νέο κύκλο.
+// cycle = start_time — αλλαγή ώρας ραντεβού ξεκινάει αυτόματα νέο κύκλο.
 //
 // Χειροκίνητες ενέργειες (από το CRM, με login): POST body
 // {action:'resend_confirmation'|'resend_instructions'|'resend_review_request'|'send_booking_confirmation', appointment_id} —
@@ -238,8 +238,8 @@ function normalizeGreek(s: string): string {
   return (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
 }
 
-// Βασικός έλεγχος μορφής (όχι μόνο "περιέχει @") — ένα email με κενό ή χωρίς
-// domain (π.χ. καταχωρημένο λάθος στην καρτέλα) πρέπει να καταγράφεται ως
+// Βασικός έλεγχος μορφής (όχι μόνο "περιέχει @") — ένα email με κενό ή
+// χωρίς domain (π.χ. καταχωρημένο λάθος στην καρτέλα) πρέπει να καταγράφεται ως
 // 'no_email' ΜΙΑ φορά, όχι να ξαναδοκιμάζεται κάθε 15 λεπτά επ' άπειρον αφού
 // το 'failed' δεν είναι τελική κατάσταση για το alreadyDone().
 function isValidEmail(email: unknown): boolean {
@@ -609,7 +609,7 @@ Deno.serve(async (req: Request) => {
       return (sets || []).find((x) => x.id === m.instruction_set_id) || null;
     };
 
-    // Δέχεται ΟΛΑ τα ραντεβού μιας ημέρας του πελάτη (dayAppts) και στέλνει ΕΝΑ
+    // Δέχεται ΟΛΑ τα ραντεβού μιας ημέρας του πελάτη (dayAppts) και στέλνει ΈΝΑ
     // email· pending = όσα δεν έχουν πάρει ακόμα αίτημα στον κύκλο τους (μόνο
     // αυτά καταγράφονται). Το κουμπί επιβεβαιώνει όλη την ημέρα (βλ.
     // appointment-confirm).
@@ -666,8 +666,17 @@ Deno.serve(async (req: Request) => {
     // Υπηρεσία χωρίς Instruction Set: στέλνεται ΚΑΙ ΤΟΤΕ email, απλό
     // κλεισίματος ραντεβού χωρίς τμήματα πριν/μετά (βλ. instructionsEmailHtml) —
     // ο πελάτης δεν πρέπει να μένει χωρίς καμία ενημέρωση επειδή λείπει σετ.
-    const sendInstructions = async (a: Appt, channel = 'email') => {
+    const sendInstructions = async (a: Appt, channel = 'email', groupAppts?: Appt[]) => {
       const set = setForService(a.service_name || '');
+
+      // Τα ραντεβού που καλύπτει ΑΥΤΟ το μήνυμα (ίδιος πελάτης, ίδια ημέρα, ίδιο
+      // σετ οδηγιών). Το κείμενο φτιάχνεται από το πρώτο ραντεβού (a)· η
+      // καταγραφή γίνεται σε ΟΛΑ, ώστε να μη φύγει δεύτερο πανομοιότυπο μήνυμα
+      // στον επόμενο κύκλο. Χωρίς groupAppts συμπεριφέρεται όπως πριν (ένα).
+      const logGroup = (groupAppts && groupAppts.length) ? groupAppts : [a];
+      const logAll = async (status: string, extra?: Record<string, unknown>) => {
+        for (const g of logGroup) await log(g, 'instructions', channel, status, extra);
+      };
 
       // SMS3 — οδηγίες πριν/μετά: ΜΙΚΡΟΣ σύνδεσμος (?c=<8-char code> →
       // link_codes) στο appointment-confirm, το οποίο κάνει lookup και
@@ -689,10 +698,10 @@ Deno.serve(async (req: Request) => {
       }
 
       const email = a.patients && a.patients.email;
-      if (!isValidEmail(email)) { await log(a, 'instructions', channel, 'no_email', set ? { metadata: { instruction_set: set.name } } : undefined); results.no_email++; return; }
+      if (!isValidEmail(email)) { await logAll('no_email', set ? { metadata: { instruction_set: set.name } } : undefined); results.no_email++; return; }
       const fails = await failureCount(a, 'instructions');
       if (fails >= MAX_ATTEMPTS) {
-        await log(a, 'instructions', channel, 'failed_final', { error: `Εγκατάλειψη μετά από ${fails} αποτυχημένες προσπάθειες` });
+        await logAll('failed_final', { error: `Εγκατάλειψη μετά από ${fails} αποτυχημένες προσπάθειες` });
         await notifyGiveUp(a, 'instructions', fails, 'Επαναλαμβανόμενη αποτυχία αποστολής');
         results.errors++; return;
       }
@@ -702,10 +711,10 @@ Deno.serve(async (req: Request) => {
       const subject = set ? '📋 Οδηγίες για το ραντεβού σας — ' + brand.name : '✅ Το ραντεβού σας — ' + brand.name;
       try {
         const msgId = await sendEmail(await gmail(), String(email), subject, html, ics, brand.name);
-        await log(a, 'instructions', channel, 'sent', { metadata: { gmail_id: msgId, instruction_set: set ? set.name : null } });
+        await logAll('sent', { metadata: { gmail_id: msgId, instruction_set: set ? set.name : null, grouped: logGroup.length } });
         results.instructions++;
       } catch (e) {
-        await log(a, 'instructions', channel, 'failed', { error: e instanceof Error ? e.message : String(e) });
+        await logAll('failed', { error: e instanceof Error ? e.message : String(e) });
         results.errors++;
       }
     };
@@ -807,21 +816,39 @@ Deno.serve(async (req: Request) => {
     const horizon = new Date(now.getTime() + 14 * 86400 * 1000);
 
     // 1) ΚΛΕΙΣΜΕΝΑ μέσα στο 48ωρο → αίτημα επιβεβαίωσης — ΟΜΑΔΟΠΟΙΗΜΕΝΑ ανά
-    //    πελάτη+ημέρα: 2 ραντεβού την ίδια μέρα = ΕΝΑ email με ώρα προσέλευσης
+    //    πελάτη+ημέρα: 2 ραντεβού την ίδια μέρα = ΈΝΑ email με ώρα προσέλευσης
     //    του πρώτου, ώστε να μην μπερδεύεται ο πελάτης.
+    //
+    //    ΠΡΟΣΟΧΗ στο παράθυρο: το 48ωρο μετριέται ανά ΡΑΝΤΕΒΟΥ. Σε ραντεβού
+    //    11:00 και 12:30 της ίδιας ημέρας, το δεύτερο μπαίνει στο παράθυρο 1,5
+    //    ώρα μετά το πρώτο — σε ΑΛΛΟΝ κύκλο του cron. Αν τραβούσαμε μόνο όσα
+    //    χωράνε στο παράθυρο, η ομάδα της ημέρας ήταν ελλιπής, ξαναδουλευόταν
+    //    στον επόμενο κύκλο και ο πελάτης έπαιρνε ΔΕΥΤΕΡΟ μήνυμα. Γι' αυτό
+    //    τραβάμε 72 ώρες (48 + όλη την υπόλοιπη ημέρα) και κρατάμε ΜΟΝΟ τις
+    //    ημέρες που έχουν έστω ένα ραντεβού μέσα στο πραγματικό 48ωρο.
+    const fetchHorizon = new Date(in48h.getTime() + 24 * 3600 * 1000);
     const { data: bookedRows } = await supabase.from('appointments')
       .select('id,clinic_id,patient_id,status,start_time,service_name,duration_minutes,patients(full_name,email,phone)')
-      .eq('status', 'booked').gte('start_time', now.toISOString()).lte('start_time', in48h.toISOString());
+      .eq('status', 'booked').gte('start_time', now.toISOString()).lte('start_time', fetchHorizon.toISOString());
     const byPatientDay: Record<string, Appt[]> = {};
+    const dueDays = new Set<string>();
     for (const row of (bookedRows || []) as unknown as Appt[]) {
       const k = row.patient_id + '|' + athensDay(row.start_time);
       (byPatientDay[k] = byPatientDay[k] || []).push(row);
+      if (new Date(row.start_time) <= in48h) dueDays.add(k);
     }
-    for (const group of Object.values(byPatientDay)) {
+    for (const [k, group] of Object.entries(byPatientDay)) {
+      if (!dueDays.has(k)) continue; // ημέρα ακόμα εκτός 48ώρου — περιμένει επόμενο κύκλο
+      const sorted = [...group].sort((x, y) => (x.start_time < y.start_time ? -1 : 1));
+      // Αν το ΠΡΩΤΟ ραντεβού της ημέρας έχει ήδη πάρει μήνυμα, ο πελάτης γνωρίζει
+      // ήδη τη σωστή ώρα προσέλευσης — δεν ξαναστέλνουμε τίποτα. Αν όμως κλείστηκε
+      // αργότερα ραντεβού ΝΩΡΙΤΕΡΟ από το προηγούμενο πρώτο, το sorted[0] αλλάζει,
+      // δεν είναι done, και φεύγει διορθωτικό μήνυμα με τη νέα ώρα προσέλευσης.
+      if (await alreadyDone(sorted[0], 'confirmation_request')) continue;
       const pending: Appt[] = [];
-      for (const a of group) if (!(await alreadyDone(a, 'confirmation_request'))) pending.push(a);
+      for (const a of sorted) if (!(await alreadyDone(a, 'confirmation_request'))) pending.push(a);
       if (!pending.length) continue;
-      await sendConfirmation(group, pending);
+      await sendConfirmation(sorted, pending);
     }
 
     // 2) ΚΛΕΙΣΜΕΝΑ Ή ΕΠΙΒΕΒΑΙΩΜΕΝΑ μελλοντικά χωρίς οδηγίες στον κύκλο τους →
@@ -831,9 +858,26 @@ Deno.serve(async (req: Request) => {
     const { data: confRows } = await supabase.from('appointments')
       .select('id,clinic_id,patient_id,status,start_time,service_name,duration_minutes,patients(full_name,email,phone)')
       .in('status', ['booked', 'confirmed']).gte('start_time', now.toISOString()).lte('start_time', horizon.toISOString());
+    //    ΟΜΑΔΟΠΟΙΗΣΗ ανά πελάτη + ημέρα + ΣΕΤ ΟΔΗΓΙΩΝ: δύο ραντεβού την ίδια
+    //    ημέρα που δείχνουν στο ίδιο σετ (π.χ. δύο facials, ή δύο φορές η ίδια
+    //    υπηρεσία) έστελναν δύο ΠΑΝΟΜΟΙΟΤΥΠΑ email/SMS. Διαφορετικά σετ
+    //    εξακολουθούν να στέλνουν ξεχωριστό μήνυμα — έχουν άλλο περιεχόμενο.
+    const byInstructionGroup: Record<string, Appt[]> = {};
     for (const row of (confRows || []) as unknown as Appt[]) {
-      if (await alreadyDone(row, 'instructions')) continue;
-      await sendInstructions(row);
+      const set = setForService(row.service_name || '');
+      const k = row.patient_id + '|' + athensDay(row.start_time) + '|' + (set ? set.id : 'noset');
+      (byInstructionGroup[k] = byInstructionGroup[k] || []).push(row);
+    }
+    for (const group of Object.values(byInstructionGroup)) {
+      const sorted = [...group].sort((x, y) => (x.start_time < y.start_time ? -1 : 1));
+      // Ίδιο σκεπτικό με το αίτημα επιβεβαίωσης παραπάνω: αν το πρώτο ραντεβού
+      // της ομάδας έχει ήδη πάρει τις οδηγίες, ο πελάτης τις έχει — τέλος.
+      if (await alreadyDone(sorted[0], 'instructions')) continue;
+      const pending: Appt[] = [];
+      for (const a of sorted) if (!(await alreadyDone(a, 'instructions'))) pending.push(a);
+      if (!pending.length) continue;
+      // Το μήνυμα φτιάχνεται από το ΠΡΩΤΟ ραντεβού, καταγράφεται σε όλα τα pending.
+      await sendInstructions(sorted[0], 'email', pending);
     }
 
     // 3) ΟΛΟΚΛΗΡΩΜΕΝΑ που πέρασαν τις καθορισμένες ημέρες από την ώρα τους →
