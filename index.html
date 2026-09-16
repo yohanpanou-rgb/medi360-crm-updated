@@ -3270,7 +3270,24 @@ function renderCalendar() {
   // να μην ανοίγουν δεύτερη, διπλότυπη στήλη δίπλα στη σταθερή.
   const canonTherapist = (t) => FIXED_THERAPISTS.find(f=>sameStaffName(f,t)) || t;
   const dayTherapistsRaw = [...new Set(dayAppts.map(apptTherapist).filter(Boolean).map(canonTherapist))];
-  const extraTherapists = dayTherapistsRaw.filter(t=>!FIXED_THERAPISTS.includes(t)).sort((a,b)=>a.localeCompare(b,'el'));
+  // Απενεργοποιημένη θεραπεύτρια (profiles.active=false): η στήλη της επανεμφανίζεται
+  // μόνο αν έχει ΠΡΑΓΜΑΤΙΚΟ ραντεβού εκείνη τη μέρα — κάποιος πρέπει να το αναλάβει.
+  // Ένα ακυρωμένο/no-show δεν αρκεί για να την ξαναφέρει στο πρόγραμμα.
+  const isInactiveStaffName = (t) => {
+    const st = staff.find(s => sameStaffName(s.full_name, t));
+    return !!st && st.active === false;
+  };
+  const hasLiveApptToday = (t) => dayAppts.some(a =>
+    a.status!=='cancelled' && a.status!=='no_show' &&
+    sameStaffName(canonTherapist(apptTherapist(a)||''), t));
+  const extraTherapists = dayTherapistsRaw
+    .filter(t=>!FIXED_THERAPISTS.includes(t))
+    .filter(t=>!isInactiveStaffName(t) || hasLiveApptToday(t))
+    .sort((a,b)=>a.localeCompare(b,'el'));
+  // Στήλες θεραπευτών που όντως υπάρχουν — ό,τι ραντεβού δεν ταιριάζει σε καμία
+  // (π.χ. ακυρωμένο απενεργοποιημένης θεραπεύτριας) πάει στα «Μη ανατεθειμένα»
+  // αντί να εξαφανίζεται τελείως από την ημέρα.
+  const therapistColIds = new Set([...FIXED_THERAPISTS, ...extraTherapists].map(n=>'t:'+n));
 
   // Ονόματα προσωπικού σε άδεια/διακοπές αυτή την ημέρα — μόνο οπτική προειδοποίηση
   // στη στήλη τους, ΔΕΝ μπλοκάρει τη δημιουργία ραντεβού.
@@ -3391,7 +3408,9 @@ function renderCalendar() {
         const colAppts = calMode==='therapist'
           ? dayAppts.filter(a=>{
               const t = apptTherapist(a);
-              return col.id==='unassigned' ? !t : ('t:'+canonTherapist(t))===col.id;
+              return col.id==='unassigned'
+                ? (!t || !therapistColIds.has('t:'+canonTherapist(t)))
+                : ('t:'+canonTherapist(t))===col.id;
             })
           : dayAppts.filter(a=>roomMap[a.id]===col.id);
         const overlapPack = packOverlaps(colAppts);
