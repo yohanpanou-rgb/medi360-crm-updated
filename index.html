@@ -5789,8 +5789,12 @@ function renderSsvStaffTab() {
   </div>`;
 }
 
+// Μέσω RPC και όχι απευθείας update στο profiles: το RLS του profiles επιτρέπει
+// update μόνο στο δικό σου προφίλ, οπότε ένα απευθείας update σε άλλον χρήστη
+// περνούσε "επιτυχώς" χωρίς να αλλάζει τίποτα. Η set_staff_active ελέγχει
+// δικαιώματα admin και γράφει μόνο τη στήλη active.
 async function toggleStaffActive(staffId, makeActive) {
-  const {error} = await sb.from('profiles').update({active: makeActive}).eq('id', staffId);
+  const {error} = await sb.rpc('set_staff_active', {p_staff_id: staffId, p_active: makeActive});
   if (error) { alert('Σφάλμα: '+error.message); return; }
   await loadPageData(); render();
 }
@@ -8224,7 +8228,7 @@ function bindEvents() {
         const id = el.dataset.toggleUser;
         const makeActive = el.dataset.active !== 'true';
         el.disabled = true;
-        const {error} = await sb.from('profiles').update({active: makeActive}).eq('id', id);
+        const {error} = await sb.rpc('set_staff_active', {p_staff_id: id, p_active: makeActive});
         if (error) { alert('Σφάλμα: '+error.message); el.disabled=false; return; }
         _lub.click();
       };
