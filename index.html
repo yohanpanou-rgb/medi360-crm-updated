@@ -8206,12 +8206,28 @@ function bindEvents() {
       <td style="font-size:12px;color:var(--text-2)">${esc(u.email||'—')}</td>
       <td>${badge(ROLES[u.role]||u.role,'#eef0fe','#2B3BF0')}</td>
       <td style="font-size:12px;color:var(--text-2)">${esc(u.clinics&&u.clinics.name||'—')}</td>
-      <td>${badge('Ενεργός','#E1F5EE','#0F6E56')}</td>
-      <td><button class="btn btn-ghost btn-xs" data-edit-user="${u.id}">✏</button></td>
+      <td>${u.active!==false?badge('Ενεργός','#E1F5EE','#0F6E56'):badge('Ανενεργός','#FCEBEB','#A32D2D')}</td>
+      <td style="white-space:nowrap">
+        <button class="btn btn-ghost btn-xs" data-edit-user="${u.id}">✏</button>
+        <button class="btn btn-ghost btn-xs" data-toggle-user="${u.id}" data-active="${u.active!==false}" title="${u.active!==false?'Απενεργοποίηση':'Ενεργοποίηση'}">${u.active!==false?'⏸':'▶'}</button>
+      </td>
     </tr>`).join('');
     // Rebind edit buttons
     document.querySelectorAll('[data-edit-user]').forEach(el => {
       el.onclick = () => alert('Επεξεργασία χρήστη — σύντομα διαθέσιμο');
+    });
+    // Ενεργοποίηση/Απενεργοποίηση χρήστη — ίδιο πεδίο profiles.active με τη
+    // σελίδα Προσωπικό & Υπηρεσίες (toggleStaffActive), εδώ απλά ξαναφορτώνει
+    // αυτόν τον πίνακα αντί να καλεί το render() της σελίδας staff-services.
+    document.querySelectorAll('[data-toggle-user]').forEach(el => {
+      el.onclick = async () => {
+        const id = el.dataset.toggleUser;
+        const makeActive = el.dataset.active !== 'true';
+        el.disabled = true;
+        const {error} = await sb.from('profiles').update({active: makeActive}).eq('id', id);
+        if (error) { alert('Σφάλμα: '+error.message); el.disabled=false; return; }
+        _lub.click();
+      };
     });
   });
 
