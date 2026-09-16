@@ -5760,7 +5760,7 @@ function renderSsvStaffTab() {
           return `<tr>
             <td>${esc(p.full_name)}</td>
             <td style="color:var(--text-2)">${ROLES[p.role]||p.role}</td>
-            <td style="max-width:360px">${svcNames.length?svcNames.map(n=>`<span style="display:inline-block;background:var(--surface-2);border-radius:8px;padding:2px 8px;font-size:11px;margin:2px 4px 2px 0">${esc(n)}</span>`).join(''):'<span style="color:var(--text-3)">Καμία</span>'}</td>
+            <td>${svcNames.length?`<span style="display:inline-block;background:var(--surface-2);border-radius:8px;padding:3px 10px;font-size:12px;font-weight:500;white-space:nowrap">${svcNames.length} υπηρεσί${svcNames.length===1?'α':'ες'}</span>`:'<span style="color:var(--text-3)">Καμία</span>'}</td>
             <td style="text-align:right;white-space:nowrap"><button class="btn btn-ghost btn-sm" onclick="openStaffServicesModal('${p.id}')">Ανάθεση υπηρεσιών</button></td>
           </tr>`;
         }).join(''):`<tr><td colspan="4" style="text-align:center;padding:20px;color:var(--text-2)">Δεν υπάρχει προσωπικό σε αυτή την κλινική ακόμα. Πρόσθεσε από τη <a href="#" onclick="goToUsersSettings();return false" style="color:var(--blue)">Διαχείριση Χρηστών</a>.</td></tr>`}
