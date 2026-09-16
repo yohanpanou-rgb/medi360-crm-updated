@@ -502,6 +502,20 @@ function apptStaffName(a, staffList) {
   return m2 ? m2[1].trim() : null;
 }
 
+// Σταθερές στήλες/επιλογές θεραπευτριών στο Πρόγραμμα — πάντα ίδια σειρά, αλλά
+// αποκλείει όποια έχει απενεργοποιηθεί (profiles.active=false). Το ιστορικό
+// ΔΕΝ επηρεάζεται: ραντεβού παλαιότερων ημερών βρίσκουν τη στήλη τους ούτως ή
+// άλλως μέσω dynamic discovery (extraTherapists στο renderCalendar) — αυτό εδώ
+// αφορά μόνο ποιες στήλες είναι πάντα ορατές ακόμα και σε άδειες μέρες.
+const ALL_FIXED_THERAPIST_NAMES = ['Λίνα','Χριστιάνα','Αθανασία','Νάνσυ'];
+function activeFixedTherapists(staffList, keepName) {
+  return ALL_FIXED_THERAPIST_NAMES.filter(n => {
+    if (keepName && sameStaffName(n, keepName)) return true;
+    const st = (staffList||[]).find(s=>sameStaffName(s.full_name, n));
+    return !st || st.active !== false;
+  });
+}
+
 // Ωράριο εργασίας ενός μέλους προσωπικού για συγκεκριμένη ημερομηνία, από
 // staff_schedules (εβδομαδιαίο) + staff_schedule_overrides (εξαίρεση για
 // συγκεκριμένη ημέρα, έχει προτεραιότητα). null = δεν έχει οριστεί καθόλου
@@ -3250,7 +3264,7 @@ function renderCalendar() {
   const norm = (s) => (s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
 
   // Σταθερές στήλες θεραπευτών — πάντα ορατές με αυτή τη σειρά
-  const FIXED_THERAPISTS = ['Λίνα','Χριστιάνα','Αθανασία','Νάνσυ'];
+  const FIXED_THERAPISTS = activeFixedTherapists(staff);
   // sameStaffName: ταιριάζει και διαφορετικές γραφές του ίδιου προσώπου
   // (π.χ. profile "Lina Panou" ↔ στήλη "Λίνα") ώστε ραντεβού με therapist_id
   // να μην ανοίγουν δεύτερη, διπλότυπη στήλη δίπλα στη σταθερή.
@@ -5610,7 +5624,7 @@ async function openNewApptAt(datetimeLocal, therapistName) {
     const cid = clinicId();
     const [{data:svc},{data:staffRows},{data:ss},{data:schedRows},{data:ovrRows}] = await Promise.all([
       sb.from('services').select('*').eq('clinic_id',cid).eq('active',true).order('category').order('name'),
-      sb.from('profiles').select('*').eq('clinic_id',cid).in('role',['therapist','clinic_admin']).order('full_name'),
+      sb.from('profiles').select('*').eq('clinic_id',cid).eq('active',true).in('role',['therapist','clinic_admin']).order('full_name'),
       sb.from('staff_services').select('*').eq('clinic_id',cid),
       sb.from('staff_schedules').select('*').eq('clinic_id',cid),
       sb.from('staff_schedule_overrides').select('*').eq('clinic_id',cid),
@@ -5753,20 +5767,32 @@ function renderSsvStaffTab() {
       <button class="btn btn-ghost btn-sm" onclick="goToUsersSettings()">Διαχείριση Χρηστών →</button>
     </div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Όνομα</th><th>Ρόλος</th><th>Υπηρεσίες που εκτελεί</th><th></th></tr></thead>
+      <thead><tr><th>Όνομα</th><th>Ρόλος</th><th>Κατάσταση</th><th>Υπηρεσίες που εκτελεί</th><th></th></tr></thead>
       <tbody>
         ${staff.length?staff.map(p=>{
           const svcNames = (linksByStaff[p.id]||[]).map(id=>svcById[id]&&svcById[id].name).filter(Boolean);
-          return `<tr>
+          const isActive = p.active!==false;
+          return `<tr style="${isActive?'':'opacity:.55'}">
             <td>${esc(p.full_name)}</td>
             <td style="color:var(--text-2)">${ROLES[p.role]||p.role}</td>
+            <td>${isActive?'<span style="color:#0F6E56">Ενεργή</span>':'<span style="color:var(--text-3)">Ανενεργή</span>'}</td>
             <td>${svcNames.length?`<span style="display:inline-block;background:var(--surface-2);border-radius:8px;padding:3px 10px;font-size:12px;font-weight:500;white-space:nowrap">${svcNames.length} υπηρεσί${svcNames.length===1?'α':'ες'}</span>`:'<span style="color:var(--text-3)">Καμία</span>'}</td>
-            <td style="text-align:right;white-space:nowrap"><button class="btn btn-ghost btn-sm" onclick="openStaffServicesModal('${p.id}')">Ανάθεση υπηρεσιών</button></td>
+            <td style="text-align:right;white-space:nowrap">
+              <button class="btn btn-ghost btn-sm" onclick="openStaffServicesModal('${p.id}')">Ανάθεση υπηρεσιών</button>
+              <button class="btn btn-ghost btn-sm" title="${isActive?'Απενεργοποίηση — φεύγει από το Πρόγραμμα, τα στατιστικά της μένουν':'Ενεργοποίηση — επιστρέφει στο Πρόγραμμα'}" onclick="toggleStaffActive('${p.id}', ${isActive?'false':'true'})">${isActive?'⏸':'▶'}</button>
+            </td>
           </tr>`;
-        }).join(''):`<tr><td colspan="4" style="text-align:center;padding:20px;color:var(--text-2)">Δεν υπάρχει προσωπικό σε αυτή την κλινική ακόμα. Πρόσθεσε από τη <a href="#" onclick="goToUsersSettings();return false" style="color:var(--blue)">Διαχείριση Χρηστών</a>.</td></tr>`}
+        }).join(''):`<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-2)">Δεν υπάρχει προσωπικό σε αυτή την κλινική ακόμα. Πρόσθεσε από τη <a href="#" onclick="goToUsersSettings();return false" style="color:var(--blue)">Διαχείριση Χρηστών</a>.</td></tr>`}
       </tbody>
     </table></div>
+    <div style="font-size:11.5px;color:var(--text-2);padding:10px 4px 0">💡 Απενεργοποίηση σημαίνει ότι η θεραπεύτρια δεν εμφανίζεται πλέον ως στήλη στο Πρόγραμμα ούτε ως επιλογή για νέο ραντεβού — τα παλιά της ραντεβού, στατιστικά και αναφορές παραμένουν ακριβώς όπως ήταν.</div>
   </div>`;
+}
+
+async function toggleStaffActive(staffId, makeActive) {
+  const {error} = await sb.from('profiles').update({active: makeActive}).eq('id', staffId);
+  if (error) { alert('Σφάλμα: '+error.message); return; }
+  await loadPageData(); render();
 }
 
 const SSV_DAYS = ['Κυριακή','Δευτέρα','Τρίτη','Τετάρτη','Πέμπτη','Παρασκευή','Σάββατο'];
@@ -7309,7 +7335,7 @@ function bindEvents() {
         const cid = clinicId();
         const [{data:svc}, {data:staffRows}, {data:ss}, {data:schedRows}, {data:ovrRows}] = await Promise.all([
           sb.from('services').select('*').eq('clinic_id',cid).eq('active',true).order('category').order('name'),
-          sb.from('profiles').select('*').eq('clinic_id',cid).in('role',['therapist','clinic_admin']).order('full_name'),
+          sb.from('profiles').select('*').eq('clinic_id',cid).eq('active',true).in('role',['therapist','clinic_admin']).order('full_name'),
           sb.from('staff_services').select('*').eq('clinic_id',cid),
           sb.from('staff_schedules').select('*').eq('clinic_id',cid),
           sb.from('staff_schedule_overrides').select('*').eq('clinic_id',cid),
@@ -7950,10 +7976,13 @@ function bindEvents() {
         ${(()=>{
           // Θεραπευτής: δικό του πεδίο — η αλλαγή εδώ ισοδυναμεί με drag & drop
           // (ενημερώνει therapist_id + notes και μετακινεί την κάρτα στη στήλη του).
-          const FIXED = ['Λίνα','Χριστιάνα','Αθανασία','Νάνσυ'];
-          const extras = (S.staff||[]).map(s=>s.full_name).filter(n=>n && !FIXED.some(f=>sameStaffName(f,n)));
-          const opts = [...FIXED, ...extras];
           const curName = apptStaffName(a, S.staff||[]) || '';
+          const FIXED = activeFixedTherapists(S.staff, curName);
+          const extras = (S.staff||[])
+            .filter(s=>s.full_name && !FIXED.some(f=>sameStaffName(f,s.full_name)))
+            .filter(s=>s.active!==false || sameStaffName(s.full_name, curName))
+            .map(s=>s.full_name);
+          const opts = [...FIXED, ...extras];
           return `<div style="margin-top:8px">
             <div style="font-size:11px;color:var(--text-2);margin-bottom:3px">Θεραπευτής</div>
             <select id="appt-therapist-edit" style="width:100%;font-size:12px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-family:var(--font)">
