@@ -5622,8 +5622,9 @@ async function deletePackage(id) {
   render();
 }
 
-// Κλικαμπλ τηλέφωνα: ☎ κλήση (tel:) + Viber συνομιλία, παντού όπου φαίνεται
-// νούμερο. Το Viber θέλει διεθνή μορφή (+30...).
+// Κλικαμπλ τηλέφωνα: ☎ κλήση (tel:) + 💬 αποστολή SMS (sms:), παντού όπου
+// φαίνεται νούμερο — Dashboard, λίστα ασθενών, καρτέλα, παράθυρο ραντεβού.
+// Και τα δύο θέλουν διεθνή μορφή (+30...).
 function phoneIntl(p) {
   const d = normalizePhone(p);
   if (!d || d.length < 9) return '';
@@ -5633,7 +5634,11 @@ function phoneActionsHtml(p, size) {
   const intl = phoneIntl(p);
   if (!intl) return '';
   const fs = size || 13;
-  return `<a href="tel:${intl}" onclick="event.stopPropagation()" title="Κλήση" style="text-decoration:none;font-size:${fs}px;flex-shrink:0">☎️</a><a href="viber://chat?number=${encodeURIComponent(intl)}" onclick="event.stopPropagation()" title="Μήνυμα στο Viber" style="text-decoration:none;font-size:${fs}px;flex-shrink:0">💬</a>`;
+  // Το 💬 ανοίγει την εφαρμογή μηνυμάτων του κινητού με έτοιμο παραλήπτη (SMS).
+  // Ήταν viber://chat — αλλά προϋπέθετε ότι ο πελάτης έχει Viber, ενώ SMS
+  // λαμβάνουν όλοι· επίσης η κλινική στέλνει ήδη SMS μέσω του παρόχου, οπότε
+  // το κανάλι παραμένει ενιαίο.
+  return `<a href="tel:${intl}" onclick="event.stopPropagation()" title="Κλήση" style="text-decoration:none;font-size:${fs}px;flex-shrink:0">☎️</a><a href="sms:${intl}" onclick="event.stopPropagation()" title="Αποστολή SMS" style="text-decoration:none;font-size:${fs}px;flex-shrink:0">💬</a>`;
 }
 
 // Μετάβαση στο Πρόγραμμα, στην ημέρα ενός ραντεβού (κλικ από Ιστορικό Ραντεβού)
