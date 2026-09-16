@@ -6599,7 +6599,7 @@ function renderSettings() {
       <div class="card">
         <div class="card-header"><span class="card-title">⭐ Ζήτηση Αξιολόγησης</span></div>
         <div style="padding:16px">
-          <div style="font-size:12px;color:var(--text-2);margin-bottom:14px">Στέλνει αυτόματα email στον πελάτη μετά την ολοκλήρωση ραντεβού, με σύνδεσμο για αξιολόγηση. Παραμένει ανενεργή μέχρι να τη θέσεις σε λειτουργία.</div>
+          <div style="font-size:12px;color:var(--text-2);margin-bottom:14px">Στέλνει αυτόματα email &amp; SMS στον πελάτη μετά την ολοκλήρωση του ραντεβού, με σύνδεσμο για αξιολόγηση. Αν ο πελάτης έχει <b>δύο ραντεβού την ίδια ημέρα</b>, φεύγει <b>ένα</b> μήνυμα, μετά το τέλος του τελευταίου. Παραμένει ανενεργή μέχρι να τη θέσεις σε λειτουργία.</div>
           <div class="form-group">
             <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
               <input type="checkbox" id="review-request-enabled" ${(c&&c.settings&&c.settings.review_request_enabled)?'checked':''}/>
@@ -6611,8 +6611,9 @@ function renderSettings() {
             <input class="form-control" id="review-request-link" placeholder="https://g.page/r/..." value="${esc((c&&c.settings&&c.settings.review_link)||'')}"/>
           </div>
           <div class="form-group">
-            <label class="form-label">Ημέρες μετά το ραντεβού</label>
-            <input class="form-control" type="number" min="0" id="review-request-delay" style="max-width:100px" value="${(c&&c.settings&&c.settings.review_request_delay_days)||2}"/>
+            <label class="form-label">Λεπτά μετά το τέλος του ραντεβού</label>
+            <input class="form-control" type="number" min="0" step="5" id="review-request-delay" style="max-width:100px" value="${(()=>{const s=(c&&c.settings)||{};return s.review_request_delay_minutes!=null?s.review_request_delay_minutes:(s.review_request_delay_days!=null?s.review_request_delay_days*1440:30);})()}"/>
+            <div style="font-size:11px;color:var(--text-2);margin-top:4px">π.χ. <b>30</b> = μισή ώρα αφού φύγει ο πελάτης. Ο έλεγχος τρέχει ανά 15 λεπτά, οπότε η πραγματική αποστολή είναι έως 15 λεπτά αργότερα.</div>
           </div>
           <button class="btn btn-primary" id="save-review-request-settings">Αποθήκευση</button>
         </div>
@@ -8417,11 +8418,15 @@ function bindEvents() {
     const enabled = document.getElementById('review-request-enabled');
     const link = document.getElementById('review-request-link');
     const delay = document.getElementById('review-request-delay');
+    // Αποθηκεύεται πλέον σε ΛΕΠΤΑ από το τέλος του τελευταίου ραντεβού της
+    // ημέρας. Το παλιό review_request_delay_days (ημέρες από την έναρξη)
+    // αφαιρείται, ώστε να μη μείνει να υπερισχύει ως fallback στο edge function.
     const settings = Object.assign({}, (S.clinic&&S.clinic.settings)||{}, {
       review_request_enabled: enabled ? enabled.checked : false,
       review_link: link ? link.value.trim() : '',
-      review_request_delay_days: delay ? (parseInt(delay.value)||0) : 2,
+      review_request_delay_minutes: delay ? Math.max(0, parseInt(delay.value)||0) : 30,
     });
+    delete settings.review_request_delay_days;
     const {error} = await sb.from('clinics').update({settings}).eq('id',clinicId());
     if (error) { alert(error.message); return; }
     if (S.clinic) S.clinic.settings = settings;
