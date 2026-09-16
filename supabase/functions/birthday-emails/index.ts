@@ -7,8 +7,9 @@
 //    ώστε αλλαγή του ποσού να μην επηρεάζει ήδη δοσμένα δώρα. Αποστολή μέσω
 //    Gmail API (ίδιος μηχανισμός με send-consultation-email, από
 //    yourbeautyline@gmail.com).
-//  - Όσοι ΔΕΝ έχουν email (ή GDPR) → εγγραφή channel='call': εμφανίζεται
-//    ειδοποίηση στο Dashboard ώστε η γραμματεία να τους καλέσει.
+//  - Όσοι ΔΕΝ έχουν email (ή GDPR) → SMS με το δώρο (channel='sms').
+//    Αν δεν έχουν κινητό ή αποτύχει το SMS → channel='call', ώστε να
+//    εμφανιστεί ειδοποίηση στο Dashboard για τηλεφώνημα.
 // Κάθε πελάτης παίρνει ΕΝΑ δώρο ανά έτος (unique patient_id+year).
 //
 // Καλείται ΕΠΙΣΗΣ χειροκίνητα (κουμπί «📧 Αποστολή Email τώρα» στην καρτέλα
@@ -21,6 +22,7 @@
 // Required secrets:
 //   BIRTHDAY_CRON_SECRET (ίδια τιμή με το x-cron-secret του cron job)
 //   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, BL_REFRESH_TOKEN (υπάρχουν ήδη)
+//   APIFON_TOKEN, APIFON_API_KEY, APIFON_SENDER_ID (για το SMS δώρου)
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -33,6 +35,79 @@ const CORS_HEADERS = {
 // Γράφεται και στη στήλη birthday_gifts.gift_value — τα παλιότερα δώρα κρατούν
 // την αξία με την οποία δόθηκαν (π.χ. 80€) και δεν επηρεάζονται.
 const GIFT_VALUE = 60;
+
+// ── SMS δώρου γενεθλίων (Apifon) ──
+// Όταν η πελάτισσα ΔΕΝ έχει email, το δώρο έφευγε μόνο ως «κάλεσε» στο
+// Dashboard. Πλέον στέλνεται SMS. Το κείμενο κρατιέται ΚΑΤΩ ΑΠΟ 70 ΧΑΡΑΚΤΗΡΕΣ
+// επίτηδες: τα ελληνικά πάνε σε UCS-2, όπου το ένα τμήμα SMS είναι 70
+// χαρακτήρες — ένα μεγαλύτερο κείμενο θα χρεωνόταν διπλά.
+const SMS_SEGMENT_CHARS = 70;
+const BIRTHDAY_SMS_DEFAULT = 'ΧΡΟΝΙΑ ΠΟΛΛΑ! ΔΩΡΟ {value}€ ΘΕΡΑΠΕΙΑ ΠΡΟΣΩΠΟΥ ΕΩΣ {expires}. ΤΗΛ {phone}';
+
+function normalizeSmsPhone(phone: string | undefined | null): string | null {
+  const digits = (phone || '').replace(/\D/g, '');
+  if (!digits) return null;
+  if (digits.startsWith('30') && digits.length === 12) return digits;
+  if (digits.length === 10 && digits.startsWith('69')) return '30' + digits;
+  if (digits.length >= 10) return digits;
+  return null;
+}
+
+// Μόνο κινητά δέχονται SMS — σταθερό τηλέφωνο θα χρεωνόταν χωρίς να φτάσει.
+function isMobile(phone: string | undefined | null): boolean {
+  const n = normalizeSmsPhone(phone);
+  if (!n) return false;
+  // Ελληνικά κινητά: +30 6xxxxxxxxx. Ξένο νούμερο δεν το κρίνουμε — το αφήνουμε
+  // να δοκιμάσει, ο πάροχος θα απαντήσει αν δεν παραδίδεται.
+  if (n.startsWith('30')) return n.slice(2).startsWith('6');
+  return true;
+}
+
+function smsCaps(s: string): string {
+  return (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase();
+}
+
+async function hmacSha256Base64(secret: string, message: string): Promise<string> {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(message));
+  let bin = '';
+  new Uint8Array(sig).forEach((b) => { bin += String.fromCharCode(b); });
+  return btoa(bin);
+}
+
+const APIFON_SMS_PATH = '/services/api/v1/sms/send';
+
+async function sendSms(phone: string | undefined | null, message: string): Promise<{ ok: boolean; error?: string; providerId?: string }> {
+  const to = normalizeSmsPhone(phone);
+  if (!to) return { ok: false, error: 'invalid_phone' };
+  const token = Deno.env.get('APIFON_TOKEN');
+  const apiKey = Deno.env.get('APIFON_API_KEY');
+  if (!token || !apiKey) return { ok: false, error: 'not_configured' };
+  const senderId = Deno.env.get('APIFON_SENDER_ID') || 'BeautyLine';
+
+  const body = JSON.stringify({
+    subscribers: [{ number: to }],
+    message: { text: message, sender_id: senderId, dc: 2 },
+  });
+  const date = new Date().toUTCString();
+  const signature = await hmacSha256Base64(apiKey, ['POST', APIFON_SMS_PATH, body, date].join('\n'));
+  try {
+    const res = await fetch('https://ars.apifon.com' + APIFON_SMS_PATH, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-ApifonWS-Date': date, Authorization: `ApifonWS ${token}:${signature}` },
+      body,
+    });
+    const out = await res.json();
+    if (!res.ok || !out.result_info || out.result_info.status_code !== 200) {
+      return { ok: false, error: JSON.stringify(out) };
+    }
+    const results = out.results && out.results[to];
+    return { ok: true, providerId: results && results[0] && results[0].message_id };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -192,7 +267,7 @@ Deno.serve(async (req: Request) => {
       .from('clinics').select('*').ilike('name', '%Beauty Line%').limit(1).single();
     if (clinicErr || !clinic) return json({ error: 'Clinic not found: ' + (clinicErr ? clinicErr.message : '') }, 500);
     const cid = clinic.id as string;
-    const c = clinic as { name?: string; booking_link?: string; settings?: { booking_link?: string; brand_name?: string; brand_color?: string; brand_logo_url?: string } };
+    const c = clinic as { name?: string; booking_link?: string; settings?: { booking_link?: string; brand_name?: string; brand_color?: string; brand_logo_url?: string; sms_templates?: Record<string, { enabled?: boolean; text?: string }> } };
     const bookingLink = c.booking_link || (c.settings && c.settings.booking_link) || '';
     const brand: Brand = {
       name: (c.settings && c.settings.brand_name) || c.name || 'Beauty Line by Lina Panou',
@@ -255,14 +330,47 @@ Deno.serve(async (req: Request) => {
     const expiresISO = expires.toISOString().slice(0, 10);
     const expiresStr = expires.toLocaleDateString('el-GR', { day: 'numeric', month: 'long', year: 'numeric' });
 
-    let sent = 0, callNotices = 0;
+    // Σύντομη ημερομηνία λήξης για το SMS (17/10) — το expiresStr («17 Οκτωβρίου
+    // 2026») δεν χωράει στο ένα τμήμα.
+    const expiresShort = `${expires.getDate()}/${expires.getMonth() + 1}`;
+    const smsCfg = ((c.settings && c.settings.sms_templates) || {})['birthday_gift'] || {};
+    const smsEnabled = smsCfg.enabled !== false;
+    const smsTemplate = (smsCfg.text && smsCfg.text.trim()) || BIRTHDAY_SMS_DEFAULT;
+    const clinicPhone = (clinic as { phone?: string }).phone || '';
+
+    let sent = 0, smsSent = 0, callNotices = 0;
     const errors: string[] = [];
     let token: string | null = null;
+
+    // Χωρίς email → SMS. Επιστρέφει true αν στάλθηκε, ώστε το Dashboard να
+    // δείχνει «εστάλη SMS» αντί για «κάλεσε για το δώρο».
+    const trySendGiftSms = async (p: { id: string; full_name?: string; phone?: string }): Promise<boolean> => {
+      if (!smsEnabled || !isMobile(p.phone)) return false;
+      const msg = smsCaps(
+        smsTemplate
+          .split('{value}').join(String(GIFT_VALUE))
+          .split('{expires}').join(expiresShort)
+          .split('{phone}').join(clinicPhone),
+      );
+      const r = await sendSms(p.phone, msg);
+      try {
+        await supabase.from('sms_log').insert({
+          clinic_id: cid, patient_id: p.id, sms_type: 'birthday_gift',
+          phone: p.phone || '', message: msg,
+          status: r.ok ? 'sent' : 'failed', error: r.ok ? null : (r.error || null),
+        });
+      } catch { /* best effort — το log δεν μπλοκάρει το δώρο */ }
+      if (!r.ok) errors.push(`SMS ${p.full_name}: ${r.error || 'άγνωστο σφάλμα'}`);
+      if (r.ok && msg.length > SMS_SEGMENT_CHARS) {
+        errors.push(`SMS ${p.full_name}: ${msg.length} χαρακτήρες — χρεώθηκε ως ${Math.ceil(msg.length / SMS_SEGMENT_CHARS)} SMS`);
+      }
+      return r.ok;
+    };
 
     for (const p of celebrants) {
       if (alreadyGiven.has(p.id)) continue;
       const canEmail = !!(p.email && String(p.email).includes('@') && p.gdpr_signed);
-      const channel = canEmail ? 'email' : 'call';
+      let channel = canEmail ? 'email' : 'call';
 
       if (canEmail) {
         try {
@@ -270,17 +378,19 @@ Deno.serve(async (req: Request) => {
           await sendGmailBirthdayEmail(token, p.email, p.full_name, expiresStr, bookingLink, brand);
           sent++;
         } catch (e) {
-          // Αποτυχία αποστολής → καταγράφεται ως 'call' ώστε η γραμματεία να
-          // το χειριστεί χειροκίνητα — το δώρο δεν χάνεται.
+          // Αποτυχία email → δοκιμάζουμε SMS πριν ζητήσουμε τηλεφώνημα, ώστε το
+          // δώρο να φτάνει στην πελάτισσα και όχι απλώς στη λίστα της γραμματείας.
           errors.push(`${p.full_name}: ${e instanceof Error ? e.message : String(e)}`);
+          const ok = await trySendGiftSms(p);
+          if (ok) { smsSent++; channel = 'sms'; } else { callNotices++; channel = 'call'; }
           await supabase.from('birthday_gifts').insert({
-            clinic_id: cid, patient_id: p.id, year, channel: 'call', expires_at: expiresISO, gift_value: GIFT_VALUE,
+            clinic_id: cid, patient_id: p.id, year, channel, expires_at: expiresISO, gift_value: GIFT_VALUE,
           });
-          callNotices++;
           continue;
         }
       } else {
-        callNotices++;
+        const ok = await trySendGiftSms(p);
+        if (ok) { smsSent++; channel = 'sms'; } else { callNotices++; }
       }
 
       await supabase.from('birthday_gifts').insert({
@@ -288,7 +398,7 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    return json({ ok: true, sent, callNotices, errors });
+    return json({ ok: true, sent, smsSent, callNotices, errors });
   } catch (e) {
     return json({ error: e instanceof Error ? e.message : 'Άγνωστο σφάλμα' }, 500);
   }

@@ -1935,6 +1935,7 @@ function renderDashboard() {
             const giftBadge = gift
               ? (gift.redeemed_at ? '<span style="font-size:9.5px;font-weight:700;color:#53586B;background:#E4E6ED;padding:1px 7px;border-radius:8px;flex-shrink:0">🎁 εξαργυρώθηκε</span>'
                 : gift.channel==='email' ? '<span style="font-size:9.5px;font-weight:700;color:#0F6E56;background:#E1F5EE;padding:1px 7px;border-radius:8px;flex-shrink:0">✉ εστάλη δώρο</span>'
+                : gift.channel==='sms' ? '<span style="font-size:9.5px;font-weight:700;color:#0F6E56;background:#E1F5EE;padding:1px 7px;border-radius:8px;flex-shrink:0">💬 εστάλη SMS</span>'
                 : '<span style="font-size:9.5px;font-weight:700;color:#A32D2D;background:#FCEBEB;padding:1px 7px;border-radius:8px;flex-shrink:0">📞 κάλεσε για το δώρο!</span>')
               : '';
             return `
@@ -3916,7 +3917,46 @@ const SMS_AUTOMATIONS = [
   {key:'confirmation_request',label:'SMS 2 — Υπενθύμιση/Επιβεβαίωση',desc:'48 ώρες πριν το ραντεβού',color:'#1D9E75',bg:'#E1F5EE',tmpl:'ΥΠΕΝΘΥΜΙΖΟΥΜΕ ΤΟ ΡΑΝΤΕΒΟΥ ΣΑΣ ΣΤΟ {clinic} ΓΙΑ {date} ΣΤΙΣ {time}. ΕΠΙΒΕΒΑΙΩΣΤΕ: {confirm_link}'},
   {key:'instructions',label:'SMS 3 — Οδηγίες Πριν/Μετά',desc:'Μαζί με το κλείσιμο του ραντεβού (δεν περιμένει επιβεβαίωση)',color:'#EF9F27',bg:'#FAEEDA',tmpl:'ΟΙ ΟΔΗΓΙΕΣ ΠΡΙΝ ΚΑΙ ΜΕΤΑ ΤΗ ΘΕΡΑΠΕΙΑ ΣΑΣ: {instructions_link}'},
   {key:'review_request',label:'SMS 4 — Ζήτηση Αξιολόγησης',desc:'Μετά την ολοκλήρωση του ραντεβού — ενεργό μόνο αν έχει οριστεί link αξιολόγησης στις Ρυθμίσεις',color:'#534AB7',bg:'#EEEDFE',tmpl:'ΕΥΧΑΡΙΣΤΟΥΜΕ ΓΙΑ ΤΗΝ ΕΠΙΣΚΕΨΗ ΣΑΣ ΣΤΟ {clinic}! ΑΞΙΟΛΟΓΗΣΤΕ ΜΑΣ: {review_link}'},
+  {key:'birthday_gift',label:'SMS 5 — Δώρο Γενεθλίων',desc:'Την ημέρα των γενεθλίων, ΜΟΝΟ σε όσες δεν έχουν email (όσες έχουν, παίρνουν το εορταστικό email)',color:'#C4618A',bg:'#FDF0F5',tmpl:'ΧΡΟΝΙΑ ΠΟΛΛΑ! ΔΩΡΟ {value}€ ΘΕΡΑΠΕΙΑ ΠΡΟΣΩΠΟΥ ΕΩΣ {expires}. ΤΗΛ {phone}'},
 ];
+
+// Ποιες μεταβλητές δέχεται κάθε τύπος SMS. Το δώρο γενεθλίων δεν έχει ραντεβού,
+// οπότε δεν έχει {date}/{time}/link — έχει αξία δώρου, λήξη και τηλέφωνο.
+function smsVarsFor(key) {
+  if (key==='birthday_gift') return '{value}, {expires}, {phone}';
+  const link = key==='booking_confirmation' ? 'calendar_link'
+    : key==='confirmation_request' ? 'confirm_link'
+    : key==='instructions' ? 'instructions_link' : 'review_link';
+  return `{name}, {clinic}, {date}, {time}, {${link}}`;
+}
+
+// Μετρητής χρέωσης: τα ελληνικά στέλνονται σε UCS-2, όπου ένα τμήμα SMS είναι
+// 70 χαρακτήρες. Μετράμε το ΤΕΛΙΚΟ κείμενο, με τις μεταβλητές αντικατεστημένες
+// από ρεαλιστικές τιμές — αλλιώς ένα «{value}» (7 χαρακτήρες) θα μετριόταν
+// βαρύτερα από το «60» που μπαίνει τελικά, και το αποτέλεσμα θα ήταν παραπλανητικό.
+const SMS_SAMPLE_VALUES = {
+  '{name}': 'ΜΑΡΙΑ ΠΑΠΑΔΟΠΟΥΛΟΥ',
+  '{clinic}': 'BEAUTY LINE',
+  '{date}': 'ΠΕΜΠΤΗ 18 ΣΕΠΤΕΜΒΡΙΟΥ 2026',
+  '{time}': '18:30',
+  '{value}': '60',
+  '{expires}': '16/10',
+  '{phone}': '2106135442',
+  // Σύντομος σύνδεσμος ?c=<8 χαρακτήρες> προς το appointment-confirm.
+  '{calendar_link}': 'https://kfidxwqgsaisbdgucsok.supabase.co/functions/v1/appointment-confirm?c=Ab3xY9Zq',
+  '{confirm_link}': 'https://kfidxwqgsaisbdgucsok.supabase.co/functions/v1/appointment-confirm?c=Ab3xY9Zq',
+  '{instructions_link}': 'https://kfidxwqgsaisbdgucsok.supabase.co/functions/v1/appointment-confirm?c=Ab3xY9Zq',
+  '{review_link}': 'https://g.page/r/BeautyLine/review',
+};
+function smsCountHtml(text) {
+  let t = text||'';
+  for (const [k,v] of Object.entries(SMS_SAMPLE_VALUES)) t = t.split(k).join(v);
+  const n = t.length;
+  const seg = Math.max(1, Math.ceil(n/70));
+  const color = seg===1 ? '#0F6E56' : seg===2 ? '#854F0B' : '#A32D2D';
+  return `<span style="color:${color};font-weight:600">≈ ${n} χαρακτήρες · ${seg} SMS</span>`
+    + `<span style="color:var(--text-2)"> (70 χαρ. ανά SMS στα ελληνικά)</span>`;
+}
 
 function renderSms() {
   const cid = clinicId();
@@ -3948,7 +3988,8 @@ function renderSms() {
         </div>
         <div style="margin-top:12px">
           <textarea class="form-control sms-auto-text" rows="3" style="font-size:12px;font-family:var(--mono);width:100%">${esc(text)}</textarea>
-          <div style="font-size:10.5px;color:var(--text-2);margin-top:4px">Μεταβλητές: {name}, {clinic}, {date}, {time}, {${a.key==='booking_confirmation'?'calendar_link':a.key==='confirmation_request'?'confirm_link':a.key==='instructions'?'instructions_link':'review_link'}} — το κείμενο φεύγει πάντα σε ΚΕΦΑΛΑΙΑ.</div>
+          <div style="font-size:10.5px;color:var(--text-2);margin-top:4px">Μεταβλητές: ${smsVarsFor(a.key)} — το κείμενο φεύγει πάντα σε ΚΕΦΑΛΑΙΑ.</div>
+          <div class="sms-auto-count" style="font-size:10.5px;margin-top:3px">${smsCountHtml(text)}</div>
         </div>
         <div style="display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-top:10px">
           <span class="sms-auto-saved" style="font-size:11px;color:#0F6E56"></span>
@@ -8364,9 +8405,18 @@ function bindEvents() {
     el.onclick = () => { S.settingsTab=el.dataset.settingsTab; render(); };
   });
 
+  // Ζωντανός μετρητής χαρακτήρων/τμημάτων καθώς γράφει η διαχείριση — το όριο
+  // των 70 χαρακτήρων ανά SMS δεν είναι προφανές και ένα κείμενο 71 χαρακτήρων
+  // χρεώνεται διπλά.
+  document.querySelectorAll('.sms-auto-text').forEach(ta => {
+    const card = ta.closest('[data-sms-auto-key]');
+    const out = card && card.querySelector('.sms-auto-count');
+    if (out) ta.addEventListener('input', () => { out.innerHTML = smsCountHtml(ta.value); });
+  });
+
   // Save SMS automation on/off + custom text (σελίδα SMS & Αυτοματισμοί) —
   // clinics.settings.sms_templates[key] = {enabled, text}, διαβάζεται από το
-  // appointment-automations edge function (smsConfigFor).
+  // appointment-automations edge function (smsConfigFor) και το birthday-emails.
   document.querySelectorAll('.sms-auto-save').forEach(btn => {
     btn.addEventListener('click', async () => {
       const card = btn.closest('[data-sms-auto-key]');
