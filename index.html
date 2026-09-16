@@ -611,14 +611,25 @@ function getCityFieldValue(prefix) {
   return sel.value;
 }
 
+// Ημερολογιακή ημέρα (Αθήνα) μιας χρονοσφραγίδας, ως 'YYYY-MM-DD' — συγκρίσιμη ως string.
+function athensDay(d) {
+  const dt = new Date(d);
+  return isNaN(dt) ? '' : dt.toLocaleDateString('en-CA', {timeZone:'Europe/Athens'});
+}
 function findServiceMatch(appointments, afterDateStr, treatmentText) {
-  const afterDate = new Date(afterDateStr);
+  // Το consultation υπογράφεται συνήθως ΜΕΤΑ τη θεραπεία της ίδιας επίσκεψης
+  // (π.χ. ραντεβού 17:00, υπογραφή πλάνου 19:28). Αν συγκρίναμε με την ακριβή
+  // ώρα υπογραφής, το ραντεβού εκείνης της μέρας έμενε απ' έξω και η υπηρεσία
+  // εμφανιζόταν «Δεν έχει κλειστεί» ενώ είχε ήδη γίνει. Μετράει λοιπόν ΟΛΗ η
+  // ημέρα του consultation και μετά.
+  const afterDay = athensDay(afterDateStr);
+  if (!afterDay) return null;
   const normTreatment = normalizeGreek(treatmentText);
   const treatWords = normTreatment.split(' ').filter(w=>w.length>=4);
   if (!treatWords.length) return null;
   // Ένα ακυρωμένο ραντεβού δεν αποδεικνύει τίποτα — δεν πρέπει να μετράει ούτε
   // ως "κλεισμένο" ούτε ως "έγινε", αλλιώς μια ακύρωση θα άφηνε λάθος badge.
-  const candidates = (appointments||[]).filter(a => a.start_time && a.status!=='cancelled' && new Date(a.start_time) > afterDate);
+  const candidates = (appointments||[]).filter(a => a.start_time && a.status!=='cancelled' && athensDay(a.start_time) >= afterDay);
   candidates.sort((a,b)=>new Date(a.start_time)-new Date(b.start_time)); // πιο κοντινό στο μέλλον πρώτα
   for (const a of candidates) {
     const normService = normalizeGreek(a.service_name||'');
@@ -634,11 +645,14 @@ function findServiceMatch(appointments, afterDateStr, treatmentText) {
 // ✓ Αγοράστηκε δίπλα σε κάθε προτεινόμενο προϊόν που όντως πωλήθηκε ΜΕΤΑ την
 // ημερομηνία αυτού του consultation.
 function findProductSaleMatch(productSales, afterDateStr, productText) {
-  const afterDate = new Date(afterDateStr);
+  // Ίδιος κανόνας ημέρας με το findServiceMatch: προϊόν που αγοράστηκε στην ίδια
+  // επίσκεψη, λίγο πριν την υπογραφή του πλάνου, μετράει ως αγορασμένο.
+  const afterDay = athensDay(afterDateStr);
+  if (!afterDay) return null;
   const normProduct = normalizeGreek(productText);
   const prodWords = normProduct.split(' ').filter(w=>w.length>=4);
   if (!prodWords.length) return null;
-  const candidates = (productSales||[]).filter(s => s.created_at && new Date(s.created_at) > afterDate);
+  const candidates = (productSales||[]).filter(s => s.created_at && athensDay(s.created_at) >= afterDay);
   candidates.sort((a,b)=>new Date(a.created_at)-new Date(b.created_at)); // πιο κοντινή πώληση πρώτα
   for (const s of candidates) {
     const normName = normalizeGreek(s.product_name||'');
