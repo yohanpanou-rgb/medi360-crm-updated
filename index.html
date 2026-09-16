@@ -253,6 +253,15 @@ tr{cursor:pointer}
 .form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .form-control{width:100%}
 
+/* TOGGLE SWITCH (κουμπάκια on/off) */
+.tglsw{position:relative;display:inline-block;width:36px;height:20px;flex:none;vertical-align:middle}
+.tglsw input{opacity:0;width:0;height:0;position:absolute}
+.tglsw .tglsw-track{position:absolute;inset:0;background:var(--border);border-radius:20px;transition:.15s;cursor:pointer}
+.tglsw .tglsw-track:before{content:'';position:absolute;width:16px;height:16px;left:2px;top:2px;background:#fff;border-radius:50%;transition:.15s;box-shadow:0 1px 2px rgba(0,0,0,0.2)}
+.tglsw input:checked+.tglsw-track{background:var(--green)}
+.tglsw input:checked+.tglsw-track:before{transform:translateX(16px)}
+.tglsw input:disabled+.tglsw-track{opacity:.35;cursor:not-allowed}
+
 /* APPT CARD */
 .appt-card{background:var(--white);border-radius:10px;border:1px solid var(--border-2);padding:14px 16px;display:flex;align-items:center;gap:14px;box-shadow:var(--shadow-sm);transition:.15s}
 .appt-card:hover{box-shadow:var(--shadow);transform:translateY(-1px)}
@@ -5751,7 +5760,7 @@ function renderSsvStaffTab() {
           return `<tr>
             <td>${esc(p.full_name)}</td>
             <td style="color:var(--text-2)">${ROLES[p.role]||p.role}</td>
-            <td style="max-width:360px">${svcNames.length?svcNames.map(n=>`<span style="display:inline-block;background:var(--surface-2);border-radius:8px;padding:2px 8px;font-size:11px;margin:2px 4px 2px 0">${esc(n)}</span>`).join(''):'<span style="color:var(--text-3)">Καμία</span>'}</td>
+            <td>${svcNames.length?`<span style="display:inline-block;background:var(--surface-2);border-radius:8px;padding:3px 10px;font-size:12px;font-weight:500;white-space:nowrap">${svcNames.length} υπηρεσί${svcNames.length===1?'α':'ες'}</span>`:'<span style="color:var(--text-3)">Καμία</span>'}</td>
             <td style="text-align:right;white-space:nowrap"><button class="btn btn-ghost btn-sm" onclick="openStaffServicesModal('${p.id}')">Ανάθεση υπηρεσιών</button></td>
           </tr>`;
         }).join(''):`<tr><td colspan="4" style="text-align:center;padding:20px;color:var(--text-2)">Δεν υπάρχει προσωπικό σε αυτή την κλινική ακόμα. Πρόσθεσε από τη <a href="#" onclick="goToUsersSettings();return false" style="color:var(--blue)">Διαχείριση Χρηστών</a>.</td></tr>`}
@@ -6212,23 +6221,40 @@ async function deleteBranch(id) {
 
 function openStaffServicesModal(staffId) {
   const p = (S.ssvStaff||[]).find(x=>x.id===staffId); if (!p) return;
-  const linked = new Set((S.ssvStaffServices||[]).filter(r=>r.staff_id===staffId).map(r=>r.service_id));
+  const links = {};
+  (S.ssvStaffServices||[]).filter(r=>r.staff_id===staffId).forEach(r=>{ links[r.service_id] = !!r.online_booking_enabled; });
   const svcs = (S.ssvServices||[]).filter(s=>s.active);
+  const byCat = {};
+  svcs.forEach(s=>{ const c = s.category||'Χωρίς κατηγορία'; (byCat[c]=byCat[c]||[]).push(s); });
+  const cats = Object.keys(byCat).sort();
   const old = document.getElementById('ssv-overlay'); if (old) old.remove();
   const ov = document.createElement('div');
   ov.id = 'ssv-overlay';
   ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9000;display:flex;align-items:center;justify-content:center;padding:12px';
   ov.innerHTML = `
-    <div style="background:var(--white);border-radius:16px;max-width:480px;width:100%;max-height:86vh;overflow-y:auto;padding:20px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+    <div style="background:var(--white);border-radius:16px;max-width:700px;width:100%;max-height:88vh;overflow-y:auto;padding:20px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
         <div style="font-size:15px;font-weight:700">Υπηρεσίες — ${esc(p.full_name)}</div>
         <button onclick="document.getElementById('ssv-overlay').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-2)">×</button>
       </div>
-      ${svcs.length?svcs.map(s=>`
-        <label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;cursor:pointer;border-bottom:1px solid var(--border-2)">
-          <input type="checkbox" class="ssv-svc-check" value="${s.id}" ${linked.has(s.id)?'checked':''}/>
-          ${esc(s.name)} <span style="color:var(--text-3);font-size:11px">(${esc(s.category||'—')})</span>
-        </label>`).join(''):'<div style="color:var(--text-2);font-size:13px">Δεν υπάρχουν ενεργές υπηρεσίες. Πρόσθεσε πρώτα από την καρτέλα Υπηρεσίες.</div>'}
+      <div style="font-size:11.5px;color:var(--text-2);margin-bottom:12px">«Εκτελεί» = πραγματοποιεί την υπηρεσία &nbsp;·&nbsp; «Online Booking» = θα εμφανίζεται στην online κράτηση (η λειτουργία online booking είναι υπό κατασκευή)</div>
+      ${svcs.length?`<div class="table-wrap"><table>
+        <thead><tr><th>Υπηρεσία</th><th style="text-align:center;width:76px">Εκτελεί</th><th style="text-align:center;width:120px">Online Booking</th></tr></thead>
+        <tbody>
+        ${cats.map(cat=>`
+          <tr><td colspan="3" style="background:var(--surface-2);font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.4px;padding:6px 10px">${esc(cat)}</td></tr>
+          ${byCat[cat].map(s=>{
+            const does = links.hasOwnProperty(s.id);
+            const online = does && links[s.id];
+            return `<tr>
+              <td>${esc(s.name)}</td>
+              <td style="text-align:center"><label class="tglsw"><input type="checkbox" class="ssv-svc-check" value="${s.id}" ${does?'checked':''} onchange="ssvToggleOnlineRow('${s.id}')"/><span class="tglsw-track"></span></label></td>
+              <td style="text-align:center"><label class="tglsw"><input type="checkbox" class="ssv-svc-online" value="${s.id}" ${online?'checked':''} ${does?'':'disabled'}/><span class="tglsw-track"></span></label></td>
+            </tr>`;
+          }).join('')}
+        `).join('')}
+        </tbody>
+      </table></div>`:'<div style="color:var(--text-2);font-size:13px">Δεν υπάρχουν ενεργές υπηρεσίες. Πρόσθεσε πρώτα από την καρτέλα Υπηρεσίες.</div>'}
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
         <button class="btn btn-ghost" onclick="document.getElementById('ssv-overlay').remove()">Ακύρωση</button>
         <button class="btn btn-primary" onclick="saveStaffServices('${staffId}')">Αποθήκευση</button>
@@ -6237,13 +6263,21 @@ function openStaffServicesModal(staffId) {
   document.body.appendChild(ov);
 }
 
+function ssvToggleOnlineRow(serviceId) {
+  const performsEl = document.querySelector(`.ssv-svc-check[value="${serviceId}"]`);
+  const onlineEl = document.querySelector(`.ssv-svc-online[value="${serviceId}"]`);
+  if (!performsEl || !onlineEl) return;
+  onlineEl.disabled = !performsEl.checked;
+  if (!performsEl.checked) onlineEl.checked = false;
+}
+
 async function saveStaffServices(staffId) {
-  const checked = [...document.querySelectorAll('.ssv-svc-check:checked')].map(el=>el.value);
-  const current = new Set((S.ssvStaffServices||[]).filter(r=>r.staff_id===staffId).map(r=>r.service_id));
-  const toAdd = checked.filter(id=>!current.has(id));
-  const toRemove = [...current].filter(id=>!checked.includes(id));
-  if (toRemove.length) await sb.from('staff_services').delete().eq('staff_id',staffId).in('service_id',toRemove);
-  if (toAdd.length) await sb.from('staff_services').insert(toAdd.map(service_id=>({clinic_id:clinicId(), staff_id:staffId, service_id})));
+  const rows = [...document.querySelectorAll('.ssv-svc-check:checked')].map(el=>({
+    service_id: el.value,
+    online: (document.querySelector(`.ssv-svc-online[value="${el.value}"]`)||{}).checked || false,
+  }));
+  await sb.from('staff_services').delete().eq('staff_id',staffId).eq('clinic_id',clinicId());
+  if (rows.length) await sb.from('staff_services').insert(rows.map(r=>({clinic_id:clinicId(), staff_id:staffId, service_id:r.service_id, online_booking_enabled:r.online})));
   const ov = document.getElementById('ssv-overlay'); if (ov) ov.remove();
   await loadPageData(); render();
 }
