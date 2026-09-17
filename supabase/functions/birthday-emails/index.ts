@@ -333,8 +333,14 @@ Deno.serve(async (req: Request) => {
     // Σύντομη ημερομηνία λήξης για το SMS (17/10) — το expiresStr («17 Οκτωβρίου
     // 2026») δεν χωράει στο ένα τμήμα.
     const expiresShort = `${expires.getDate()}/${expires.getMonth() + 1}`;
-    const smsCfg = ((c.settings && c.settings.sms_templates) || {})['birthday_gift'] || {};
-    const smsEnabled = smsCfg.enabled !== false;
+    const smsCfg = ((c.settings && c.settings.sms_templates) || {})['birthday_gift'] || {} as { enabled?: boolean; text?: string; channel?: string };
+    // Πολιτική καναλιού (Ρυθμίσεις → SMS & Αυτοματισμοί): 'email_else_sms' (προεπιλογή,
+    // η μέχρι τώρα συμπεριφορά), 'both', 'email' (χωρίς SMS), 'sms' (μόνο SMS), 'off'.
+    const giftChannel = (smsCfg as { channel?: string }).channel || (smsCfg.enabled === false ? 'email' : 'email_else_sms');
+    if (giftChannel === 'off') return json({ ok: true, sent: 0, smsSent: 0, callNotices: 0, errors: [], skipped: 'birthday_gift_disabled' });
+    const smsEnabled = giftChannel !== 'email';
+    const emailAllowed = giftChannel !== 'sms';
+    const smsAlso = giftChannel === 'both';
     const smsTemplate = (smsCfg.text && smsCfg.text.trim()) || BIRTHDAY_SMS_DEFAULT;
     const clinicPhone = (clinic as { phone?: string }).phone || '';
 
@@ -369,7 +375,7 @@ Deno.serve(async (req: Request) => {
 
     for (const p of celebrants) {
       if (alreadyGiven.has(p.id)) continue;
-      const canEmail = !!(p.email && String(p.email).includes('@') && p.gdpr_signed);
+      const canEmail = emailAllowed && !!(p.email && String(p.email).includes('@') && p.gdpr_signed);
       let channel = canEmail ? 'email' : 'call';
 
       if (canEmail) {
@@ -377,6 +383,7 @@ Deno.serve(async (req: Request) => {
           if (!token) token = await getGmailAccessToken();
           await sendGmailBirthdayEmail(token, p.email, p.full_name, expiresStr, bookingLink, brand);
           sent++;
+          if (smsAlso) { const ok = await trySendGiftSms(p); if (ok) smsSent++; }
         } catch (e) {
           // Αποτυχία email → δοκιμάζουμε SMS πριν ζητήσουμε τηλεφώνημα, ώστε το
           // δώρο να φτάνει στην πελάτισσα και όχι απλώς στη λίστα της γραμματείας.

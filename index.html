@@ -4275,6 +4275,31 @@ const SMS_AUTOMATIONS = [
   {key:'birthday_gift',label:'SMS 5 — Δώρο Γενεθλίων',desc:'Την ημέρα των γενεθλίων, ΜΟΝΟ σε όσες δεν έχουν email (όσες έχουν, παίρνουν το εορταστικό email)',color:'#C4618A',bg:'#FDF0F5',tmpl:'ΧΡΟΝΙΑ ΠΟΛΛΑ! ΔΩΡΟ {value}€ ΘΕΡΑΠΕΙΑ ΠΡΟΣΩΠΟΥ ΕΩΣ {expires}. ΤΗΛ {phone}'},
 ];
 
+// Πολιτική καναλιού ανά μήνυμα (ίδια κλειδιά με το channelPolicyFor στα edge functions).
+// Προεπιλογή = η μέχρι τώρα συμπεριφορά: email + SMS για τα ραντεβού, «email αλλιώς SMS» για το δώρο.
+const SMS_CHANNEL_LABELS = {
+  both: 'Email + SMS', email: 'Μόνο email', sms: 'Μόνο SMS', email_else_sms: 'Email, αλλιώς SMS', off: 'Απενεργοποιημένο',
+};
+function smsChannelValue(key, cfg) {
+  if (cfg && cfg.channel && SMS_CHANNEL_LABELS[cfg.channel]) return cfg.channel;
+  if (key==='birthday_gift') return (cfg && cfg.enabled===false) ? 'email' : 'email_else_sms';
+  return (cfg && cfg.enabled===false) ? 'email' : 'both';
+}
+function smsChannelOptions(key, cfg) {
+  const cur = smsChannelValue(key, cfg);
+  return ['both','email_else_sms','email','sms','off'].map(v=>({v, l:SMS_CHANNEL_LABELS[v], sel:v===cur}));
+}
+function smsChannelHint(key, ch) {
+  const m = {
+    both: 'Ο πελάτης λαμβάνει και email και SMS (αν έχει και τα δύο).',
+    email: 'Φεύγει μόνο email. Πελάτες χωρίς email δεν ενημερώνονται από αυτό το μήνυμα.',
+    sms: 'Φεύγει μόνο SMS στο κινητό. Δεν στέλνεται email.',
+    email_else_sms: 'Email αν υπάρχει έγκυρο email, αλλιώς SMS — ένα μήνυμα, όχι δύο.',
+    off: 'Το μήνυμα δεν στέλνεται καθόλου.',
+  };
+  return '📡 ' + (m[ch]||'');
+}
+
 // Ποιες μεταβλητές δέχεται κάθε τύπος SMS. Το δώρο γενεθλίων δεν έχει ραντεβού,
 // οπότε δεν έχει {date}/{time}/link — έχει αξία δώρου, λήξη και τηλέφωνο.
 function smsVarsFor(key) {
@@ -4337,11 +4362,14 @@ function renderSms() {
             <div style="font-size:11px;color:var(--text-2)">${a.desc}</div>
           </div>
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none">
-            <span style="font-size:11px;color:var(--text-2)">Ενεργό</span>
-            <input type="checkbox" class="sms-auto-enabled" ${enabled?'checked':''} style="width:16px;height:16px;accent-color:var(--blue);cursor:pointer"/>
+            <span style="font-size:11px;color:var(--text-2)">Κανάλι</span>
+            <select class="sms-auto-channel" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-family:var(--font)">
+              ${smsChannelOptions(a.key, cfg).map(o=>`<option value="${o.v}" ${o.sel?'selected':''}>${o.l}</option>`).join('')}
+            </select>
           </label>
         </div>
         <div style="margin-top:12px">
+          <div class="sms-auto-channel-hint" style="font-size:11px;color:var(--text-2);margin-bottom:6px">${smsChannelHint(a.key, smsChannelValue(a.key, cfg))}</div>
           <textarea class="form-control sms-auto-text" rows="3" style="font-size:12px;font-family:var(--mono);width:100%">${esc(text)}</textarea>
           <div style="font-size:10.5px;color:var(--text-2);margin-top:4px">Μεταβλητές: ${smsVarsFor(a.key)} — το κείμενο φεύγει πάντα σε ΚΕΦΑΛΑΙΑ.</div>
           <div class="sms-auto-count" style="font-size:10.5px;margin-top:3px">${smsCountHtml(text)}</div>
@@ -9131,14 +9159,23 @@ function bindEvents() {
   // Save SMS automation on/off + custom text (σελίδα SMS & Αυτοματισμοί) —
   // clinics.settings.sms_templates[key] = {enabled, text}, διαβάζεται από το
   // appointment-automations edge function (smsConfigFor) και το birthday-emails.
+  document.querySelectorAll('.sms-auto-channel').forEach(sel => {
+    sel.addEventListener('change', () => {
+      const card = sel.closest('[data-sms-auto-key]');
+      const hint = card && card.querySelector('.sms-auto-channel-hint');
+      if (hint) hint.innerHTML = smsChannelHint(card.dataset.smsAutoKey, sel.value);
+    });
+  });
   document.querySelectorAll('.sms-auto-save').forEach(btn => {
     btn.addEventListener('click', async () => {
       const card = btn.closest('[data-sms-auto-key]');
       const key = card.dataset.smsAutoKey;
-      const enabled = card.querySelector('.sms-auto-enabled').checked;
+      const channel = card.querySelector('.sms-auto-channel').value;
+      // enabled = «φεύγει SMS» (συμβατότητα με παλιότερη ανάγνωση) · channel = πλήρης πολιτική
+      const enabled = channel==='both' || channel==='sms' || channel==='email_else_sms';
       const text = card.querySelector('.sms-auto-text').value.trim();
       const smsTemplates = Object.assign({}, (S.clinic&&S.clinic.settings&&S.clinic.settings.sms_templates)||{});
-      smsTemplates[key] = { enabled, text };
+      smsTemplates[key] = { enabled, channel, text };
       const settings = Object.assign({}, (S.clinic&&S.clinic.settings)||{}, { sms_templates: smsTemplates });
       const {error} = await sb.from('clinics').update({settings}).eq('id',clinicId());
       const savedEl = card.querySelector('.sms-auto-saved');
