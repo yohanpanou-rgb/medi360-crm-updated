@@ -716,6 +716,7 @@ const STAGE_LABELS = {new_lead:'Νέο Lead',contacted:'Επαφή',interested:'
 const TOGGLEABLE_MODULES = [
   {key:'sms', label:'SMS & Αυτοματισμοί'},
   {key:'laser', label:'Laser Forms'},
+  {key:'injectables', label:'Ενέσιμες Θεραπείες'},
   {key:'consultations', label:'Consultation'},
   {key:'consents', label:'Συναινέσεις'},
   {key:'product-sale', label:'Πώληση Καλλυντικού'},
@@ -724,7 +725,7 @@ const TOGGLEABLE_MODULES = [
 ];
 // Υποσελίδες που ανήκουν σε ένα module αλλά δεν είναι οι ίδιες nav items
 // (π.χ. η λεπτομέρεια μιας φόρμας laser) — πρέπει να μπλοκάρονται μαζί του.
-const MODULE_PAGE_ALIASES = {'laser-detail':'laser'};
+const MODULE_PAGE_ALIASES = {'laser-detail':'laser', 'injectable-detail':'injectables'};
 function isModuleEnabled(page) {
   const key = MODULE_PAGE_ALIASES[page] || page;
   if (!TOGGLEABLE_MODULES.some(m=>m.key===key)) return true;
@@ -877,7 +878,7 @@ async function loadPageData() {
   // Όταν είναι ενεργό, ΚΑΝΕΝΑΣ χρήστης εκτός super_admin δεν φορτώνει δεδομένα.
   // Τα δεδομένα ΔΕΝ διαγράφονται — απλώς δεν φορτώνονται/εμφανίζονται.
   if (panicActive() && !isSuperAdmin()) {
-    S.patients=[]; S.appointments=[]; S.pipeline=[]; S.laserForms=[];
+    S.patients=[]; S.appointments=[]; S.pipeline=[]; S.laserForms=[]; S.injectableForms=[];
     S.allConsultations=[]; S.consents=[]; S.smsLog=[]; S.patConsultations=[];
     S.consultDates={}; S.staff=[]; S.globalResults=[];
     S.ssvServices=[]; S.ssvStaff=[]; S.ssvStaffServices=[]; S.ssvSchedules=[];
@@ -1103,6 +1104,16 @@ async function loadPageData() {
       // ώστε να ενημερώνεται ζωντανά καθώς συμπληρώνονται συνεδρίες.
       const {data:linkedPkgs} = await sb.from('patient_packages').select('*').eq('laser_form_id', S.laserFormId);
       S.laserFormPackages = linkedPkgs||[];
+    }
+  }
+  if (S.page==='injectables') {
+    const {data} = await sb.from('injectable_forms').select('*, patients(full_name,phone)').eq('clinic_id',cid).order('created_at',{ascending:false});
+    S.injectableForms = data||[];
+  }
+  if (S.page==='injectable-detail') {
+    if (S.injFormId) {
+      const {data} = await sb.from('injectable_forms').select('*, patients(full_name,phone,gender,email)').eq('id',S.injFormId).single();
+      S.injFormDetail = data||null;
     }
   }
   if (S.page==='sms') {
@@ -1353,6 +1364,7 @@ async function loadPatientDetail(id, tab) {
     // πωληθεί (βλ. findProductSaleMatch, ίδια λογική με τα in-clinic ραντεβού).
     const {data:ps} = await sb.from('product_sales').select('*').eq('patient_id',id).order('created_at',{ascending:false});
     const {data:lf} = await sb.from('laser_forms').select('*').eq('patient_id',id).order('created_at',{ascending:false});
+    const {data:injf} = await sb.from('injectable_forms').select('*').eq('patient_id',id).order('created_at',{ascending:false});
     // Συναίνεση Laser (γενική, ανεξάρτητη από συγκεκριμένη φόρμα) — για tab Συναινέσεις
     const {data:lc} = await sb.from('laser_consents').select('*').eq('patient_id',id).order('signed_at',{ascending:false}).limit(1);
     S.laserPatientConsent = (lc&&lc[0])||null;
@@ -1400,6 +1412,7 @@ async function loadPatientDetail(id, tab) {
     } catch(e) {}
     S.patientDetail = {...p, appointments: a||[], productSales: ps||[]};
     S.laserForms = lf||[];
+    S.injectableForms = injf||[];
     S.patTab = tab || 'overview';
 
     // Πακέτα συνεδριών του ασθενή — το υπόλοιπο υπολογίζεται από τα ραντεβού
@@ -1664,6 +1677,8 @@ function render() {
       S.page==='clinics' ? renderClinics() :
       S.page==='laser' ? renderLaserForms() :
       S.page==='laser-detail' ? renderLaserDetail() :
+      S.page==='injectables' ? renderInjectableForms() :
+      S.page==='injectable-detail' ? renderInjectableDetail() :
       S.page==='sms' ? renderSms() :
       S.page==='consents' ? renderConsents() :
       S.page==='consultations' ? renderConsultations() :
@@ -1757,6 +1772,7 @@ function renderShell(content) {
     {page:'calendar',icon:'⊟',label:'Πρόγραμμα',roles:['super_admin','clinic_admin','therapist','receptionist']},
     {page:'sms',icon:'✉',label:'SMS & Auto.',roles:['super_admin','clinic_admin']},
     {page:'laser',icon:'⚡',label:'Laser Forms',roles:['super_admin','clinic_admin','therapist']},
+    {page:'injectables',icon:'💉',label:'Ενέσιμες Θεραπείες',roles:['super_admin','clinic_admin','therapist']},
     {page:'consultations',icon:'📋',label:'Consultation',roles:['super_admin','clinic_admin','therapist']},
     {page:'consents',icon:'✓',label:'Συναινέσεις',roles:['super_admin','clinic_admin','therapist']},
     {page:'product-sale',icon:'🧴',label:'Πώληση Καλλυντικού',roles:['super_admin','clinic_admin','receptionist','therapist']},
@@ -1768,7 +1784,7 @@ function renderShell(content) {
     {page:'settings',icon:'⚙',label:'Ρυθμίσεις',roles:['super_admin','clinic_admin']},
   ].filter(n => n.roles.includes(role) && (isSuperAdmin() && !cid ? ['dashboard','clinics'].includes(n.page) : true) && isModuleEnabled(n.page));
 
-  const PAGE_TITLES = {dashboard:'Dashboard',patients:'Ασθενείς','patient-detail':'Ασθενής',appointments:'Ραντεβού',calendar:'Πρόγραμμα',pipeline:'Pipeline',clinics:'Κλινικές',sms:'SMS & Αυτοματισμοί',laser:'Laser Forms',consultations:'Consultation',consents:'Συναινέσεις','product-sale':'Πώληση Καλλυντικού',reports:'Αναφορές','marketing-gallery':'Marketing Φωτογραφίες','marketing-campaigns':'Μαζικά Μηνύματα','staff-services':'Προσωπικό & Υπηρεσίες',settings:'Ρυθμίσεις'};
+  const PAGE_TITLES = {dashboard:'Dashboard',patients:'Ασθενείς','patient-detail':'Ασθενής',appointments:'Ραντεβού',calendar:'Πρόγραμμα',pipeline:'Pipeline',clinics:'Κλινικές',sms:'SMS & Αυτοματισμοί',laser:'Laser Forms',injectables:'Ενέσιμες Θεραπείες','injectable-detail':'Ενέσιμη Θεραπεία',consultations:'Consultation',consents:'Συναινέσεις','product-sale':'Πώληση Καλλυντικού',reports:'Αναφορές','marketing-gallery':'Marketing Φωτογραφίες','marketing-campaigns':'Μαζικά Μηνύματα','staff-services':'Προσωπικό & Υπηρεσίες',settings:'Ρυθμίσεις'};
 
   return `
   <div class="overlay ${S.sidebarOpen?'open':''}" id="overlay"></div>
@@ -2796,6 +2812,7 @@ function renderPatientDetail() {
   if (!p) return '<div class="page"><div class="empty-state"><div>Φόρτωση...</div></div></div>';
   const patTab = S.patTab||'overview';
   const laserForms = (S.laserForms||[]).filter(f=>f.patient_id===p.id);
+  const injectableForms = (S.injectableForms||[]).filter(f=>f.patient_id===p.id);
   const consultations = (S.patConsultations||[]);
   const canSeeFinancials = canSee(['super_admin','clinic_admin']);
   const medicalFormLink = ((S.clinic&&S.clinic.integrations)||{}).gdpr_form_link || 'https://docs.google.com/forms/d/e/1FAIpQLSe5XiCNxnDOYMxgUbzlOP8G8ZDe-R3VBaJPlZeM1gthPElHiA/viewform?usp=header';
@@ -2840,6 +2857,7 @@ function renderPatientDetail() {
         <button class="btn btn-ghost btn-sm" data-modal="new-appt">+ Ραντεβού</button>
         <button class="btn btn-ghost btn-sm" onclick="openPackageModal()">📦 + Πακέτο</button>
         <button class="btn btn-primary btn-sm" data-modal="new-laser">+ Laser Form</button>
+        <button class="btn btn-primary btn-sm" data-modal="new-injectable" style="background:${INJ_ACCENT};border-color:${INJ_ACCENT}">💉 + Ενέσιμα</button>
         ${canSee(['super_admin','clinic_admin']) ? `<button class="btn btn-ghost btn-sm" style="color:var(--red);border-color:var(--red)" onclick="deletePatientPermanently()">🗑 Διαγραφή</button>` : ''}
       </div>
     </div>
@@ -2873,6 +2891,7 @@ function renderPatientDetail() {
         {id:'patconsents',l:'Συναινέσεις'},
         {id:'consultation',l:`Consultation (${consultations.length})`},
         {id:'laser',l:`Laser Forms (${laserForms.length})`},
+        {id:'injectables',l:`Ενέσιμα (${injectableForms.length})`},
         {id:'photos',l:`Φωτογραφίες (${(S.patientPhotos||[]).length})`},
         {id:'exams',l:`Εξετάσεις (${(S.patientExams||[]).length})`},
         {id:'timeline',l:'Timeline'},
@@ -2916,6 +2935,15 @@ function renderPatientDetail() {
           events.push({date:f.created_at,type:'laser',icon:'⚡',color:'#534AB7',bg:'#EEEDFE',
             title:'Laser Form — Συνεδρία #'+(f.session_number||1),
             desc:(f.body_parts||[]).slice(0,3).join(', ')});
+        });
+        // Ενέσιμες θεραπείες — μία εγγραφή timeline ανά πραγματική συνεδρία (όχι ανά φόρμα)
+        injectableForms.forEach(f=>{
+          (f.sessions||[]).forEach(s=>{
+            const materials = [...new Set((s.points||[]).map(pt=>pt.material))];
+            events.push({date:s.date||f.created_at,type:'injectable',icon:'💉',color:INJ_ACCENT,bg:'#F3EBFF',
+              title:'Ενέσιμη Θεραπεία — '+(s.points||[]).length+' σημεία',
+              desc:materials.slice(0,3).join(', ')});
+          });
         });
         // Consultation φόρμες
         consultations.forEach(c=>{
@@ -3229,6 +3257,36 @@ function renderPatientDetail() {
         <div class="empty-icon">⚡</div>
         <div style="margin-bottom:12px">Δεν υπάρχουν Laser Forms</div>
         <button class="btn btn-primary btn-sm" data-modal="new-laser">+ Δημιούργησε πρώτο</button>
+      </div>`}
+    </div>`:''}
+
+    <!-- ΕΝΕΣΙΜΑ TAB -->
+    ${patTab==='injectables'?`
+    <div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <span style="font-size:13px;color:var(--text-2)">${injectableForms.length} καρτέλες</span>
+        <button class="btn btn-primary btn-sm" data-modal="new-injectable" style="background:${INJ_ACCENT};border-color:${INJ_ACCENT}">+ Νέα Καρτέλα</button>
+      </div>
+      ${injectableForms.length?`
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px">
+        ${injectableForms.map(f=>{
+          const sessions = f.sessions||[];
+          const lastSession = sessions[sessions.length-1];
+          const pointCount = sessions.reduce((n,s)=>n+((s.points||[]).length),0);
+          return `<div class="card" style="padding:16px;cursor:pointer" data-injectable="${f.id}">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+            <div style="width:32px;height:32px;border-radius:8px;background:#F3EBFF;display:flex;align-items:center;justify-content:center;font-size:16px">💉</div>
+            <div>
+              <div style="font-size:13px;font-weight:500">${sessions.length} συνεδρίες · ${pointCount} σημεία</div>
+              <div style="font-size:11px;color:var(--text-2)">${lastSession?'Τελευταία: '+fmt(lastSession.date):fmt(f.created_at)}</div>
+            </div>
+          </div>
+        </div>`;}).join('')}
+      </div>`:`
+      <div class="empty-state">
+        <div class="empty-icon">💉</div>
+        <div style="margin-bottom:12px">Δεν υπάρχουν καρτέλες ενέσιμων θεραπειών</div>
+        <button class="btn btn-primary btn-sm" data-modal="new-injectable" style="background:${INJ_ACCENT};border-color:${INJ_ACCENT}">+ Δημιούργησε πρώτη</button>
       </div>`}
     </div>`:''}
 
@@ -3559,6 +3617,238 @@ function renderLaserForms() {
         <div style="font-size:11px;color:var(--text-2)">${fmt(f.created_at)}</div>
       </div>`).join('')}
     </div>`}
+  </div>`;
+}
+
+// ── INJECTABLE FORMS (Ενέσιμες Θεραπείες) ──
+// Μία εγγραφή ανά ασθενή (όπως τα Laser Forms) με «sessions»: [{date, points:[{x,y,material,quantity,unit,notes}], notes}].
+// Το σημείο μπαίνει ελεύθερα πάνω στην εικόνα προσώπου (x/y % πάνω στο container),
+// όχι από προκαθορισμένη λίστα περιοχών — έτσι ζητήθηκε.
+const INJECTABLE_MATERIALS = ['Botox / Νευροτοξίνη','Υαλουρονικό Οξύ (Filler)','Βιοενεργοποιητής (πχ. Profhilo)','Mesotherapy Cocktail','PRP','Άλλο'];
+const INJ_UNITS = ['units','ml','mg'];
+const INJ_ACCENT = '#7C3AED';
+// Draft σημεία της ΤΡΕΧΟΥΣΑΣ (μη αποθηκευμένης ακόμα) συνεδρίας — module-level
+// ώστε να ΜΗΝ χάνονται όταν ανοίγει το popup προσθήκης σημείου (δεν περνάει
+// μέσα από το γενικό S.modal/render(), βλ. openInjPointPrompt παρακάτω).
+let _injPoints = [];
+
+function renderInjectableForms() {
+  const cid = clinicId();
+  if (!cid) return '<div class="page"><div class="empty-state"><div class="empty-icon">⊞</div><div>Επίλεξε κλινική</div></div></div>';
+  const forms = S.injectableForms||[];
+  return `<div class="page">
+    <div class="page-header">
+      <div><h1 class="page-title">Ενέσιμες Θεραπείες</h1><p class="page-sub">${forms.length} καρτέλες</p></div>
+      <button class="btn btn-primary" data-modal="new-injectable">+ Νέα Καρτέλα</button>
+    </div>
+    ${forms.length===0?`<div class="empty-state"><div class="empty-icon">💉</div><div style="margin-bottom:12px">Δεν υπάρχουν καρτέλες ενέσιμων θεραπειών ακόμα</div><button class="btn btn-primary" data-page="patients">Πήγαινε στους ασθενείς</button></div>`:`
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">
+      ${forms.map(f=>{
+        const sessions = f.sessions||[];
+        const lastSession = sessions[sessions.length-1];
+        const pointCount = sessions.reduce((n,s)=>n+((s.points||[]).length),0);
+        return `<div class="card" style="padding:16px;cursor:pointer" data-injectable="${f.id}">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+          <div style="width:32px;height:32px;border-radius:8px;background:#F3EBFF;display:flex;align-items:center;justify-content:center;font-size:16px">💉</div>
+          <div>
+            <div style="font-size:13px;font-weight:500">${esc((f.patients&&f.patients.full_name)||'—')}</div>
+            <div style="font-size:11px;color:var(--text-2)">${esc((f.patients&&f.patients.phone)||'')}</div>
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--text-2);margin-bottom:6px">${sessions.length} συνεδρίες · ${pointCount} σημεία</div>
+        ${lastSession?`<div style="font-size:11px;color:var(--text-2)">Τελευταία: ${fmt(lastSession.date)}</div>`:''}
+      </div>`;}).join('')}
+    </div>`}
+  </div>`;
+}
+
+async function loadInjectableForm(id) {
+  // Το "← Πίσω" γυρίζει εκεί απ' όπου ανοίχτηκε — στην καρτέλα ασθενή αν
+  // ανοίχτηκε από εκεί, αλλιώς στη λίστα Ενέσιμων Θεραπειών.
+  S._injBackPage = S.page==='patient-detail' ? 'patient-detail' : 'injectables';
+  S.injFormId = id;
+  S.page = 'injectable-detail';
+  await loadPageData();
+}
+
+// Απλό, αναγνωρίσιμο πρόσωπο (line-art, ίδιο στιλ με το bodySvg των Laser Forms)
+// πάνω στο οποίο μπαίνουν ελεύθερα σημεία με κλικ.
+function injFaceSvg() {
+  return `<svg viewBox="0 0 200 260" width="200" height="260" style="position:absolute;inset:0;pointer-events:none">
+    <path d="M45 62 Q40 150 60 208 Q100 238 140 208 Q160 150 155 62 Q155 12 100 12 Q45 12 45 62 Z" fill="#f5ded0" stroke="#dbb8a8" stroke-width="1.2"/>
+    <ellipse cx="33" cy="112" rx="8" ry="13" fill="#f5ded0" stroke="#dbb8a8" stroke-width="1"/>
+    <ellipse cx="167" cy="112" rx="8" ry="13" fill="#f5ded0" stroke="#dbb8a8" stroke-width="1"/>
+    <path d="M64 52 Q78 43 93 49" fill="none" stroke="#b08b6f" stroke-width="2.5" stroke-linecap="round"/>
+    <path d="M107 49 Q122 43 136 52" fill="none" stroke="#b08b6f" stroke-width="2.5" stroke-linecap="round"/>
+    <ellipse cx="78" cy="67" rx="7.5" ry="4.8" fill="#fff" stroke="#8a6a52" stroke-width="1.2"/>
+    <ellipse cx="122" cy="67" rx="7.5" ry="4.8" fill="#fff" stroke="#8a6a52" stroke-width="1.2"/>
+    <circle cx="78" cy="67" r="2.2" fill="#4a3324"/>
+    <circle cx="122" cy="67" r="2.2" fill="#4a3324"/>
+    <path d="M100 74 L95 100 Q100 105 105 100" fill="none" stroke="#c9a086" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M80 120 Q100 130 120 120" fill="none" stroke="#a8695a" stroke-width="2.5" stroke-linecap="round"/>
+    <path d="M53 180 Q100 162 147 180" fill="none" stroke="#dbb8a8" stroke-width="1"/>
+  </svg>`;
+}
+
+function injPointsOverlayHtml() {
+  return _injPoints.map((pt,idx)=>`<div class="inj-point" title="${esc(pt.material)} · ${esc(String(pt.quantity||''))}${esc(pt.unit||'')}" style="position:absolute;left:${pt.x}%;top:${pt.y}%;transform:translate(-50%,-50%);width:16px;height:16px;border-radius:50%;background:${INJ_ACCENT};border:2px solid #fff;box-shadow:0 0 0 1px ${INJ_ACCENT};cursor:pointer;z-index:3;display:flex;align-items:center;justify-content:center;font-size:8px;color:#fff;font-weight:700" onclick="event.stopPropagation();removeInjPoint(${idx})">${idx+1}</div>`).join('');
+}
+
+function injPointsTableHtml() {
+  if (!_injPoints.length) return `<div style="font-size:12px;color:var(--text-2);padding:10px 0">Κάνε κλικ πάνω στην εικόνα για να προσθέσεις σημείο έγχυσης.</div>`;
+  return `<table style="width:100%;border-collapse:collapse;font-size:11.5px">
+    <thead><tr style="background:#F3EBFF">
+      <th style="padding:6px 8px;text-align:center;width:26px">#</th>
+      <th style="padding:6px 8px;text-align:left">Υλικό</th>
+      <th style="padding:6px 8px;text-align:center">Ποσότητα</th>
+      <th style="padding:6px 8px;text-align:left">Σημειώσεις</th>
+      <th style="padding:6px 8px;width:30px"></th>
+    </tr></thead>
+    <tbody>
+      ${_injPoints.map((pt,idx)=>`<tr style="border-top:1px solid #EEE6FB">
+        <td style="padding:5px 8px;text-align:center;font-weight:700;color:${INJ_ACCENT}">${idx+1}</td>
+        <td style="padding:5px 8px">${esc(pt.material)}</td>
+        <td style="padding:5px 8px;text-align:center">${esc(String(pt.quantity||''))} ${esc(pt.unit||'')}</td>
+        <td style="padding:5px 8px;color:var(--text-2)">${esc(pt.notes||'')}</td>
+        <td style="padding:5px 8px;text-align:center"><button onclick="removeInjPoint(${idx})" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:13px" title="Αφαίρεση">×</button></td>
+      </tr>`).join('')}
+    </tbody>
+  </table>`;
+}
+
+// Ξαναχτίζει ΜΟΝΟ τα δύο containers (σημεία πάνω στην εικόνα + πίνακας) από το
+// _injPoints — ΧΩΡΙΣ πλήρες render() της σελίδας, ώστε να μη χαθεί τίποτα.
+function refreshInjPointsUI() {
+  const overlay = document.getElementById('inj-points-overlay');
+  if (overlay) overlay.innerHTML = injPointsOverlayHtml();
+  const tableWrap = document.getElementById('inj-points-table-wrap');
+  if (tableWrap) tableWrap.innerHTML = injPointsTableHtml();
+}
+
+async function handleFaceClick(ev) {
+  const wrap = document.getElementById('inj-face-wrap');
+  if (!wrap) return;
+  const rect = wrap.getBoundingClientRect();
+  const x = Math.min(97, Math.max(3, (ev.clientX-rect.left)/rect.width*100));
+  const y = Math.min(97, Math.max(3, (ev.clientY-rect.top)/rect.height*100));
+  const pt = await openInjPointPrompt();
+  if (!pt) return;
+  _injPoints.push({x:Math.round(x*10)/10, y:Math.round(y*10)/10, ...pt});
+  refreshInjPointsUI();
+}
+
+function removeInjPoint(idx) {
+  _injPoints.splice(idx,1);
+  refreshInjPointsUI();
+}
+
+// Custom overlay (ΟΧΙ το γενικό S.modal/render()) — το κλικ πάνω στο πρόσωπο
+// για προσθήκη σημείου δεν πρέπει να ξαναφορτώνει όλη τη σελίδα, γιατί αυτό
+// θα ξανάχτιζε το renderInjectableDetail() από την αρχή και θα έσβηνε όσα
+// σημεία έχουν ήδη μπει σε αυτή την (μη αποθηκευμένη ακόμα) συνεδρία.
+function openInjPointPrompt() {
+  return new Promise(resolve => {
+    const div = document.createElement('div');
+    div.className = 'modal-overlay';
+    div.innerHTML = `<div class="modal" style="max-width:380px">
+      <div class="modal-header"><span class="modal-title">Σημείο Έγχυσης</span><button class="modal-close" id="ipp-close">×</button></div>
+      <div class="modal-body">
+        <div class="form-group"><label class="form-label">Υλικό *</label>
+          <select class="form-control" id="ipp-material">${INJECTABLE_MATERIALS.map(m=>`<option value="${esc(m)}">${esc(m)}</option>`).join('')}</select></div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">Ποσότητα *</label>
+            <input class="form-control" id="ipp-qty" type="number" step="0.1" min="0"/></div>
+          <div class="form-group"><label class="form-label">Μονάδα</label>
+            <select class="form-control" id="ipp-unit">${INJ_UNITS.map(u=>`<option value="${u}">${u}</option>`).join('')}</select></div>
+        </div>
+        <div class="form-group"><label class="form-label">Σημειώσεις</label>
+          <input class="form-control" id="ipp-notes" placeholder="π.χ. αριστερά, επιφανειακά..."/></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" id="ipp-cancel">Ακύρωση</button>
+        <button class="btn btn-primary" id="ipp-save">Προσθήκη</button>
+      </div>
+    </div>`;
+    document.body.appendChild(div);
+    const close = (result) => { div.remove(); resolve(result); };
+    div.onclick = e => { if (e.target===div) close(null); };
+    div.querySelector('#ipp-close').onclick = () => close(null);
+    div.querySelector('#ipp-cancel').onclick = () => close(null);
+    div.querySelector('#ipp-save').onclick = () => {
+      const material = div.querySelector('#ipp-material').value;
+      const quantity = parseFloat(div.querySelector('#ipp-qty').value);
+      const unit = div.querySelector('#ipp-unit').value;
+      const notes = div.querySelector('#ipp-notes').value.trim();
+      if (!material || !quantity || quantity<=0) { alert('Συμπλήρωσε υλικό και ποσότητα.'); return; }
+      close({material, quantity, unit, notes});
+    };
+    const qtyEl = div.querySelector('#ipp-qty'); if (qtyEl) qtyEl.focus();
+  });
+}
+
+function renderInjectableDetail() {
+  const f = S.injFormDetail;
+  if (!f) return '<div class="page"><div class="empty-state"><div>Φόρτωση...</div></div></div>';
+  // Νέο draft σε κάθε άνοιγμα της σελίδας (όχι σε κάθε κλικ σημείου, βλ. πάνω).
+  _injPoints = [];
+  const sessions = (f.sessions||[]).slice().sort((a,b)=> (b.date||'').localeCompare(a.date||''));
+  const today = new Date().toISOString().slice(0,10);
+
+  return `<div class="page">
+    <div style="background:linear-gradient(135deg,${INJ_ACCENT},#a78bfa);padding:16px 24px;border-radius:12px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+      <div>
+        <div style="font-size:11px;font-weight:700;color:rgba(255,255,255,0.7);letter-spacing:1px;text-transform:uppercase">${esc(S.clinic&&S.clinic.name||'medi360')}</div>
+        <div style="font-size:16px;font-weight:700;color:#fff;margin-top:2px">ΚΑΡΤΕΛΑ ΕΝΕΣΙΜΩΝ ΘΕΡΑΠΕΙΩΝ</div>
+        <div style="font-size:12px;color:rgba(255,255,255,0.85);margin-top:2px">${esc(f.patients&&f.patients.full_name||'—')} · ${esc(f.patients&&f.patients.phone||'')}</div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-ghost btn-sm" data-page="${S._injBackPage||'injectables'}" style="background:rgba(255,255,255,0.15);color:#fff;border-color:rgba(255,255,255,0.3)">← Πίσω</button>
+        <button class="btn btn-ghost btn-sm" onclick="window.print()" style="background:rgba(255,255,255,0.15);color:#fff;border-color:rgba(255,255,255,0.3)">🖨 Εκτύπωση</button>
+      </div>
+    </div>
+
+    <div class="dash-grid" style="display:grid;grid-template-columns:240px 1fr;gap:16px;margin-bottom:16px">
+      <div class="card" style="padding:16px;text-align:center">
+        <div style="font-size:11px;font-weight:700;color:${INJ_ACCENT};text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">ΝΕΑ ΣΥΝΕΔΡΙΑ — ΚΛΙΚ ΓΙΑ ΣΗΜΕΙΟ</div>
+        <div id="inj-face-wrap" onclick="handleFaceClick(event)" style="position:relative;width:200px;height:260px;margin:0 auto;cursor:crosshair;background:#FBF9FF;border-radius:10px;border:1px solid #EEE6FB">
+          ${injFaceSvg()}
+          <div id="inj-points-overlay" style="position:absolute;inset:0">${injPointsOverlayHtml()}</div>
+        </div>
+        <div style="font-size:10px;color:var(--text-2);margin-top:8px">Κάθε κλικ ανοίγει φόρμα για υλικό &amp; ποσότητα</div>
+      </div>
+      <div class="card" style="padding:16px">
+        <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px;align-items:flex-end">
+          <div>
+            <div style="font-size:10px;font-weight:600;color:${INJ_ACCENT};text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Ημερομηνία Συνεδρίας</div>
+            <input type="date" id="inj-session-date" value="${today}" style="font-size:12px;padding:5px 8px;border-radius:6px;border:1px solid var(--border);width:150px"/>
+          </div>
+          <button class="btn btn-sm" id="save-inj-session" style="background:${INJ_ACCENT};color:#fff;font-weight:600">💾 Αποθήκευση Συνεδρίας</button>
+        </div>
+        <div id="inj-points-table-wrap">${injPointsTableHtml()}</div>
+        <div class="form-group" style="margin-top:10px">
+          <label class="form-label">Σημειώσεις Συνεδρίας</label>
+          <textarea class="form-control" id="inj-session-notes" rows="2" placeholder="Παρατηρήσεις για αυτή τη συνεδρία..."></textarea>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="padding:16px">
+      <div style="font-size:11px;font-weight:700;color:${INJ_ACCENT};text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px">ΙΣΤΟΡΙΚΟ ΣΥΝΕΔΡΙΩΝ ${sessions.length?`(${sessions.length})`:''}</div>
+      ${sessions.length===0?`<div style="font-size:12px;color:var(--text-2)">Δεν υπάρχουν καταχωρημένες συνεδρίες ακόμα.</div>`:
+      sessions.map(s=>`<div style="border:1px solid #EEE6FB;border-radius:10px;padding:12px 14px;margin-bottom:10px">
+        <div style="font-size:12.5px;font-weight:600;color:var(--navy);margin-bottom:6px">${fmt(s.date)} <span style="font-weight:400;color:var(--text-2);font-size:11px">· ${(s.points||[]).length} σημεία</span></div>
+        <table style="width:100%;border-collapse:collapse;font-size:11.5px">
+          <tbody>
+            ${(s.points||[]).map(pt=>`<tr style="border-top:1px solid #F5F1FC">
+              <td style="padding:4px 8px;color:var(--text-2)">${esc(pt.material)}</td>
+              <td style="padding:4px 8px;text-align:center;font-weight:600">${esc(String(pt.quantity||''))} ${esc(pt.unit||'')}</td>
+              <td style="padding:4px 8px;color:var(--text-2)">${esc(pt.notes||'')}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+        ${s.notes?`<div style="font-size:11.5px;color:var(--text-2);margin-top:8px;font-style:italic">${esc(s.notes)}</div>`:''}
+      </div>`).join('')}
+    </div>
   </div>`;
 }
 
@@ -8210,6 +8500,7 @@ function renderModal() {
     'new-lead': modalNewLead,
     'new-clinic': modalNewClinic,
     'new-laser': modalNewLaser,
+    'new-injectable': modalNewInjectable,
     'new-consent-tmpl': modalNewConsentTmpl,
     'new-user': modalNewUser,
   }[S.modal];
@@ -8482,6 +8773,38 @@ function modalNewLaser() {
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Ακύρωση</button>
       <button class="btn btn-primary" id="save-laser">Αποθήκευση</button>
+    </div>
+  </div>`;
+}
+
+function modalNewInjectable() {
+  // Αν ανοίξαμε από καρτέλα ασθενή, προσυμπλήρωσε τον ασθενή (ίδιο pattern με Laser Forms)
+  const currentPatient = S.page==='patient-detail' ? S.patientDetail : null;
+  return `<div class="modal">
+    <div class="modal-header"><span class="modal-title">Νέα Καρτέλα Ενεσίμων</span><button class="modal-close" onclick="closeModal()">×</button></div>
+    <div class="modal-body">
+      ${currentPatient ? `
+      <div class="form-group">
+        <label class="form-label">Ασθενής</label>
+        <div style="display:flex;align-items:center;gap:10px;background:var(--surface);border-radius:8px;padding:10px 14px">
+          <div style="width:32px;height:32px;border-radius:50%;background:#E6F1FB;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:#185FA5">${initials(currentPatient.full_name)}</div>
+          <div><div style="font-weight:600;font-size:13px">${esc(currentPatient.full_name)}</div><div style="font-size:11px;color:var(--text-2)">${esc(currentPatient.phone||'')}</div></div>
+        </div>
+        <input type="hidden" id="inj-patient" value="${currentPatient.id}"/>
+      </div>`:`
+      <div class="form-group" style="position:relative"><label class="form-label">Ασθενής *</label>
+        <input class="form-control" id="inj-patient-search" placeholder="Αναζήτηση ασθενή (όνομα/τηλέφωνο)..." autocomplete="off"/>
+        <div id="inj-patient-results" style="display:none;position:absolute;left:0;right:0;background:var(--white);border:1px solid var(--border-2);border-radius:8px;box-shadow:var(--shadow-lg);z-index:20;max-height:220px;overflow-y:auto;margin-top:4px"></div>
+        <input type="hidden" id="inj-patient" value=""/>
+        <div id="inj-patient-mode" style="margin-top:6px;font-size:12px;color:var(--red)">⚠ Γράψε όνομα ή τηλέφωνο για αναζήτηση</div>
+      </div>`}
+      <div style="font-size:11.5px;color:var(--text-2);background:var(--surface);border-radius:8px;padding:8px 12px">
+        Μετά τη δημιουργία θα ανοίξει η καρτέλα όπου καταγράφονται οι συνεδρίες: σημείο πάνω στο πρόσωπο, υλικό, ποσότητα και ημερομηνία.
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Ακύρωση</button>
+      <button class="btn btn-primary" id="save-injectable">Δημιουργία</button>
     </div>
   </div>`;
 }
@@ -10552,6 +10875,10 @@ function bindEvents() {
   document.querySelectorAll('[data-laser]').forEach(el => {
     el.onclick = () => { loadLaserForm(el.dataset.laser); };
   });
+  // Injectable form click
+  document.querySelectorAll('[data-injectable]').forEach(el => {
+    el.onclick = () => { loadInjectableForm(el.dataset.injectable); };
+  });
   const _hb=document.getElementById('hamburger');if(_hb)_hb.addEventListener('click', () => { S.sidebarOpen=!S.sidebarOpen; render(); });
   const _tt=document.getElementById('theme-toggle');if(_tt)_tt.addEventListener('click', () => {
     const cur = document.documentElement.getAttribute('data-theme')==='dark' ? 'light' : 'dark';
@@ -11169,6 +11496,74 @@ function bindModalEvents() {
     });
     if (error) { alert(error.message); btn.textContent='Αποθήκευση'; btn.disabled=false; return; }
     closeModal(); await loadPageData();
+  });
+
+  // Injectable form: patient search (ίδιο pattern με lf-patient-search)
+  const _injps = document.getElementById('inj-patient-search');
+  if (_injps) {
+    let injTimer = null;
+    const injShowResults = async () => {
+      const q = _injps.value.trim().replace(/[,()]/g,' ');
+      const res = document.getElementById('inj-patient-results');
+      if (!q.length) { res.style.display='none'; return; }
+      const {data} = await sb.from('patients').select('id,full_name,phone').eq('clinic_id',clinicId())
+        .or(`full_name.ilike.%${q}%,phone.ilike.%${q}%`).order('full_name').limit(8);
+      res.innerHTML = (data||[]).map(pt=>`<div class="inj-pt-opt" style="padding:9px 12px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--border-2)" data-pid="${pt.id}" data-pname="${esc(pt.full_name)}" data-pphone="${esc(pt.phone||'')}">${esc(pt.full_name)} · ${esc(pt.phone||'')}</div>`).join('')
+        || `<div style="padding:9px 12px;font-size:12px;color:var(--text-3)">Κανένα αποτέλεσμα</div>`;
+      res.style.display = 'block';
+      res.querySelectorAll('.inj-pt-opt').forEach(el => {
+        el.onclick = () => {
+          document.getElementById('inj-patient').value = el.dataset.pid;
+          _injps.value = el.dataset.pname + (el.dataset.pphone ? ' · '+el.dataset.pphone : '');
+          res.style.display = 'none';
+          const mode = document.getElementById('inj-patient-mode');
+          if (mode) { mode.textContent = '✓ Επιλέχθηκε ασθενής'; mode.style.color = 'var(--green)'; }
+        };
+      });
+    };
+    _injps.onfocus = injShowResults;
+    _injps.oninput = () => {
+      document.getElementById('inj-patient').value = '';
+      const mode = document.getElementById('inj-patient-mode');
+      if (mode) { mode.textContent = '⚠ Γράψε όνομα ή τηλέφωνο για αναζήτηση'; mode.style.color = 'var(--red)'; }
+      clearTimeout(injTimer); injTimer = setTimeout(injShowResults, 200);
+    };
+  }
+
+  // Δημιουργία καρτέλας ενεσίμων → πάει κατευθείαν στην καρτέλα για να ξεκινήσει η πρώτη συνεδρία
+  const _sinj=document.getElementById('save-injectable');if(_sinj)_sinj.addEventListener('click', async () => {
+    const pid = document.getElementById('inj-patient').value;
+    if (!pid) return alert('Επίλεξε ασθενή');
+    const btn = document.getElementById('save-injectable');
+    btn.textContent='Δημιουργία...'; btn.disabled=true;
+    const {data, error} = await sb.from('injectable_forms').insert({
+      clinic_id:clinicId(), patient_id:pid,
+    }).select('id').single();
+    if (error) { alert(error.message); btn.textContent='Δημιουργία'; btn.disabled=false; return; }
+    closeModal();
+    await loadInjectableForm(data.id);
+  });
+
+  // Αποθήκευση συνεδρίας ενεσίμων: τα σημεία (_injPoints) μπαίνουν σαν νέο
+  // στοιχείο στο sessions[] — προσθήκη, όχι αντικατάσταση, ώστε να χτίζεται
+  // ιστορικό (τι έκανε ο γιατρός, πού, τι υλικό/ποσότητα, πότε).
+  const _sis = document.getElementById('save-inj-session');
+  if (_sis) _sis.addEventListener('click', async () => {
+    if (!S.injFormId) return;
+    if (!_injPoints.length) { alert('Πρόσθεσε τουλάχιστον ένα σημείο έγχυσης πριν την αποθήκευση.'); return; }
+    const dateEl = document.getElementById('inj-session-date');
+    const date = dateEl ? dateEl.value : '';
+    if (!date) { alert('Συμπλήρωσε ημερομηνία συνεδρίας.'); return; }
+    _sis.textContent='Αποθήκευση...'; _sis.disabled=true;
+    const notesEl = document.getElementById('inj-session-notes');
+    const f = S.injFormDetail||{};
+    const sessions = [...(f.sessions||[]), {date, points:_injPoints, notes: notesEl?notesEl.value:''}];
+    const {error} = await sb.from('injectable_forms').update({
+      sessions, updated_at: new Date().toISOString(),
+    }).eq('id', S.injFormId);
+    if (error) { alert(error.message); _sis.textContent='💾 Αποθήκευση Συνεδρίας'; _sis.disabled=false; return; }
+    _injPoints = [];
+    await loadPageData(); render();
   });
 
   // Save consent template
