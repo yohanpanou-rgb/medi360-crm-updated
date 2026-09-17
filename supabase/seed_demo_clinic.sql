@@ -848,3 +848,12 @@ update public.clinics set settings = jsonb_set(coalesce(settings,'{}'::jsonb), '
 Πάρκινγκ Δημαρχείου Κορωπίου, 3 λεπτά με τα πόδια (πληρωμένο)
 Στάση λεωφορείου «Κορωπί — Κέντρο», απέναντι από την κλινική$$::text))
 where id='a787b766-9d23-45b2-9660-7bb480856a1b';
+
+-- ── 18. Εσωτερικό ραντεβού δείγμα (is_internal — μπλοκάρισμα ώρας χωρίς ασθενή) ──
+insert into public.appointments (clinic_id, therapist_id, is_internal, internal_title, start_time, duration_minutes, status, notes)
+select 'a787b766-9d23-45b2-9660-7bb480856a1b', p.id, true, 'Συνάντηση προσωπικού',
+  (date_trunc('week', now()) + interval '7 day' + interval '13 hour')::timestamptz, 60, 'confirmed', 'Εβδομαδιαία ενημέρωση ομάδας'
+from public.profiles p
+where p.clinic_id='a787b766-9d23-45b2-9660-7bb480856a1b' and p.role='clinic_admin'
+  and not exists (select 1 from public.appointments where clinic_id='a787b766-9d23-45b2-9660-7bb480856a1b' and is_internal=true)
+limit 1;
