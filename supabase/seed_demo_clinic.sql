@@ -799,3 +799,19 @@ where p.id = t.id and t.rn <= 9;
 -- Έλεγχος:
 --   select status, count(*) from appointments where clinic_id='a787b766-9d23-45b2-9660-7bb480856a1b' group by 1;
 --   select kind, count(*), count(uploaded_at) from backup.demo_media_manifest group by 1;
+
+-- ── 14. Δωμάτια (clinic_rooms) + προεπιλογή ανά κατηγορία + backfill ραντεβού ──
+insert into public.clinic_rooms (clinic_id, name, color, sort_order)
+select 'a787b766-9d23-45b2-9660-7bb480856a1b', r.name, r.color, r.ord
+from (values ('Ιατρείο 1', '#1F6F8B', 1), ('Ιατρείο 2', '#7C3AED', 2), ('Laser', '#C2410C', 3), ('Αισθητική', '#0F6E56', 4)) as r(name, color, ord)
+where not exists (select 1 from public.clinic_rooms where clinic_id='a787b766-9d23-45b2-9660-7bb480856a1b');
+update public.services s set default_room_id = r.id
+from public.clinic_rooms r
+where s.clinic_id='a787b766-9d23-45b2-9660-7bb480856a1b' and r.clinic_id = s.clinic_id and s.default_room_id is null
+  and r.name = case s.category
+    when 'Ιατρική Δερματολογία' then 'Ιατρείο 1' when 'Ενέσιμες Θεραπείες' then 'Ιατρείο 2'
+    when 'Laser & Συσκευές' then 'Laser' when 'Peelings & Ιατρική Αισθητική' then 'Αισθητική' end;
+update public.appointments a set room_id = s.default_room_id
+from public.services s
+where a.clinic_id='a787b766-9d23-45b2-9660-7bb480856a1b' and s.clinic_id = a.clinic_id and s.name = a.service_name
+  and a.room_id is null and s.default_room_id is not null;
