@@ -841,9 +841,14 @@ Deno.serve(async (req: Request) => {
     // ── Χειροκίνητη ενέργεια από το CRM ──
     if (body.action && body.appointment_id) {
       const { data: appt } = await supabase.from('appointments')
-        .select('id,clinic_id,patient_id,status,start_time,service_name,duration_minutes,patients(full_name,email,phone)')
+        .select('id,clinic_id,patient_id,status,start_time,service_name,duration_minutes,is_internal,patients(full_name,email,phone)')
         .eq('id', body.appointment_id).single();
       if (!appt) return json({ error: 'Appointment not found' }, 404);
+      // Εσωτερικό ραντεβού (μπλοκάρισμα ώρας) — δεν υπάρχει ασθενής/email να
+      // ενημερωθεί, ό,τι action κι αν ζητηθεί.
+      if ((appt as { is_internal?: boolean }).is_internal) {
+        return json({ ok: false, skipped: 'internal_appointment' }, 200);
+      }
       // Οι αυτοματισμοί (Gmail, Apifon, επωνυμία) είναι ρυθμισμένοι για ΜΙΑ κλινική.
       // Ραντεβού άλλης κλινικής (π.χ. της demo) δεν πρέπει ποτέ να στείλει μήνυμα
       // από τον λογαριασμό της — ούτε καν χειροκίνητα από το CRM.
@@ -879,7 +884,7 @@ Deno.serve(async (req: Request) => {
     const fetchHorizon = new Date(in48h.getTime() + 24 * 3600 * 1000);
     const { data: bookedRows } = await supabase.from('appointments')
       .select('id,clinic_id,patient_id,status,start_time,service_name,duration_minutes,patients(full_name,email,phone)')
-      .eq('clinic_id', configuredClinicId)
+      .eq('clinic_id', configuredClinicId).eq('is_internal', false)
       .eq('status', 'booked').gte('start_time', now.toISOString()).lte('start_time', fetchHorizon.toISOString());
     const byPatientDay: Record<string, Appt[]> = {};
     const dueDays = new Set<string>();
@@ -904,7 +909,7 @@ Deno.serve(async (req: Request) => {
     // 2) ΚΛΕΙΣΜΕΝΑ Ή ΕΠΙΒΕΒΑΙΩΜΕΝΑ μελλοντικά → οδηγίες.
     const { data: confRows } = await supabase.from('appointments')
       .select('id,clinic_id,patient_id,status,start_time,service_name,duration_minutes,patients(full_name,email,phone)')
-      .eq('clinic_id', configuredClinicId)
+      .eq('clinic_id', configuredClinicId).eq('is_internal', false)
       .in('status', ['booked', 'confirmed']).gte('start_time', now.toISOString()).lte('start_time', horizon.toISOString());
     //    ΟΜΑΔΟΠΟΙΗΣΗ ανά πελάτη + ημέρα + ΣΕΤ ΟΔΗΓΙΩΝ: δύο ραντεβού την ίδια
     //    ημέρα με το ίδιο σετ έστελναν δύο ΠΑΝΟΜΟΙΟΤΥΠΑ email/SMS.
@@ -934,7 +939,7 @@ Deno.serve(async (req: Request) => {
       // ραντεβού που εκκρεμεί ακόμα κρατάει την ημέρα «ανοιχτή».
       const { data: dayRows } = await supabase.from('appointments')
         .select('id,clinic_id,patient_id,status,start_time,service_name,duration_minutes,patients(full_name,email,phone)')
-        .eq('clinic_id', configuredClinicId)
+        .eq('clinic_id', configuredClinicId).eq('is_internal', false)
         .gte('start_time', reviewHorizon.toISOString()).lte('start_time', now.toISOString());
       const apptEnd = (a: Appt) => new Date(a.start_time).getTime() + ((a.duration_minutes || 60) * 60000);
       const byReviewDay: Record<string, Appt[]> = {};

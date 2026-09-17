@@ -1311,12 +1311,14 @@ async function loadPageData() {
       S.ssvStatsRange = { from: firstOfMonth.toISOString().slice(0,10), to: now.toISOString().slice(0,10) };
     }
     const sFrom = S.ssvStatsRange.from+'T00:00:00', sTo = S.ssvStatsRange.to+'T23:59:59';
-    S.ssvStatsAppointments = await sbAll(()=>sb.from('appointments').select('therapist_id,service_name,price,duration_minutes,status,start_time,notes').eq('clinic_id',cid).gte('start_time',sFrom).lte('start_time',sTo).order('start_time',{ascending:true}));
+    // Εσωτερικά ραντεβού (μπλοκάρισμα ώρας) εξαιρούνται — δεν είναι πραγματικές
+    // επισκέψεις για στατιστικά εσόδων/απόδοσης ανά άτομο.
+    S.ssvStatsAppointments = await sbAll(()=>sb.from('appointments').select('therapist_id,service_name,price,duration_minutes,status,start_time,notes').eq('clinic_id',cid).eq('is_internal',false).gte('start_time',sFrom).lte('start_time',sTo).order('start_time',{ascending:true}));
     // Μηνιαία τάση: πάντα οι τελευταίοι 6 ημερολογιακοί μήνες, ανεξάρτητα από
     // το επιλεγμένο διάστημα των στατιστικών πάνω. Σελιδοποιημένο (sbAll): 6 μήνες
     // ραντεβού ξεπερνούν τις 1000 γραμμές και ο Ιούλιος/Αύγουστος έδειχναν €0.
     const trendFrom2 = new Date(); trendFrom2.setMonth(trendFrom2.getMonth()-5); trendFrom2.setDate(1); trendFrom2.setHours(0,0,0,0);
-    S.ssvTrendAppointments = await sbAll(()=>sb.from('appointments').select('therapist_id,service_name,price,status,start_time,notes').eq('clinic_id',cid).gte('start_time',trendFrom2.toISOString()).order('start_time',{ascending:true}));
+    S.ssvTrendAppointments = await sbAll(()=>sb.from('appointments').select('therapist_id,service_name,price,status,start_time,notes').eq('clinic_id',cid).eq('is_internal',false).gte('start_time',trendFrom2.toISOString()).order('start_time',{ascending:true}));
     // Οι λίστες υπηρεσιών/προσωπικού άλλαξαν πιθανώς — ανανέωσε το cache του
     // modal "Νέο Ραντεβού" την επόμενη φορά που θα ανοίξει.
     S._apptRefsLoaded = false;
@@ -1507,6 +1509,7 @@ function serviceCategoryColor(cat) {
   return i>=0 ? SERVICE_COLOR_PALETTE[i % SERVICE_COLOR_PALETTE.length] : SERVICE_COLOR_PALETTE[SERVICE_COLOR_PALETTE.length-1];
 }
 function serviceApptColor(a) {
+  if (a.is_internal) return {bg:'repeating-linear-gradient(135deg,#E5E7EB,#E5E7EB 6px,#F3F4F6 6px,#F3F4F6 12px)',border:'#6B7280',text:'#374151'};
   if (a.status==='cancelled'||a.status==='no_show') return {bg:'#FEE2E2',border:'#DC2626',text:'#991B1B'};
   return serviceCategoryColor(serviceCategoryOf(a.service_name));
 }
@@ -1611,6 +1614,7 @@ function globalApptColor(a) {
   // κ.λπ. — π.χ. ραντεβού Ολοκληρωμένο εμφανιζόταν μπλε επειδή ο πελάτης ήταν
   // Lead) — το status του ΡΑΝΤΕΒΟΥ είναι πάντα αυτό που καθορίζει το χρώμα
   // της κάρτας· VIP μένει μόνο ως σύμβολο ★ πάνω στην κάρτα.
+  if (a.is_internal) return {bg:'repeating-linear-gradient(135deg,#E5E7EB,#E5E7EB 6px,#F3F4F6 6px,#F3F4F6 12px)',border:'#6B7280',text:'#374151'};
   if (a.status==='cancelled'||a.status==='no_show') return {bg:'#FEE2E2',border:'#DC2626',text:'#991B1B'};
   // 'booked' (Κλεισμένο) έλειπε από εδώ — έπεφτε στο ουδέτερο γκρι fallback
   // παρότι το υπόμνημα (legend) πάνω από το Πρόγραμμα δείχνει πορτοκαλί για
@@ -3445,18 +3449,18 @@ function renderAppointments() {
       ${filtered.length?filtered.map(a=>{
         const st=STATUS_APPT[a.status]||STATUS_APPT.confirmed;
         const missingGrp = apptMissingConsent(a);
-        return `<div class="appt-card">
-          <div style="width:4px;align-self:stretch;border-radius:2px;background:${st.c};flex-shrink:0"></div>
-          <div style="flex:1;min-width:0;cursor:pointer" ${a.patient_id?`data-patient="${a.patient_id}"`:''}  >
-            <div style="font-size:13px;font-weight:500">${esc(a.patients&&a.patients.full_name||'—')}</div>
-            <div style="font-size:11px;color:var(--text-2)">${a.package_id?'<span title="Συνεδρία πακέτου">📦 </span>':''}${esc(a.service_name||'')} · ${esc(a.patients&&a.patients.phone||'')}</div>
-            ${missingGrp?`<div style="margin-top:3px">${missingGrp.duplicateHasIt
+        return `<div class="appt-card" style="${a.is_internal?'opacity:.85':''}">
+          <div style="width:4px;align-self:stretch;border-radius:2px;background:${a.is_internal?'#6B7280':st.c};flex-shrink:0"></div>
+          <div style="flex:1;min-width:0;cursor:pointer" ${(!a.is_internal&&a.patient_id)?`data-patient="${a.patient_id}"`:''}  >
+            <div style="font-size:13px;font-weight:500">${a.is_internal?'🔒 '+esc(a.internal_title||'Εσωτερικό ραντεβού'):esc(a.patients&&a.patients.full_name||'—')}</div>
+            <div style="font-size:11px;color:var(--text-2)">${a.is_internal?'Χωρίς ασθενή':`${a.package_id?'<span title="Συνεδρία πακέτου">📦 </span>':''}${esc(a.service_name||'')} · ${esc(a.patients&&a.patients.phone||'')}`}</div>
+            ${(!a.is_internal&&missingGrp)?`<div style="margin-top:3px">${missingGrp.duplicateHasIt
               ?`<span class="badge" style="font-size:10px;background:#FAEEDA;color:#854F0B">⚠ Υπάρχει συναίνεση ${CONSENT_GROUP_LABELS[missingGrp.grp]} σε άλλη (πιθανό διπλότυπη) καρτέλα</span>`
               :`<span class="badge badge-red" style="font-size:10px">⚠ Χωρίς Συναίνεση ${CONSENT_GROUP_LABELS[missingGrp.grp]}</span>`
             }</div>`:''}
           </div>
           <div style="font-size:12px;color:var(--text-2);white-space:nowrap;flex-shrink:0">${fmtDt(a.start_time)}</div>
-          ${canSee(['super_admin','clinic_admin'])&&a.price?`<div style="font-size:13px;font-weight:500;color:#0F6E56;flex-shrink:0">${euro(a.price)}</div>`:''}
+          ${(!a.is_internal&&canSee(['super_admin','clinic_admin'])&&a.price)?`<div style="font-size:13px;font-weight:500;color:#0F6E56;flex-shrink:0">${euro(a.price)}</div>`:''}
           ${apptBadge(a.status)}
           <select data-appt-status="${a.id}" style="font-size:11px;padding:3px 6px;border-radius:6px;border:1px solid var(--border);background:transparent;cursor:pointer;font-family:var(--font)">
             ${Object.entries(STATUS_APPT).map(([k,v])=>`<option value="${k}" ${a.status===k?'selected':''}>${v.l}</option>`).join('')}
@@ -3824,12 +3828,13 @@ function renderCalendar() {
               const startTime = start.toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'});
               const endTime = new Date(start.getTime()+dur*60000).toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'});
 
-              const hasConflict = laserConflictIds.has(a.id);
-              const missingGrp = missingConsent(a);
+              const hasConflict = !a.is_internal && laserConflictIds.has(a.id);
+              const missingGrp = a.is_internal ? null : missingConsent(a);
               const hasNoConsent = !!missingGrp;
-              const critFlags = patientFlags(a.patients ? Object.assign({id:a.patient_id}, a.patients) : null);
+              const critFlags = a.is_internal ? [] : patientFlags(a.patients ? Object.assign({id:a.patient_id}, a.patients) : null);
               const therapistName = apptTherapist(a) || '';
-              const metaText = [a.service_name, therapistName].filter(Boolean).join(' · ');
+              const displayName = a.is_internal ? ('🔒 ' + (a.internal_title||'Εσωτερικό')) : (a.patients&&a.patients.full_name||'—');
+              const metaText = a.is_internal ? '' : [a.service_name, therapistName].filter(Boolean).join(' · ');
               // Αν επικαλύπτεται χρονικά με άλλο ραντεβού στην ίδια στήλη, μοίρασε το
               // πλάτος δίπλα-δίπλα αντί να καλύψει το ένα εντελώς το άλλο (βλ. packOverlaps).
               const pack = overlapPack[a.id] || {col:0, count:1};
@@ -3845,9 +3850,10 @@ function renderCalendar() {
                   padding:3px 6px;cursor:pointer;overflow:hidden;z-index:${hasConflict||hasNoConsent?6:5};transition:.15s"
                 onmouseover="showCalTooltip(this, event)"
                 onmouseout="hideCalTooltip(this)"
-                data-name="${esc(a.patients&&a.patients.full_name||'—')}"
-                data-service="${esc(a.service_name||'')}"
+                data-name="${esc(displayName)}"
+                data-service="${a.is_internal?'':esc(a.service_name||'')}"
                 data-time="${startTime} – ${endTime} (${dur} λεπτά)"
+                data-internal="${a.is_internal?'1':'0'}"
                 data-gdpr="${gdpr?'1':'0'}"
                 data-vip="${isVip?'1':'0'}"
                 data-price="${canSeeFinancials&&a.price?euro(a.price):''}"
@@ -3859,11 +3865,11 @@ function renderCalendar() {
                 data-consent-missing="${missingGrp?CONSENT_GROUP_LABEL[missingGrp]:''}">
                 ${(S.apptPhotoIds&&S.apptPhotoIds.has(a.id))?'<div title="Έχει φωτογραφίες" style="position:absolute;top:2px;right:3px;font-size:10px;line-height:1">📷</div>':''}
                 <div style="font-size:10px;font-weight:500;color:${c.text};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
-                  ${critFlags.length?'<span style="font-size:12px;font-weight:900;color:#DC2626" title="Κρίσιμη πληροφορία">‼</span> ':''}${hasNoConsent?'<span style="font-size:13px;font-weight:700;color:#D97706">⚠</span> ':''}${calColor==='service'?calStatusGlyph(a):''}${isVip?'★ ':''}${esc(a.patients&&a.patients.full_name||'—')}${heightPx<=(hasNoConsent?58:30)&&metaText?`<span style="font-weight:400;opacity:0.75"> · ${esc(metaText)}</span>`:''}
+                  ${critFlags.length?'<span style="font-size:12px;font-weight:900;color:#DC2626" title="Κρίσιμη πληροφορία">‼</span> ':''}${hasNoConsent?'<span style="font-size:13px;font-weight:700;color:#D97706">⚠</span> ':''}${(calColor==='service'&&!a.is_internal)?calStatusGlyph(a):''}${(isVip&&!a.is_internal)?'★ ':''}${esc(displayName)}${heightPx<=(hasNoConsent?58:30)&&metaText?`<span style="font-weight:400;opacity:0.75"> · ${esc(metaText)}</span>`:''}
                 </div>
                 ${hasNoConsent&&heightPx>30?`<div style="font-size:9px;font-weight:700;color:#D97706;white-space:nowrap;overflow:hidden">⚠ ΧΩΡΙΣ ΣΥΝΑΙΝΕΣΗ ${CONSENT_GROUP_LABEL[missingGrp]}</div>`:''}
                 ${heightPx>(hasNoConsent?58:30)?`<div style="font-size:9px;color:${c.text};opacity:0.8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(metaText)}</div>`:''}
-                ${heightPx>44?`<div style="font-size:9px;color:${c.text};opacity:0.7">${startTime}${!gdpr?' ⚠':''}</div>`:''}
+                ${heightPx>44?`<div style="font-size:9px;color:${c.text};opacity:0.7">${startTime}${(!a.is_internal&&!gdpr)?' ⚠':''}</div>`:''}
               </div>`;
             }).join('')}
             ${(()=>{
@@ -3916,9 +3922,10 @@ function renderCalendar() {
               ${dayAppts3.map(a=>{
                 const c=apptColor(a);
                 const therapistName = apptTherapist(a) || '';
-                const metaText = [a.service_name, therapistName].filter(Boolean).join(' · ');
-                return `<div data-appt-cal="${a.id}" style="background:${c.bg};border-left:2px solid ${c.border};border-radius:3px;padding:1px 3px;font-size:9px;color:${c.text};margin-bottom:1px;cursor:pointer;overflow:hidden;white-space:nowrap;text-overflow:ellipsis" title="${esc(a.patients&&a.patients.full_name||'')} · ${esc(a.service_name||'')}${therapistName?' · '+esc(therapistName):''}">
-                  <span style="font-weight:600">${esc((a.patients&&a.patients.full_name||'—').split(' ')[0])}</span>${metaText?` · <span style="opacity:0.8">${esc(metaText)}</span>`:''}
+                const wkDisplayName = a.is_internal ? ('🔒 '+(a.internal_title||'Εσωτερικό')) : (a.patients&&a.patients.full_name||'—');
+                const metaText = a.is_internal ? '' : [a.service_name, therapistName].filter(Boolean).join(' · ');
+                return `<div data-appt-cal="${a.id}" style="background:${c.bg};border-left:2px solid ${c.border};border-radius:3px;padding:1px 3px;font-size:9px;color:${c.text};margin-bottom:1px;cursor:pointer;overflow:hidden;white-space:nowrap;text-overflow:ellipsis" title="${esc(wkDisplayName)}${a.is_internal?'':' · '+esc(a.service_name||'')+(therapistName?' · '+esc(therapistName):'')}">
+                  <span style="font-weight:600">${esc(wkDisplayName.split(' ')[0])}</span>${metaText?` · <span style="opacity:0.8">${esc(metaText)}</span>`:''}
                 </div>`;
               }).join('')}
             </div>`;
@@ -4905,7 +4912,9 @@ function computeScheduledMinutes(staffIds, fromStr, toStr, schedules, overrides,
 }
 
 function computeReportStats() {
-  const allApts = S.reportAppointments||[];
+  // Εσωτερικά ραντεβού (μπλοκάρισμα ώρας, χωρίς ασθενή) δεν είναι πραγματικές
+  // επισκέψεις — έξω από όλα τα στατιστικά αναφορών (έσοδα, no-show, ανά υπηρεσία...).
+  const allApts = (S.reportAppointments||[]).filter(a=>!a.is_internal);
   const branchFilter = S.reportBranchFilter||'all';
   const apts = branchFilter==='all' ? allApts : allApts.filter(a=>a.branch_id===branchFilter);
   // Ανάλυση ανά υποκατάστημα (ΠΑΝΤΑ στο σύνολο του διαστήματος, ανεξάρτητα από
@@ -8033,14 +8042,25 @@ function modalNewPatient() {
 }
 
 function modalNewAppt() {
+  const internal = !!(S.modalData && S.modalData.internal);
   return `<div class="modal">
     <div class="modal-header"><span class="modal-title">Νέο Ραντεβού</span><button class="modal-close" onclick="closeModal()">×</button></div>
     <div class="modal-body">
-      <div class="form-group" style="position:relative">
+      <div class="form-group" style="background:var(--surface);border-radius:10px;padding:10px 12px;margin-bottom:2px">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+          <input type="checkbox" id="a-internal" ${internal?'checked':''}/>
+          🔒 Εσωτερικό ραντεβού <span style="color:var(--text-2);font-weight:400">— μπλοκάρισμα ώρας χωρίς ασθενή (συνάντηση προσωπικού, άδεια κ.λπ.)</span>
+        </label>
+      </div>
+      <div class="form-group" id="a-patient-wrap" style="position:relative;${internal?'display:none':''}">
         <label class="form-label">Ασθενής *</label>
         <input class="form-control" id="a-patient-search" placeholder="Αναζήτηση..."/>
         <div id="a-patient-results" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--white);border:1px solid var(--border);border-radius:8px;z-index:10;box-shadow:var(--shadow);max-height:160px;overflow-y:auto"></div>
         <input type="hidden" id="a-patient-id"/>
+      </div>
+      <div class="form-group" id="a-internal-title-wrap" style="${internal?'':'display:none'}">
+        <label class="form-label">Τίτλος *</label>
+        <input class="form-control" id="a-internal-title" placeholder="π.χ. Συνάντηση προσωπικού, Άδεια, Προσωπικό θέμα" value="${esc((S.modalData&&S.modalData.internalTitle)||'')}"/>
       </div>
       ${(S.clinicBranches||[]).length>1?`<div class="form-group"><label class="form-label">Υποκατάστημα</label>
         <select class="form-control" id="a-branch">
@@ -8063,7 +8083,7 @@ function modalNewAppt() {
         </div>
         <div class="form-group"><label class="form-label">Ημ/νία & Ώρα *</label><input class="form-control" id="a-time" type="datetime-local"/></div>
       </div>
-      <div class="form-group" style="position:relative">
+      <div class="form-group" id="a-service-wrap" style="position:relative;${internal?'display:none':''}">
         <label class="form-label">Υπηρεσία</label>
         <input class="form-control" id="a-service-search" placeholder="Αναζήτηση υπηρεσίας..." autocomplete="off"/>
         <div id="a-service-results" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--white);border:1px solid var(--border);border-radius:8px;z-index:10;box-shadow:var(--shadow);max-height:220px;overflow-y:auto"></div>
@@ -8087,7 +8107,7 @@ function modalNewAppt() {
         <div class="form-group"><label class="form-label">Διάρκεια (λεπτά)</label><input class="form-control" id="a-duration" type="number" value="60"/></div>
         <!-- Τιμή: ορατή ΜΟΝΟ σε clinic manager/admin. Το input μένει στο DOM
              (κρυφό) ώστε η τιμή καταλόγου να αποθηκεύεται κανονικά στο ταμείο. -->
-        <div class="form-group" ${canSee(['super_admin','clinic_admin'])?'':'style="display:none"'}><label class="form-label">Τιμή (€)</label><input class="form-control" id="a-price" type="number" placeholder="0"/></div>
+        <div class="form-group" id="a-price-wrap" style="${(canSee(['super_admin','clinic_admin'])&&!internal)?'':'display:none'}"><label class="form-label">Τιμή (€)</label><input class="form-control" id="a-price" type="number" placeholder="0"/></div>
       </div>
       <div class="form-group"><label class="form-label">Σημειώσεις</label><textarea class="form-control" id="a-notes" rows="2"></textarea></div>
     </div>
@@ -9005,6 +9025,14 @@ function bindEvents() {
       const consentLabels = {laser:'Laser Αποτρίχωσης', cleansing:'Καθαρισμού', peelings:'Peelings', oxygen:'Οξυγόνου/Ενυδάτωσης'};
       const missingThisConsent = consentGrp && a.patient_id && consentIdSets[consentGrp] && !consentIdSets[consentGrp].has(a.patient_id);
       content.innerHTML = `
+        ${a.is_internal ? `
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+          <div style="width:36px;height:36px;border-radius:50%;background:${c.bg};display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">🔒</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:14px;font-weight:500">${esc(a.internal_title||'Εσωτερικό ραντεβού')}</div>
+            <div style="font-size:12px;color:var(--text-2)">Μπλοκάρισμα ώρας — χωρίς ασθενή</div>
+          </div>
+        </div>` : `
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
           <div style="width:36px;height:36px;border-radius:50%;background:${c.bg};display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:${c.text};flex-shrink:0">${initials(a.patients&&a.patients.full_name)}</div>
           <div style="flex:1;min-width:0">
@@ -9020,8 +9048,14 @@ function bindEvents() {
           <button class="btn btn-ghost btn-sm" style="flex:1;justify-content:center;font-size:11px" onclick="resendApptAutomation('${a.id}','resend_instructions')">📋 Αποστολή οδηγιών</button>
         </div>
         ${a.status==='completed' && S.clinic && S.clinic.settings && S.clinic.settings.review_request_enabled?`
-        <button class="btn btn-ghost btn-sm" style="width:100%;justify-content:center;font-size:11px;margin-bottom:10px" onclick="resendApptAutomation('${a.id}','resend_review_request')">⭐ Ζήτηση αξιολόγησης</button>`:''}`:''}
-        ${[
+        <button class="btn btn-ghost btn-sm" style="width:100%;justify-content:center;font-size:11px;margin-bottom:10px" onclick="resendApptAutomation('${a.id}','resend_review_request')">⭐ Ζήτηση αξιολόγησης</button>`:''}`:''}`}
+        ${(a.is_internal ? [
+          ['Ημερομηνία', start.toLocaleDateString('el-GR',{weekday:'long',day:'numeric',month:'long',year:'numeric'})],
+          ['Ώρα', start.toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'})+' – '+end.toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'})],
+          ['Διάρκεια', (a.duration_minutes||60)+' λεπτά'],
+          ...((S.clinicBranches||[]).length && a.branch_id ? [['Υποκατάστημα', ((S.clinicBranches||[]).find(b=>b.id===a.branch_id)||{}).name]] : []),
+          ...((S.clinicRooms||[]).length ? [['Δωμάτιο', roomName(a.room_id) || '—']] : []),
+        ] : [
           ['Υπηρεσία', a.service_name],
           ['Ημερομηνία', start.toLocaleDateString('el-GR',{weekday:'long',day:'numeric',month:'long',year:'numeric'})],
           ['Ώρα', start.toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'})+' – '+end.toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'})],
@@ -9031,7 +9065,8 @@ function bindEvents() {
           ...((S.clinicRooms||[]).length ? [['Δωμάτιο', roomName(a.room_id) || (serviceDefaultRoomId(a.service_name) ? roomName(serviceDefaultRoomId(a.service_name))+' (προεπιλογή)' : '—')]] : []),
           ['GDPR', a.patients&&a.patients.gdpr_signed ? '✅ Υπογεγραμμένο' : '❌ Χωρίς GDPR'],
           ...(canFin && a.price ? [['Τιμή', euro(a.price)]] : []),
-        ].map(([k,v])=>`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border-2);font-size:12px"><span style="color:var(--text-2)">${k}</span><span style="font-weight:500;text-align:right;max-width:180px">${esc(v||'—')}</span></div>`).join('')}
+        ]).map(([k,v])=>`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border-2);font-size:12px"><span style="color:var(--text-2)">${k}</span><span style="font-weight:500;text-align:right;max-width:180px">${esc(v||'—')}</span></div>`).join('')}
+        ${a.is_internal ? '' : `
         <div id="appt-receipt-area">${apptReceiptAreaHtml(a, canReceipt)}</div>
         ${apptConsumablesAreaHtml(a)}
         ${a.patient_id?`<div style="margin-top:8px;display:flex;gap:6px">
@@ -9040,7 +9075,7 @@ function bindEvents() {
             <input type="file" id="appt-photo-input" accept="image/*" capture="environment" multiple style="display:none"/>
           </label>
         </div>
-        <div id="appt-photo-status" style="display:none;font-size:11px;color:var(--blue);margin-top:4px;text-align:center">Μεταφόρτωση...</div>`:''}
+        <div id="appt-photo-status" style="display:none;font-size:11px;color:var(--blue);margin-top:4px;text-align:center">Μεταφόρτωση...</div>`:''}`}
         ${(()=>{
           // Θεραπευτής: δικό του πεδίο — η αλλαγή εδώ ισοδυναμεί με drag & drop
           // (ενημερώνει therapist_id + notes και μετακινεί την κάρτα στη στήλη του).
@@ -9127,7 +9162,7 @@ function bindEvents() {
       // με την RLS delete policy στη βάση). Ξεχωριστό από «Ακυρώθηκε»: η
       // ακύρωση κρατάει ιστορικό, η διαγραφή αφαιρεί εντελώς την εγγραφή.
       const _del=content.querySelector('#appt-delete-btn');if(_del)_del.onclick = async () => {
-        const who = (a.patients&&a.patients.full_name)||'—';
+        const who = a.is_internal ? (a.internal_title||'Εσωτερικό ραντεβού') : ((a.patients&&a.patients.full_name)||'—');
         const when = start.toLocaleDateString('el-GR')+' '+start.toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'});
         if (!confirm(`Οριστική διαγραφή του ραντεβού «${who} · ${when}»;\n\nΔεν αναιρείται. Αν θες απλά να μείνει ιστορικό, χρησιμοποίησε αντ' αυτού την κατάσταση «Ακυρώθηκε».`)) return;
         const {error} = await sb.from('appointments').delete().eq('id',a.id);
@@ -10510,6 +10545,18 @@ function bindModalEvents() {
     closeModal(); await loadPageData();
   });
 
+  // 🔒 Εσωτερικό ραντεβού: κρύβει/δείχνει τα πεδία ασθενή/υπηρεσίας/τιμής χωρίς
+  // πλήρες re-render (θα έχανε ό,τι είχε ήδη γραφτεί στα υπόλοιπα πεδία).
+  const aInternal = document.getElementById('a-internal');
+  if (aInternal) aInternal.addEventListener('change', () => {
+    const on = aInternal.checked;
+    const set = (id, show) => { const el = document.getElementById(id); if (el) el.style.display = show ? '' : 'none'; };
+    set('a-patient-wrap', !on);
+    set('a-internal-title-wrap', on);
+    set('a-service-wrap', !on);
+    set('a-price-wrap', !on && canSee(['super_admin','clinic_admin']));
+  });
+
   // Patient search for appointment — dropdown με το focus, live αναζήτηση, δημιουργία νέου ασθενή
   const ps = document.getElementById('a-patient-search');
   if (ps) {
@@ -10693,18 +10740,21 @@ function bindModalEvents() {
 
   // Save appointment
   const _sa=document.getElementById('save-appt');if(_sa)_sa.addEventListener('click', async () => {
-    const pid = document.getElementById('a-patient-id').value;
+    const isInternal = !!(document.getElementById('a-internal')||{}).checked;
+    const pid = isInternal ? '' : document.getElementById('a-patient-id').value;
     const time = document.getElementById('a-time').value;
     if (!time) return alert('Συμπλήρωσε ημερομηνία και ώρα');
     const timeWithTz = time.length===16 ? time+':00+03:00' : time+'+03:00'; // datetime-local: "YYYY-MM-DDTHH:MM"
+    const internalTitle = isInternal ? document.getElementById('a-internal-title').value.trim() : '';
+    if (isInternal && !internalTitle) return alert('Συμπλήρωσε τίτλο για το εσωτερικό ραντεβού');
     const svcSel = document.getElementById('a-service');
-    const serviceName = svcSel.value==='__custom__' ? document.getElementById('a-service-custom').value.trim() : svcSel.value;
+    const serviceName = isInternal ? internalTitle : (svcSel.value==='__custom__' ? document.getElementById('a-service-custom').value.trim() : svcSel.value);
     // Ασφαλιστική δικλείδα: αν ο χρήστης πληκτρολόγησε στο πεδίο αναζήτησης
     // αλλά δεν πρόλαβε να διαλέξει πρόταση (πχ πάτησε Αποθήκευση αμέσως),
     // το #a-service θα είναι ακόμα κενό ενώ το ορατό κείμενο δείχνει κάτι —
     // μπλοκάρουμε αντί να αποθηκευτεί ραντεβού με κενή υπηρεσία.
     const svcSearchEl = document.getElementById('a-service-search');
-    if (svcSearchEl && svcSearchEl.value.trim() && !serviceName) {
+    if (!isInternal && svcSearchEl && svcSearchEl.value.trim() && !serviceName) {
       return alert('Επίλεξε την υπηρεσία από τη λίστα (ή «✎ Άλλη» για ελεύθερο κείμενο) — αυτό που έγραψες δεν έχει επιλεγεί ακόμα.');
     }
     const therapistSel = document.getElementById('a-therapist');
@@ -10745,13 +10795,15 @@ function bindModalEvents() {
     const {data:newAppt, error} = await sb.from('appointments').insert({
       clinic_id:clinicId(), patient_id:pid||null,
       service_name:serviceName,
+      is_internal: isInternal,
+      internal_title: isInternal ? internalTitle : null,
       therapist_id: therapistSel ? (therapistSel.value||null) : null,
       package_id: pkgSel && pkgSel.value ? pkgSel.value : null,
       branch_id: branchSel && branchSel.value ? branchSel.value : null,
       room_id: roomId,
       start_time:timeWithTz,
       duration_minutes:parseInt(document.getElementById('a-duration').value)||60,
-      price:parseFloat(document.getElementById('a-price').value)||null,
+      price: isInternal ? null : (parseFloat(document.getElementById('a-price').value)||null),
       notes:document.getElementById('a-notes').value,
       // ΚΛΕΙΣΜΕΝΟ για μελλοντικά ραντεβού >48 ωρών (θα πάρουν email
       // επιβεβαίωσης 48 ώρες πριν)· κατευθείαν ΕΠΙΒΕΒΑΙΩΜΕΝΟ όταν το
@@ -10761,8 +10813,9 @@ function bindModalEvents() {
     }).select('id').single();
     if (error) { alert(error.message); btn.textContent='Αποθήκευση'; btn.disabled=false; return; }
     // Στιγμή 1 (κλείσιμο ραντεβού): email + SMS ενημέρωσης, αμέσως — fire-and-
-    // forget, δεν μπλοκάρει το κλείσιμο του modal αν αργήσει/αποτύχει.
-    if (newAppt && newAppt.id) {
+    // forget, δεν μπλοκάρει το κλείσιμο του modal αν αργήσει/αποτύχει. Ποτέ για
+    // εσωτερικά ραντεβού — δεν υπάρχει ασθενής/email να ενημερωθεί.
+    if (newAppt && newAppt.id && !isInternal) {
       sb.functions.invoke('appointment-automations', { body: { action: 'send_booking_confirmation', appointment_id: newAppt.id } }).catch(() => {});
     }
     closeModal(); await loadPageData();
@@ -10928,6 +10981,7 @@ function showCalTooltip(el, e) {
   var critical = el.getAttribute('data-critical')||'';
   var status = el.getAttribute('data-status')||'confirmed';
   var statusInfo = STATUS_APPT[status]||STATUS_APPT.confirmed;
+  var isInternal = el.getAttribute('data-internal')==='1';
   // Clean up notes (remove "Προσωπικό: " prefix for display)
   var notesClean = notes.replace(/^Προσωπικό:\s*/,'');
 
@@ -10936,15 +10990,15 @@ function showCalTooltip(el, e) {
     +(critical?'<div style="background:#DC2626;color:#fff;font-size:11.5px;font-weight:700;padding:6px 8px;border-radius:6px;margin-bottom:6px;white-space:pre-line">'+esc(critical)+'</div>':'')
     +(svc?'<div style="font-size:12px;margin-bottom:2px">📋 '+svc+'</div>':'')
     +'<div style="font-family:monospace;font-size:11px;color:rgba(255,255,255,0.7);margin-bottom:6px">🕐 '+time+'</div>'
-    +'<div style="margin-bottom:4px"><span style="display:inline-block;background:'+statusInfo.c+';color:#fff;font-size:11px;font-weight:600;padding:2px 9px;border-radius:10px">'+esc(statusInfo.l)+'</span></div>'
+    +(isInternal?'':'<div style="margin-bottom:4px"><span style="display:inline-block;background:'+statusInfo.c+';color:#fff;font-size:11px;font-weight:600;padding:2px 9px;border-radius:10px">'+esc(statusInfo.l)+'</span></div>')
     +(price?'<div style="color:#6ee7b7;font-size:12px;font-weight:500;margin-bottom:4px">'+price+'</div>':'')
     +(notesClean?'<div style="font-size:11px;color:rgba(255,255,255,0.6);margin-bottom:4px">👤 '+notesClean+'</div>':'')
-    +'<div style="border-top:1px solid rgba(255,255,255,0.1);margin-top:6px;padding-top:6px">'
+    +(isInternal?'':'<div style="border-top:1px solid rgba(255,255,255,0.1);margin-top:6px;padding-top:6px">'
     +(!gdpr?'<div style="color:#fca5a5;font-size:11px;font-weight:500;margin-bottom:3px">⚠ Χωρίς GDPR συναίνεση</div>':'<div style="color:#6ee7b7;font-size:11px;margin-bottom:3px">✓ GDPR</div>')
     +(consentMissing?'<div style="color:#fcd34d;font-size:11px;font-weight:600;margin-bottom:3px">⚠ Εκκρεμεί συναίνεση '+consentMissing+'</div>':'')
     +(allergies?'<div style="color:#fcd34d;font-size:11px;margin-bottom:3px">⚠ Αλλεργίες: '+allergies+'</div>':'')
     +(medical?'<div style="color:rgba(255,255,255,0.75);font-size:11px;line-height:1.4;margin-top:2px"><span style="opacity:0.6">Ιατρ.: </span>'+medical+(medical.length>=120?'…':'')+'</div>':'')
-    +'</div>';
+    +'</div>');
 
   tt.style.display = 'block';
   var x = Math.min(e.clientX+14, window.innerWidth-280);
