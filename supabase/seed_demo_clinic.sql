@@ -779,6 +779,23 @@ begin
 end
 $seed$;
 
+-- ── 13. Συστάσεις (referred_by_name / referred_by_patient_id) ─────────────
+-- 6 πελάτες συνδεδεμένοι σε 3 «πρεσβευτές» + 3 μόνο με ελεύθερο όνομα (χωρίς καρτέλα).
+with amb as (
+  select id, full_name, row_number() over (order by id) rn from patients
+  where clinic_id='a787b766-9d23-45b2-9660-7bb480856a1b' and status in ('vip','active') order by id limit 3
+), tgt as (
+  select p.id, row_number() over (order by p.created_at desc) rn from patients p
+  where p.clinic_id='a787b766-9d23-45b2-9660-7bb480856a1b' and p.status='active' and p.id not in (select id from amb)
+  order by p.created_at desc limit 9
+)
+update patients p set
+  source = 'Σύσταση',
+  referred_by_name = case when t.rn <= 6 then initcap(lower(a.full_name)) else (array['Ελένη Κωνσταντίνου','Μαρία Νικολάου','Γιώργος Παππάς'])[t.rn-6] end,
+  referred_by_patient_id = case when t.rn <= 6 then a.id else null end
+from tgt t left join amb a on a.rn = ((t.rn-1) % 3) + 1
+where p.id = t.id and t.rn <= 9;
+
 -- Έλεγχος:
 --   select status, count(*) from appointments where clinic_id='a787b766-9d23-45b2-9660-7bb480856a1b' group by 1;
 --   select kind, count(*), count(uploaded_at) from backup.demo_media_manifest group by 1;

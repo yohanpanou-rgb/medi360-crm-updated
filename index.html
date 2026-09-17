@@ -1343,6 +1343,22 @@ async function loadPatientDetail(id, tab) {
       relationship_type: r.relationship_type,
       other: (r.patient_a && r.patient_a.id === id) ? r.patient_b : r.patient_a,
     })).filter(r => r.other);
+    // 🤝 Συστάσεις: ποιος τον σύστησε (σύνδεσμος ή ελεύθερο όνομα από τη φόρμα) και
+    // ποιους έχει συστήσει ο ίδιος (συνδεδεμένοι + όσοι έγραψαν το όνομά του στη φόρμα).
+    S.patientReferrer = null;
+    S.patientReferrals = [];
+    try {
+      if (p.referred_by_patient_id) {
+        const {data:ref} = await sb.from('patients').select('id,full_name,phone').eq('id', p.referred_by_patient_id).maybeSingle();
+        S.patientReferrer = ref||null;
+      }
+      const {data:refd} = await sb.from('patients').select('id,full_name,phone,status,created_at,referred_by_name,referred_by_patient_id')
+        .eq('clinic_id', clinicId()).neq('id', id)
+        .or(`referred_by_patient_id.eq.${id},referred_by_name.not.is.null`).order('created_at',{ascending:false});
+      const me = normalizeGreek(p.full_name);
+      S.patientReferrals = (refd||[]).filter(r => r.referred_by_patient_id === id
+        || (!r.referred_by_patient_id && me && normalizeGreek(r.referred_by_name) === me));
+    } catch(e) {}
     S.patientDetail = {...p, appointments: a||[], productSales: ps||[]};
     S.laserForms = lf||[];
     S.patTab = tab || 'overview';
@@ -2649,6 +2665,7 @@ function renderPatientDetail() {
               ['Φύλο', p.gender==='female'?'Γυναίκα':p.gender==='male'?'Άνδρας':'Άλλο'],
               ['Πόλη', p.city],
               ['Πηγή', p.source],
+              ...((p.referred_by_name || S.patientReferrer) ? [['Σύσταση από', (S.patientReferrer&&S.patientReferrer.full_name) || p.referred_by_name]] : []),
               ['GDPR', p.gdpr_signed?'✅ Υπογεγραμμένο':'❌ Όχι'],
               ['Ιατρικό Ιστορικό', [p.medical_history,p.allergies,p.medications,p.previous_treatments].some(v=>v&&v.trim())?'✅ Συμπληρωμένο':(p.medical_history_completed?'✅ Συμπληρωμένο — Ελεύθερο ιστορικό':'❌ Όχι')],
               ...(canSeeFinancials?[['LTV', euro(p.ltv)]]:[] ),
@@ -2785,6 +2802,7 @@ function renderPatientDetail() {
           </div>
         </div>
       </div>
+      ${renderReferralsCard(p)}
     </div>`:''}
 
     <!-- APPOINTMENTS TAB -->
@@ -11179,6 +11197,7 @@ function viewGdprConsent() {
     ['Email', src.email],
     ['Πόλη', src.city],
     ['Πηγή', src.source],
+    ['Σύσταση από', src.referred_by_name],
     ['Συναίνεση Marketing', src.marketing_opt_in === true ? 'Ναι' : (src.marketing_opt_in === false ? 'Όχι' : '')],
   ].filter(([,v]) => v && String(v).trim());
   const fields = [
@@ -11971,6 +11990,12 @@ async function openEditPatientModal() {
           </select>
           <input class="form-control" id="ep-source-other" placeholder="Προσδιορίστε..." style="margin-top:6px;display:${p.source && !HISTORY_FORM_SOURCES.includes(p.source)?'block':'none'}" value="${esc(p.source && !HISTORY_FORM_SOURCES.includes(p.source)?p.source:'')}"/>
         </div>
+        <div class="form-group" style="grid-column:1/-1;display:${(p.source==='Σύσταση'||p.referred_by_name)?'block':'none'}" id="ep-referrer-wrap">
+          <label class="form-label">Ποιος τον/την σύστησε; <span style="font-weight:400;color:var(--text-2)">— αν είναι πελάτης μας, συνδέεται αυτόματα με την καρτέλα του</span></label>
+          <input class="form-control" id="ep-referred-by" list="ep-referrer-list" autocomplete="off" placeholder="Ονοματεπώνυμο" value="${esc(p.referred_by_name||'')}"/>
+          <datalist id="ep-referrer-list">${(S.patients||[]).filter(x=>x.id!==p.id).slice(0,1500).map(x=>`<option value="${esc(x.full_name)}"></option>`).join('')}</datalist>
+          ${S.patientReferrer?`<div style="font-size:11px;color:#0F6E56;margin-top:4px">✓ Συνδεδεμένο με καρτέλα: ${esc(S.patientReferrer.full_name)}</div>`:''}
+        </div>
         <div class="form-group" style="grid-column:1/-1">
           <label class="form-label">Κατάσταση</label>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -11991,6 +12016,8 @@ async function openEditPatientModal() {
   wireCityField('ep');
   document.getElementById('ep-source').addEventListener('change', (e) => {
     document.getElementById('ep-source-other').style.display = e.target.value==='__other__' ? 'block' : 'none';
+    const rw = document.getElementById('ep-referrer-wrap');
+    if (rw) rw.style.display = (e.target.value==='Σύσταση' || document.getElementById('ep-referred-by').value.trim()) ? 'block' : 'none';
   });
 
   document.getElementById('ep-save').addEventListener('click', async () => {
@@ -12016,12 +12043,64 @@ async function openEditPatientModal() {
       status: statusEl ? statusEl.value : p.status,
       notes: document.getElementById('ep-notes').value.trim() || null,
     };
+    // Σύσταση: ελεύθερο όνομα + αυτόματη σύνδεση με υπάρχουσα καρτέλα (αν ταυτοποιηθεί μονοσήμαντα)
+    const refName = (document.getElementById('ep-referred-by')||{value:''}).value.trim();
+    patch.referred_by_name = refName || null;
+    patch.referred_by_patient_id = refName ? await findReferrerPatientId(refName, p.id) : null;
     const {error} = await sb.from('patients').update(patch).eq('id', p.id);
     if (error) { alert('Σφάλμα: '+error.message); return; }
     document.getElementById('lc-overlay').remove();
     await loadPatientDetail(p.id);
     render();
   });
+}
+
+// ── ΣΥΣΤΑΣΕΙΣ ──
+// Ταυτοποίηση του ατόμου που έκανε τη σύσταση με υπάρχουσα καρτέλα της ΙΔΙΑΣ κλινικής:
+// ίδιο ονοματεπώνυμο (χωρίς τόνους/πεζά-κεφαλαία) ή, για 2+ λέξεις, όλες οι λέξεις
+// μέσα στο όνομα — ΜΟΝΟ αν το αποτέλεσμα είναι ακριβώς ένας ασθενής. Αλλιώς μένει
+// μόνο το ελεύθερο όνομα (και συνδέεται αργότερα από την Επεξεργασία).
+async function findReferrerPatientId(name, excludeId) {
+  const q = normalizeGreek(name);
+  if (!q) return null;
+  let list = S.patients && S.patients.length ? S.patients : null;
+  if (!list) {
+    const {data} = await sb.from('patients').select('id,full_name').eq('clinic_id', clinicId());
+    list = data || [];
+  }
+  const cands = list.filter(x => x.id !== excludeId);
+  const exact = cands.filter(x => normalizeGreek(x.full_name) === q);
+  if (exact.length === 1) return exact[0].id;
+  if (exact.length > 1) return null;
+  const toks = q.split(' ').filter(t => t.length >= 2);
+  if (toks.length < 2) return null;
+  const partial = cands.filter(x => { const n = ' ' + normalizeGreek(x.full_name) + ' '; return toks.every(t => n.includes(' ' + t + ' ') || n.includes(' ' + t)); });
+  return partial.length === 1 ? partial[0].id : null;
+}
+function renderReferralsCard(p) {
+  const refs = S.patientReferrals || [];
+  const referrer = S.patientReferrer;
+  const fromLine = referrer
+    ? `<div style="font-size:12.5px;margin-bottom:10px">Συστήθηκε από: <span style="font-weight:600;cursor:pointer;color:var(--blue)" data-patient="${referrer.id}">${esc(referrer.full_name)}</span></div>`
+    : p.referred_by_name
+      ? `<div style="font-size:12.5px;margin-bottom:10px">Συστήθηκε από: <b>${esc(p.referred_by_name)}</b> <span style="font-size:11px;color:var(--text-2)">(δεν βρέθηκε καρτέλα με αυτό το όνομα — σύνδεσέ το από την Επεξεργασία)</span></div>`
+      : '';
+  return `
+      <div class="card" style="grid-column:1/-1">
+        <div class="card-header"><span class="card-title">🤝 Συστάσεις</span>${refs.length?`<span style="font-size:12px;color:var(--text-2)">Έχει συστήσει <b>${refs.length}</b> πελάτ${refs.length===1?'η':'ες'}</span>`:''}</div>
+        <div style="padding:12px 16px">
+          ${fromLine}
+          ${refs.length ? `<div style="display:flex;flex-direction:column;gap:6px">
+            ${refs.map(r=>`
+            <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg-2,#F7F8FC);border-radius:8px;font-size:12.5px;cursor:pointer" data-patient="${r.id}">
+              <span style="font-weight:600;color:var(--blue);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.full_name)}</span>
+              ${r.status==='vip'?badge('VIP','#FAEEDA','#854F0B'):r.status==='lead'?badge('Lead','#EEEDFE','#534AB7'):''}
+              ${r.referred_by_patient_id?'' : `<span style="font-size:10px;color:var(--text-2)" title="Ταίριασμα με βάση το όνομα που γράφτηκε στη φόρμα">κατά όνομα</span>`}
+              <span style="font-size:11px;color:var(--text-2);white-space:nowrap">${fmt(r.created_at)}</span>
+            </div>`).join('')}
+          </div>` : `<div style="padding:4px 0;color:var(--text-2);font-size:12.5px">Δεν έχει συστήσει κάποιον πελάτη ακόμα. Όταν νέος πελάτης γράψει το όνομά του/της στη φόρμα («Ποιος σας σύστησε;»), εμφανίζεται εδώ.</div>`}
+        </div>
+      </div>`;
 }
 
 // ── ΦΟΡΜΑ ΙΣΤΟΡΙΚΟΥ (ίδια δομή με το εξωτερικό Google Form, αλλά αποθηκεύει
@@ -12105,6 +12184,10 @@ async function openHistoryFormModal(opts) {
           <input type="radio" name="hf-source" value="__other__" ${!srcKnown ? 'checked' : ''} style="accent-color:var(--blue)"/> Other:
           <input class="form-control" id="hf-source-other" value="${esc(srcOther)}" style="max-width:220px"/>
         </label>
+      </div>
+      <div id="hf-referrer-wrap" style="display:${(srcKnown==='Σύσταση'||p.referred_by_name)?'block':'none'};margin:4px 0 6px 24px">
+        <label class="form-label">Ποιος σας σύστησε; (ονοματεπώνυμο)</label>
+        <input class="form-control" id="hf-referred-by" placeholder="π.χ. Μαρία Παπαδοπούλου" value="${esc(p.referred_by_name || '')}" style="max-width:340px"/>
       </div>
 
       <div style="margin-top:18px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px">🩺 Ιατρικό Ιστορικό</div>
@@ -12193,6 +12276,12 @@ async function openHistoryFormModal(opts) {
     });
   }
 
+  // «Ποιος σας σύστησε;» εμφανίζεται μόνο όταν επιλεγεί «Σύσταση»
+  document.querySelectorAll('input[name="hf-source"]').forEach(r => r.addEventListener('change', () => {
+    const w = document.getElementById('hf-referrer-wrap');
+    if (w) w.style.display = r.value === 'Σύσταση' ? 'block' : 'none';
+  }));
+
   document.getElementById('hf-save').addEventListener('click', async () => {
     const errEl = document.getElementById('hf-error');
     const name = document.getElementById('hf-name').value.trim();
@@ -12228,9 +12317,12 @@ async function openHistoryFormModal(opts) {
 
     const btn = document.getElementById('hf-save');
     btn.textContent = 'Αποθήκευση...'; btn.disabled = true;
+    const referredByName = (document.getElementById('hf-referred-by')||{value:''}).value.trim();
     const patch = {
       full_name: normalizePatientName(name), dob: dob || null, phone, email: email || null, city: city || null,
       source: source || null,
+      referred_by_name: referredByName || null,
+      referred_by_patient_id: referredByName ? await findReferrerPatientId(referredByName, selectedPatientId) : null,
       medical_history: medicalHistory || null,
       allergies: document.getElementById('hf-allergies').value.trim() || null,
       medications: document.getElementById('hf-medications').value.trim() || null,
@@ -12259,7 +12351,7 @@ async function openHistoryFormModal(opts) {
     if (_hfHasInk && finalPatientId) {
       const snapshot = {
         full_name: patch.full_name, dob: patch.dob, phone: patch.phone, email: patch.email, city: patch.city,
-        source: patch.source, conditions, condition_other: conditionOther || null,
+        source: patch.source, referred_by_name: patch.referred_by_name, conditions, condition_other: conditionOther || null,
         allergies: patch.allergies, medications: patch.medications, previous_treatments: patch.previous_treatments,
         avoid_body_areas: patch.avoid_body_areas, marketing_opt_in: patch.marketing_opt_in ?? null,
       };
