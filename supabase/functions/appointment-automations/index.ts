@@ -838,6 +838,71 @@ Deno.serve(async (req: Request) => {
       }
     };
 
+    // 🔍 Προεπισκόπηση αυτοματισμού για ραντεβού ΑΛΛΗΣ κλινικής (π.χ. demo) —
+    // δεν στέλνει τίποτα πραγματικά, μόνο δείχνει πώς θα έμοιαζε το email/SMS
+    // με τις ΔΙΚΕΣ ΤΗΣ ρυθμίσεις (brand, διεύθυνση, οδηγίες πρόσβασης, sms
+    // templates)· καμία εγγραφή σε communication_log/sms_log/link_codes.
+    const buildAutomationPreview = async (a: Appt, action: string) => {
+      const { data: clinicRow2 } = await supabase.from('clinics').select('*').eq('id', a.clinic_id).single();
+      if (!clinicRow2) return { ok: false, error: 'Clinic not found' };
+      const cRow2 = clinicRow2 as { name?: string; address?: string; settings?: Record<string, unknown> };
+      const settings2 = (cRow2.settings || {}) as Record<string, any>;
+      const clinicAddress2 = cRow2.address || settings2.address || '';
+      const accessHtml2 = accessInstructionsHtml(settings2.access_instructions || '');
+      const brand2: Brand = {
+        name: settings2.brand_name || cRow2.name || '',
+        color: settings2.brand_color || '#C4618A',
+        logoUrl: settings2.brand_logo_url || '',
+      };
+      const brandNameShort2 = String(brand2.name).split(/\s+by\s+/i)[0];
+      const name = (a.patients && a.patients.full_name) || '';
+      const ts = Math.floor(new Date(a.start_time).getTime() / 1000);
+      const smsVars = {
+        '{name}': name,
+        '{clinic}': brandNameShort2,
+        '{date}': athensDateOnly(a.start_time),
+        '{time}': athensTime(a.start_time),
+      };
+
+      if (action === 'resend_confirmation') {
+        const link = `${CONFIRM_URL}?id=${a.id}&ts=${ts}`;
+        const cancelLink = `${CONFIRM_URL}?id=${a.id}&ts=${ts}&cancel=1`;
+        const icsUrl = `${CONFIRM_URL}?id=${a.id}&ts=${ts}&ics=1`;
+        const { gcal, outlook } = buildCalendarBits([a], clinicAddress2, brand2);
+        const html = confirmationEmailHtml(name, [a], link, cancelLink, calendarButtonHtml(gcal, outlook, icsUrl), accessHtml2, brand2);
+        const smsCfg = smsConfigFor(settings2, 'confirmation_request');
+        const smsText = fillSmsTemplate(smsCfg.text, smsVars, SMS_LINK_TOKEN.confirmation_request, link);
+        return { ok: true, preview: true, email: { subject: '📅 Επιβεβαιώστε το ραντεβού σας — ' + brand2.name, html }, sms: { text: smsText } };
+      }
+      if (action === 'resend_instructions') {
+        const set = setForService(a.service_name || '');
+        const insIcsUrl = `${CONFIRM_URL}?id=${a.id}&ts=${ts}&ics=1`;
+        const { gcal, outlook } = buildCalendarBits([a], clinicAddress2, brand2);
+        const html = instructionsEmailHtml(name, a.service_name || '', athensDT(a.start_time), a.status, (set && set.pre_instructions) || '', (set && set.post_instructions) || '', calendarButtonHtml(gcal, outlook, insIcsUrl), brand2);
+        const subject = set ? '📋 Οδηγίες για το ραντεβού σας — ' + brand2.name : '✅ Το ραντεβού σας — ' + brand2.name;
+        const insCfg = smsConfigFor(settings2, 'instructions');
+        const smsText = fillSmsTemplate(insCfg.text, smsVars, SMS_LINK_TOKEN.instructions, `${CONFIRM_URL}?id=${a.id}&ts=${ts}&view=instructions`);
+        return { ok: true, preview: true, email: { subject, html }, sms: { text: smsText } };
+      }
+      if (action === 'resend_review_request') {
+        const reviewLink2 = String(settings2.review_link || '');
+        if (!reviewLink2) return { ok: false, error: 'no_review_link' };
+        const html = reviewRequestEmailHtml(name, a.service_name || '', reviewLink2, brand2);
+        const revCfg = smsConfigFor(settings2, 'review_request');
+        const smsText = fillSmsTemplate(revCfg.text, smsVars, SMS_LINK_TOKEN.review_request, reviewLink2);
+        return { ok: true, preview: true, email: { subject: '⭐ Πώς ήταν η εμπειρία σας; — ' + brand2.name, html }, sms: { text: smsText } };
+      }
+      if (action === 'send_booking_confirmation') {
+        const bookIcsUrl = `${CONFIRM_URL}?id=${a.id}&ts=${ts}&ics=1`;
+        const { gcal, outlook } = buildCalendarBits([a], clinicAddress2, brand2);
+        const html = bookingConfirmationEmailHtml(name, a.service_name || '', athensDT(a.start_time), calendarButtonHtml(gcal, outlook, bookIcsUrl), accessHtml2, brand2);
+        const bookCfg = smsConfigFor(settings2, 'booking_confirmation');
+        const smsText = fillSmsTemplate(bookCfg.text, smsVars, SMS_LINK_TOKEN.booking_confirmation, `${CONFIRM_URL}?id=${a.id}&ts=${ts}&ics=1`);
+        return { ok: true, preview: true, email: { subject: 'Το ραντεβού σας κλείστηκε — ' + brand2.name, html }, sms: { text: smsText } };
+      }
+      return { ok: false, error: 'Unknown action' };
+    };
+
     // ── Χειροκίνητη ενέργεια από το CRM ──
     if (body.action && body.appointment_id) {
       const { data: appt } = await supabase.from('appointments')
@@ -849,13 +914,15 @@ Deno.serve(async (req: Request) => {
       if ((appt as { is_internal?: boolean }).is_internal) {
         return json({ ok: false, skipped: 'internal_appointment' }, 200);
       }
+      const a = appt as unknown as Appt;
       // Οι αυτοματισμοί (Gmail, Apifon, επωνυμία) είναι ρυθμισμένοι για ΜΙΑ κλινική.
       // Ραντεβού άλλης κλινικής (π.χ. της demo) δεν πρέπει ποτέ να στείλει μήνυμα
-      // από τον λογαριασμό της — ούτε καν χειροκίνητα από το CRM.
+      // από τον λογαριασμό της — αντί για σιωπηλή αποτυχία, δείχνουμε στο
+      // προσωπικό μια ΠΡΟΕΠΙΣΚΟΠΗΣΗ του email/SMS χωρίς πραγματική αποστολή.
       if ((appt as { clinic_id?: string }).clinic_id !== configuredClinicId) {
-        return json({ ok: false, skipped: 'automations_not_configured_for_clinic' }, 200);
+        const preview = await buildAutomationPreview(a, body.action || '');
+        return json(preview, 200);
       }
-      const a = appt as unknown as Appt;
       if (body.action === 'resend_confirmation') await sendConfirmation([a], [a], 'manual');
       else if (body.action === 'resend_instructions') await sendInstructions(a, 'manual');
       else if (body.action === 'resend_review_request') await sendReviewRequest(a, 'manual');

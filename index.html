@@ -5162,6 +5162,10 @@ async function resendApptAutomation(aid, action) {
     const {data, error} = await sb.functions.invoke('appointment-automations', { body: { action, appointment_id: aid } });
     if (error) throw new Error(await extractInvokeErrorMessage(error));
     if (data && data.error) throw new Error(data.error);
+    // Σε κλινική χωρίς ρυθμισμένους αυτοματισμούς (π.χ. demo), το backend δεν
+    // στέλνει τίποτα πραγματικά — επιστρέφει μόνο μια προεπισκόπηση του
+    // email/SMS, την οποία δείχνουμε εδώ αντί για το μήνυμα "✓ Εστάλη."
+    if (data && data.preview) { showAutomationPreviewModal(data); return; }
     const r = (data&&data.results)||{};
     if (r.no_email) alert('⚠️ Ο πελάτης δεν έχει email — καταγράφηκε για τηλεφωνική ενημέρωση.');
     else if (r.no_set) alert('⚠️ Η υπηρεσία δεν έχει αντιστοιχισμένο σετ οδηγιών (SMS & Αυτοματισμοί → Οδηγίες Ραντεβού).');
@@ -5171,6 +5175,45 @@ async function resendApptAutomation(aid, action) {
   } catch(e) {
     alert('Σφάλμα: '+(e.message||e)+'\n\nΈλεγξε ότι η Edge Function appointment-automations είναι ενεργή.');
   }
+}
+
+// Standalone overlay (ίδιο πνεύμα με openRescheduleApptPicker) που δείχνει
+// την προεπισκόπηση email/SMS για κλινικές χωρίς ρυθμισμένους πραγματικούς
+// αυτοματισμούς (π.χ. demo) — καθαρά ενημερωτικό, καμία αποστολή.
+function showAutomationPreviewModal(data) {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+  const email = data.email || null;
+  const sms = data.sms || null;
+  overlay.innerHTML = `
+    <div style="background:var(--white);border-radius:12px;padding:0;width:600px;max-width:100%;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 10px 40px rgba(0,0,0,0.3)">
+      <div style="padding:14px 18px;background:#FEF3C7;border-radius:12px 12px 0 0;display:flex;align-items:center;gap:8px">
+        <span style="font-size:18px">🔍</span>
+        <div style="font-size:13px;font-weight:600;color:#92400E">Προεπισκόπηση — δεν στάλθηκε πραγματικό μήνυμα (demo λειτουργία)</div>
+      </div>
+      <div style="padding:16px 18px;overflow:auto;flex:1">
+        ${email ? `
+          <div style="font-size:11px;color:var(--text-2);margin-bottom:4px">Θέμα email</div>
+          <div style="font-size:13px;font-weight:600;margin-bottom:10px">${esc(email.subject||'')}</div>
+          <iframe id="auto-preview-frame" style="width:100%;height:360px;border:1px solid var(--border);border-radius:8px;background:#fff"></iframe>
+        ` : ''}
+        ${sms ? `
+          <div style="font-size:11px;color:var(--text-2);margin:14px 0 4px">Κείμενο SMS</div>
+          <div style="font-size:12.5px;background:var(--surface);border-radius:8px;padding:10px 12px;white-space:pre-wrap;font-family:monospace">${esc(sms.text||'')}</div>
+        ` : ''}
+      </div>
+      <div style="padding:12px 18px;border-top:1px solid var(--border);text-align:right">
+        <button class="btn btn-sm" id="auto-preview-close" style="background:#0891B2;color:#fff">Κλείσιμο</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  if (email) {
+    const frame = overlay.querySelector('#auto-preview-frame');
+    if (frame) frame.srcdoc = email.html || '';
+  }
+  const cleanup = () => overlay.remove();
+  overlay.querySelector('#auto-preview-close').onclick = cleanup;
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(); });
 }
 
 // Μικρό αυτόνομο popup (πάνω στο document.body, εκτός S.modal — ίδιο πνεύμα
