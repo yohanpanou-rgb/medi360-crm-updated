@@ -520,6 +520,10 @@ Deno.serve(async (req: Request) => {
     };
 
     const { data: clinicRow } = await supabase.from('clinics').select('*').ilike('name', '%Beauty Line%').limit(1).single();
+    // ΟΛΕΣ οι σαρώσεις περιορίζονται σε ΑΥΤΗ την κλινική. Χωρίς το φίλτρο, τα
+    // ραντεβού κάθε άλλης κλινικής της βάσης (π.χ. της demo με εικονικά email/
+    // τηλέφωνα) θα έπαιρναν μηνύματα από τον λογαριασμό της Beauty Line.
+    const configuredClinicId: string = ((clinicRow as { id?: string } | null)?.id) || '00000000-0000-0000-0000-000000000000';
     const cRow = (clinicRow || {}) as { name?: string; address?: string; settings?: { address?: string; brand_name?: string; brand_color?: string; brand_logo_url?: string; review_request_enabled?: boolean; review_link?: string; review_request_delay_days?: number; review_request_delay_minutes?: number; sms_templates?: Record<string, SmsAutomationConfig> } };
     const clinicSettings = cRow.settings as Record<string, unknown> | undefined;
     const clinicAddress = cRow.address || (cRow.settings && cRow.settings.address) || 'Beauty Line by Lina Panou';
@@ -738,6 +742,12 @@ Deno.serve(async (req: Request) => {
         .select('id,clinic_id,patient_id,status,start_time,service_name,duration_minutes,patients(full_name,email,phone)')
         .eq('id', body.appointment_id).single();
       if (!appt) return json({ error: 'Appointment not found' }, 404);
+      // Οι αυτοματισμοί (Gmail, Apifon, επωνυμία) είναι ρυθμισμένοι για ΜΙΑ κλινική.
+      // Ραντεβού άλλης κλινικής (π.χ. της demo) δεν πρέπει ποτέ να στείλει μήνυμα
+      // από τον λογαριασμό της — ούτε καν χειροκίνητα από το CRM.
+      if ((appt as { clinic_id?: string }).clinic_id !== configuredClinicId) {
+        return json({ ok: false, skipped: 'automations_not_configured_for_clinic' }, 200);
+      }
       const a = appt as unknown as Appt;
       if (body.action === 'resend_confirmation') await sendConfirmation([a], [a], 'manual');
       else if (body.action === 'resend_instructions') await sendInstructions(a, 'manual');
@@ -767,6 +777,7 @@ Deno.serve(async (req: Request) => {
     const fetchHorizon = new Date(in48h.getTime() + 24 * 3600 * 1000);
     const { data: bookedRows } = await supabase.from('appointments')
       .select('id,clinic_id,patient_id,status,start_time,service_name,duration_minutes,patients(full_name,email,phone)')
+      .eq('clinic_id', configuredClinicId)
       .eq('status', 'booked').gte('start_time', now.toISOString()).lte('start_time', fetchHorizon.toISOString());
     const byPatientDay: Record<string, Appt[]> = {};
     const dueDays = new Set<string>();
@@ -791,6 +802,7 @@ Deno.serve(async (req: Request) => {
     // 2) ΚΛΕΙΣΜΕΝΑ Ή ΕΠΙΒΕΒΑΙΩΜΕΝΑ μελλοντικά → οδηγίες.
     const { data: confRows } = await supabase.from('appointments')
       .select('id,clinic_id,patient_id,status,start_time,service_name,duration_minutes,patients(full_name,email,phone)')
+      .eq('clinic_id', configuredClinicId)
       .in('status', ['booked', 'confirmed']).gte('start_time', now.toISOString()).lte('start_time', horizon.toISOString());
     //    ΟΜΑΔΟΠΟΙΗΣΗ ανά πελάτη + ημέρα + ΣΕΤ ΟΔΗΓΙΩΝ: δύο ραντεβού την ίδια
     //    ημέρα με το ίδιο σετ έστελναν δύο ΠΑΝΟΜΟΙΟΤΥΠΑ email/SMS.
@@ -820,6 +832,7 @@ Deno.serve(async (req: Request) => {
       // ραντεβού που εκκρεμεί ακόμα κρατάει την ημέρα «ανοιχτή».
       const { data: dayRows } = await supabase.from('appointments')
         .select('id,clinic_id,patient_id,status,start_time,service_name,duration_minutes,patients(full_name,email,phone)')
+        .eq('clinic_id', configuredClinicId)
         .gte('start_time', reviewHorizon.toISOString()).lte('start_time', now.toISOString());
       const apptEnd = (a: Appt) => new Date(a.start_time).getTime() + ((a.duration_minutes || 60) * 60000);
       const byReviewDay: Record<string, Appt[]> = {};

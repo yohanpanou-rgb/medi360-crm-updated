@@ -2171,6 +2171,7 @@ function renderPatients() {
     const ms = !q ||
       (p.full_name&&(p.full_name.toLowerCase().includes(q)||p.full_name.toLowerCase().includes(qGreek))) ||
       (p.phone&&p.phone.includes(q)) ||
+      (p.amka&&p.amka.includes(q)) ||
       (p.email&&p.email.toLowerCase().includes(q));
     const mf = S.filter==='all'||p.status===S.filter;
     return ms&&mf;
@@ -2478,6 +2479,7 @@ function renderPatientDetail() {
             ${patBadge(p.status)}
             <span style="font-size:12px;color:var(--text-2)">${esc(p.phone||'')}</span>
             ${phoneActionsHtml(p.phone, 13)}
+            ${p.amka?`<span style="font-size:11px;color:var(--text-2);background:var(--surface-2);padding:2px 9px;border-radius:9px;font-variant-numeric:tabular-nums" title="ΑΜΚΑ">ΑΜΚΑ ${esc(p.amka)}</span>`:''}
             ${p.gdpr_signed?'<span style="font-size:11px;color:#0F6E56">✓ GDPR</span>':'<span style="font-size:11px;color:var(--red)">⚠ Χωρίς GDPR</span>'}
             ${p.source?`<span style="font-size:11px;color:var(--text-2);background:var(--surface-2);padding:2px 9px;border-radius:9px">📍 ${esc(p.source)}</span>`:''}
             ${S.serviceConsentCleansing
@@ -2521,19 +2523,21 @@ function renderPatientDetail() {
       return '';
     })()}
 
-    <!-- Tabs -->
-    <div style="display:flex;gap:0;border-bottom:1px solid var(--border-2);overflow-x:auto">
+    <!-- Tabs: τυλίγονται σε 2–3 σειρές στο κινητό (flex-wrap) αντί για οριζόντιο
+    scroll, ώστε όλες οι επιλογές να είναι ορατές με μια ματιά. Σειρά κατά
+    συχνότητα χρήσης· το Timeline τελευταίο. -->
+    <div style="display:flex;flex-wrap:wrap;gap:2px 0;border-bottom:1px solid var(--border-2)">
       ${[
         {id:'overview',l:'Στοιχεία'},
-        {id:'timeline',l:'Timeline'},
         {id:'appointments',l:`Ραντεβού (${(p.appointments&&p.appointments.length)||0})`},
         {id:'medical',l:`Ιατρικό Ιστορικό${hasMedicalHistoryData(p)?' ✓':''}`},
+        {id:'patconsents',l:'Συναινέσεις'},
+        {id:'consultation',l:`Consultation (${consultations.length})`},
         {id:'laser',l:`Laser Forms (${laserForms.length})`},
         {id:'photos',l:`Φωτογραφίες (${(S.patientPhotos||[]).length})`},
         {id:'exams',l:`Εξετάσεις (${(S.patientExams||[]).length})`},
-        {id:'patconsents',l:'Συναινέσεις'},
-        {id:'consultation',l:`Consultation (${consultations.length})`},
-      ].map(t=>`<button class="btn" style="border-radius:0;border-bottom:2px solid ${patTab===t.id?'var(--blue)':'transparent'};color:${patTab===t.id?'var(--blue)':'var(--text-2)'};background:transparent;padding:8px 14px;font-size:12px;white-space:nowrap" data-pat-tab="${t.id}">${t.l}</button>`).join('')}
+        {id:'timeline',l:'Timeline'},
+      ].map(t=>`<button class="btn" style="border-radius:0;border-bottom:2px solid ${patTab===t.id?'var(--blue)':'transparent'};color:${patTab===t.id?'var(--blue)':'var(--text-2)'};background:transparent;padding:7px 11px;font-size:12px;white-space:nowrap;font-weight:${patTab===t.id?'700':'500'}" data-pat-tab="${t.id}">${t.l}</button>`).join('')}
     </div>
     </div>
     <div style="margin-top:20px">
@@ -2633,6 +2637,7 @@ function renderPatientDetail() {
               ['Email', p.email],
               ['Τηλέφωνο', p.phone],
               ['Ημ. Γέννησης', fmt(p.dob)],
+              ['ΑΜΚΑ', p.amka],
               ['Φύλο', p.gender==='female'?'Γυναίκα':p.gender==='male'?'Άνδρας':'Άλλο'],
               ['Πόλη', p.city],
               ['Πηγή', p.source],
@@ -2810,6 +2815,7 @@ function renderPatientDetail() {
           <span class="card-title">🏥 Ιατρικό Ιστορικό & GDPR</span>
           <div style="display:flex;gap:8px;align-items:center">
             ${p.gdpr_signed?'<span class="badge badge-green">✓ GDPR Υπογεγραμμένο</span>':'<span class="badge badge-red">⚠ Χωρίς GDPR</span>'}
+            <button class="btn btn-ghost btn-sm" onclick="viewGdprConsent()" title="Η φόρμα όπως τη συμπλήρωσε και υπέγραψε ο ασθενής">👁 Προβολή Φόρμας</button>
             <button class="btn btn-primary btn-sm" id="open-history-form-btn">✏️ Επεξεργασία Φόρμας</button>
             <button class="btn btn-ghost btn-sm" id="sync-patient-sheet-btn">🔄 Sync από Sheet</button>
           </div>
@@ -7122,6 +7128,7 @@ function modalNewPatient() {
         </div>
       </div>
       <div class="form-group"><label class="form-label">Email *</label><input class="form-control" id="f-email" type="email" placeholder="email@example.gr"/></div>
+      <div class="form-group"><label class="form-label">ΑΜΚΑ</label><input class="form-control" id="f-amka" inputmode="numeric" maxlength="11" placeholder="11 ψηφία (προαιρετικό)"/></div>
       <div class="form-row">
         <div class="form-group"><label class="form-label">Φύλο</label>
           <select class="form-control" id="f-gender"><option value="female">Γυναίκα</option><option value="male">Άνδρας</option><option value="other">Άλλο</option></select></div>
@@ -9488,12 +9495,15 @@ function bindModalEvents() {
     if (!firstName||!lastName||!phone||!email) return alert('Συμπλήρωσε τα υποχρεωτικά πεδία: Όνομα, Επώνυμο, Τηλέφωνο, Email');
     if (!/^\S+@\S+\.\S+$/.test(email)) return alert('Το email δεν είναι έγκυρο');
     if (!/^\+?\d{10,13}$/.test(phone.replace(/\s/g,''))) return alert('Το τηλέφωνο δεν είναι έγκυρο (10-13 ψηφία)');
+    const amka = (document.getElementById('f-amka')||{value:''}).value.replace(/\s/g,'');
+    if (amka && !/^\d{11}$/.test(amka)) return alert('Το ΑΜΚΑ πρέπει να έχει ακριβώς 11 ψηφία.');
     const dup = await findDuplicatePatientByPhone(phone);
     if (dup && !confirm(`Υπάρχει ήδη ασθενής με αυτό το τηλέφωνο: ${dup.full_name}. Θέλεις να συνεχίσεις με νέα καταχώρηση;`)) return;
     const btn = document.getElementById('save-patient');
     btn.textContent='Αποθήκευση...'; btn.disabled=true;
     const {error} = await sb.from('patients').insert({
       full_name:normalizePatientName(name), phone, email:document.getElementById('f-email').value,
+      amka: amka || null,
       gender:document.getElementById('f-gender').value,
       status:document.getElementById('f-status').value,
       source:document.getElementById('f-source').value,
@@ -11664,6 +11674,7 @@ async function openEditPatientModal() {
         <div class="form-group"><label class="form-label">Τηλέφωνο</label><input class="form-control" id="ep-phone" value="${esc(p.phone||'')}"/></div>
         <div class="form-group"><label class="form-label">Email</label><input class="form-control" id="ep-email" type="email" value="${esc(p.email||'')}"/></div>
         <div class="form-group"><label class="form-label">Ημ. Γέννησης</label><input class="form-control" id="ep-dob" type="date" value="${p.dob||''}"/></div>
+        <div class="form-group"><label class="form-label">ΑΜΚΑ</label><input class="form-control" id="ep-amka" inputmode="numeric" maxlength="11" placeholder="11 ψηφία" value="${esc(p.amka||'')}"/></div>
         <div class="form-group"><label class="form-label">Φύλο</label>
           <select class="form-control" id="ep-gender">
             <option value="" ${!p.gender?'selected':''}>—</option>
@@ -11710,11 +11721,16 @@ async function openEditPatientModal() {
     const statusEl = document.querySelector('input[name="ep-status"]:checked');
     const sourceSel = document.getElementById('ep-source').value;
     const source = sourceSel==='__other__' ? document.getElementById('ep-source-other').value.trim() : sourceSel;
+    // ΑΜΚΑ: προαιρετικό, αλλά αν δοθεί πρέπει να είναι ακριβώς 11 ψηφία (ίδιος
+    // έλεγχος με το constraint της βάσης, ώστε το λάθος να φαίνεται πριν την αποθήκευση).
+    const amka = document.getElementById('ep-amka').value.replace(/\s/g,'');
+    if (amka && !/^\d{11}$/.test(amka)) { alert('Το ΑΜΚΑ πρέπει να έχει ακριβώς 11 ψηφία.'); return; }
     const patch = {
       full_name: normalizePatientName(name),
       phone: phone,
       email: document.getElementById('ep-email').value.trim() || null,
       dob: document.getElementById('ep-dob').value || null,
+      amka: amka || null,
       gender: document.getElementById('ep-gender').value || null,
       city: getCityFieldValue('ep') || null,
       source: source || null,
