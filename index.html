@@ -2479,6 +2479,7 @@ function renderPatientDetail() {
             ${patBadge(p.status)}
             <span style="font-size:12px;color:var(--text-2)">${esc(p.phone||'')}</span>
             ${phoneActionsHtml(p.phone, 13)}
+            ${p.amka?`<span style="font-size:11px;color:var(--text-2);background:var(--surface-2);padding:2px 9px;border-radius:9px;font-variant-numeric:tabular-nums" title="ΑΜΚΑ">ΑΜΚΑ ${esc(p.amka)}</span>`:''}
             ${p.gdpr_signed?'<span style="font-size:11px;color:#0F6E56">✓ GDPR</span>':'<span style="font-size:11px;color:var(--red)">⚠ Χωρίς GDPR</span>'}
             ${p.source?`<span style="font-size:11px;color:var(--text-2);background:var(--surface-2);padding:2px 9px;border-radius:9px">📍 ${esc(p.source)}</span>`:''}
             ${S.serviceConsentCleansing
@@ -2522,19 +2523,21 @@ function renderPatientDetail() {
       return '';
     })()}
 
-    <!-- Tabs -->
-    <div style="display:flex;gap:0;border-bottom:1px solid var(--border-2);overflow-x:auto">
+    <!-- Tabs: τυλίγονται σε 2–3 σειρές στο κινητό (flex-wrap) αντί για οριζόντιο
+    scroll, ώστε όλες οι επιλογές να είναι ορατές με μια ματιά. Σειρά κατά
+    συχνότητα χρήσης· το Timeline τελευταίο. -->
+    <div style="display:flex;flex-wrap:wrap;gap:2px 0;border-bottom:1px solid var(--border-2)">
       ${[
         {id:'overview',l:'Στοιχεία'},
-        {id:'timeline',l:'Timeline'},
         {id:'appointments',l:`Ραντεβού (${(p.appointments&&p.appointments.length)||0})`},
         {id:'medical',l:`Ιατρικό Ιστορικό${hasMedicalHistoryData(p)?' ✓':''}`},
+        {id:'patconsents',l:'Συναινέσεις'},
+        {id:'consultation',l:`Consultation (${consultations.length})`},
         {id:'laser',l:`Laser Forms (${laserForms.length})`},
         {id:'photos',l:`Φωτογραφίες (${(S.patientPhotos||[]).length})`},
         {id:'exams',l:`Εξετάσεις (${(S.patientExams||[]).length})`},
-        {id:'patconsents',l:'Συναινέσεις'},
-        {id:'consultation',l:`Consultation (${consultations.length})`},
-      ].map(t=>`<button class="btn" style="border-radius:0;border-bottom:2px solid ${patTab===t.id?'var(--blue)':'transparent'};color:${patTab===t.id?'var(--blue)':'var(--text-2)'};background:transparent;padding:8px 14px;font-size:12px;white-space:nowrap" data-pat-tab="${t.id}">${t.l}</button>`).join('')}
+        {id:'timeline',l:'Timeline'},
+      ].map(t=>`<button class="btn" style="border-radius:0;border-bottom:2px solid ${patTab===t.id?'var(--blue)':'transparent'};color:${patTab===t.id?'var(--blue)':'var(--text-2)'};background:transparent;padding:7px 11px;font-size:12px;white-space:nowrap;font-weight:${patTab===t.id?'700':'500'}" data-pat-tab="${t.id}">${t.l}</button>`).join('')}
     </div>
     </div>
     <div style="margin-top:20px">
@@ -2812,6 +2815,7 @@ function renderPatientDetail() {
           <span class="card-title">🏥 Ιατρικό Ιστορικό & GDPR</span>
           <div style="display:flex;gap:8px;align-items:center">
             ${p.gdpr_signed?'<span class="badge badge-green">✓ GDPR Υπογεγραμμένο</span>':'<span class="badge badge-red">⚠ Χωρίς GDPR</span>'}
+            <button class="btn btn-ghost btn-sm" onclick="viewGdprConsent()" title="Η φόρμα όπως τη συμπλήρωσε και υπέγραψε ο ασθενής">👁 Προβολή Φόρμας</button>
             <button class="btn btn-primary btn-sm" id="open-history-form-btn">✏️ Επεξεργασία Φόρμας</button>
             <button class="btn btn-ghost btn-sm" id="sync-patient-sheet-btn">🔄 Sync από Sheet</button>
           </div>
