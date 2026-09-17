@@ -932,6 +932,13 @@ async function loadPageData() {
       const {data:bgifts} = await sb.from('birthday_gifts').select('patient_id,channel,redeemed_at').eq('clinic_id',cid).eq('year', new Date().getFullYear());
       (bgifts||[]).forEach(g=>{ S.dashBirthdayGifts[g.patient_id]=g; });
     } catch(e) {}
+    // 🎉 Εορτολόγιο & SMS — μόνο για οργανισμούς με ενεργό το feature. Η λίστα
+    // υπολογίζεται στο edge function nameday-sms (μόνο πελάτες ΑΥΤΗΣ της κλινικής).
+    S.namedayPreview = null;
+    if (namedaySmsEnabled()) {
+      try { S.namedayPreview = await namedayFetchPreview(); }
+      catch(e) { S.namedayPreview = {error: (e && e.message) || String(e)}; }
+    }
     // ⏳ ΚΛΕΙΣΜΕΝΑ (ανεπιβεβαίωτα) ραντεβού επόμενου 48ωρου — για να τα
     // επιβεβαιώνει τηλεφωνικά η γραμματεία όταν ο πελάτης δεν έχει email ή
     // δεν πάτησε το κουμπί του email.
@@ -1336,6 +1343,22 @@ async function loadPatientDetail(id, tab) {
       relationship_type: r.relationship_type,
       other: (r.patient_a && r.patient_a.id === id) ? r.patient_b : r.patient_a,
     })).filter(r => r.other);
+    // 🤝 Συστάσεις: ποιος τον σύστησε (σύνδεσμος ή ελεύθερο όνομα από τη φόρμα) και
+    // ποιους έχει συστήσει ο ίδιος (συνδεδεμένοι + όσοι έγραψαν το όνομά του στη φόρμα).
+    S.patientReferrer = null;
+    S.patientReferrals = [];
+    try {
+      if (p.referred_by_patient_id) {
+        const {data:ref} = await sb.from('patients').select('id,full_name,phone').eq('id', p.referred_by_patient_id).maybeSingle();
+        S.patientReferrer = ref||null;
+      }
+      const {data:refd} = await sb.from('patients').select('id,full_name,phone,status,created_at,referred_by_name,referred_by_patient_id')
+        .eq('clinic_id', clinicId()).neq('id', id)
+        .or(`referred_by_patient_id.eq.${id},referred_by_name.not.is.null`).order('created_at',{ascending:false});
+      const me = normalizeGreek(p.full_name);
+      S.patientReferrals = (refd||[]).filter(r => r.referred_by_patient_id === id
+        || (!r.referred_by_patient_id && me && normalizeGreek(r.referred_by_name) === me));
+    } catch(e) {}
     S.patientDetail = {...p, appointments: a||[], productSales: ps||[]};
     S.laserForms = lf||[];
     S.patTab = tab || 'overview';
@@ -1962,6 +1985,7 @@ function renderDashboard() {
         </div>
       </div>
     </div>
+    ${renderNamedayCard()}
     <div class="stats-grid" style="margin-bottom:16px">
       <div class="stat-card">
         <div class="stat-icon" style="background:#eef0fe;color:var(--blue)">◎</div>
@@ -2641,6 +2665,7 @@ function renderPatientDetail() {
               ['Φύλο', p.gender==='female'?'Γυναίκα':p.gender==='male'?'Άνδρας':'Άλλο'],
               ['Πόλη', p.city],
               ['Πηγή', p.source],
+              ...((p.referred_by_name || S.patientReferrer) ? [['Σύσταση από', (S.patientReferrer&&S.patientReferrer.full_name) || p.referred_by_name]] : []),
               ['GDPR', p.gdpr_signed?'✅ Υπογεγραμμένο':'❌ Όχι'],
               ['Ιατρικό Ιστορικό', [p.medical_history,p.allergies,p.medications,p.previous_treatments].some(v=>v&&v.trim())?'✅ Συμπληρωμένο':(p.medical_history_completed?'✅ Συμπληρωμένο — Ελεύθερο ιστορικό':'❌ Όχι')],
               ...(canSeeFinancials?[['LTV', euro(p.ltv)]]:[] ),
@@ -2777,6 +2802,7 @@ function renderPatientDetail() {
           </div>
         </div>
       </div>
+      ${renderReferralsCard(p)}
     </div>`:''}
 
     <!-- APPOINTMENTS TAB -->
@@ -4023,7 +4049,7 @@ function renderSms() {
         <thead><tr><th>Ασθενής</th><th>Τύπος</th><th>Τηλέφωνο</th><th>Κατάσταση</th><th>Ημ/νία &amp; Ώρα</th></tr></thead>
         <tbody>${log.length?log.map(l=>`<tr>
           <td style="font-weight:500">${esc((l.patients&&l.patients.full_name)||'—')}</td>
-          <td>${badge(l.sms_type||'—','#E6F1FB','#185FA5')}</td>
+          <td>${l.sms_type==='nameday'?badge('🎉 Εορτολόγιο','#FDF0F5','#C4618A'):badge(l.sms_type||'—','#E6F1FB','#185FA5')}</td>
           <td style="font-family:var(--mono);font-size:12px;color:var(--text-2)">${esc(l.phone||'—')}</td>
           <td>${l.status==='sent'?badge('Στάλθηκε','#E1F5EE','#0F6E56'):badge('Σφάλμα','#FCEBEB','#A32D2D')}</td>
           <td style="font-size:12px;color:var(--text-2);white-space:nowrap">${fmtDateTime(l.sent_at||l.created_at)}</td>
@@ -6599,6 +6625,228 @@ function editLeaveQuota(staffId) {
 }
 
 // ── SETTINGS ──
+// ═══════════════════════════════════════════════════════════════════════════
+// 🎉 ΕΟΡΤΟΛΟΓΙΟ & SMS — πλατφορμικό feature ανά οργανισμό (clinics.settings.nameday_sms)
+// Όλη η λογική (ποια ονόματα γιορτάζουν, ποιοι πελάτες, dedupe, αποστολή) ζει στο
+// edge function nameday-sms. Εδώ: κάρτα Dashboard, προεπισκόπηση, έγκριση, ρυθμίσεις.
+// Απενεργοποιημένος οργανισμός → δεν εμφανίζεται τίποτα από αυτά.
+// ═══════════════════════════════════════════════════════════════════════════
+const NAMEDAY_DEFAULT_TEMPLATE = '{name}, χρόνια πολλά για τη γιορτή σου! Η ομάδα του {clinic}';
+function namedaySettings() { return (S.clinic&&S.clinic.settings&&S.clinic.settings.nameday_sms)||{}; }
+function namedaySmsEnabled() { return !!namedaySettings().enabled; }
+function namedayCanSend() { return canSee(['super_admin','clinic_admin','receptionist']); }
+function namedayOrgName() {
+  const s = namedaySettings();
+  if (s.org_name) return s.org_name;
+  const c = S.clinic||{};
+  const base = ((c.settings&&c.settings.brand_name)||c.name||'').trim();
+  return (base.split(/\s+by\s+/i)[0]||base).trim();
+}
+function namedayRender(tmpl, name, org) {
+  return (tmpl||NAMEDAY_DEFAULT_TEMPLATE)
+    .replace(/\{name\}|\[Μικρό Όνομα\]|\[Όνομα\]/gi, name)
+    .replace(/\{clinic\}|\[Όνομα Οργανισμού\]|\[Οργανισμός\]/gi, org)
+    .replace(/\s+/g,' ').trim();
+}
+async function namedayFetchPreview() {
+  const {data, error} = await sb.functions.invoke('nameday-sms', {body:{action:'preview', clinic_id: clinicId()}});
+  if (error) throw new Error(error.message||'Σφάλμα επικοινωνίας');
+  return data||{};
+}
+async function namedayRefresh() {
+  if (!namedaySmsEnabled()) return;
+  try { S.namedayPreview = await namedayFetchPreview(); }
+  catch(e) { S.namedayPreview = {error:(e&&e.message)||String(e)}; }
+  render();
+}
+function namedayStatusBadge(st) {
+  return st==='sent' ? badge('✓ Εστάλη','#E1F5EE','#0F6E56')
+    : st==='failed' ? badge('Απέτυχε','#FCEBEB','#A32D2D')
+    : st==='pending' ? badge('Σε εξέλιξη','#FAEEDA','#854F0B')
+    : st==='no_mobile' ? badge('Χωρίς κινητό','#E4E6ED','#53586B')
+    : st==='duplicate_phone' ? badge('Διπλή εγγραφή','#E4E6ED','#53586B')
+    : badge('Έτοιμο','#E6F1FB','#185FA5');
+}
+function renderNamedayCard() {
+  if (!namedaySmsEnabled()) return '';
+  const pv = S.namedayPreview;
+  const head = (title, extra) => `<div class="card-header"><span class="card-title">${title}</span>${extra||''}</div>`;
+  if (!pv) return `<div class="card" style="margin-bottom:16px">${head('🎉 Εορτολόγιο')}<div style="padding:16px;font-size:12px;color:var(--text-2)">Έλεγχος ονομάτων ημέρας…</div></div>`;
+  if (pv.error) return `<div class="card" style="margin-bottom:16px">${head('🎉 Εορτολόγιο', `<button class="btn btn-ghost btn-sm" onclick="namedayRefresh()">↻ Ξανά</button>`)}<div style="padding:16px;font-size:12px;color:#A32D2D">Δεν φορτώθηκε: ${esc(pv.error)}</div></div>`;
+  const rows = pv.rows||[], counts = pv.counts||{}, names = pv.names||[];
+  const ready = counts.ready||0, sent = counts.sent||0;
+  const title = rows.length ? `🎉 Σήμερα γιορτάζουν ${rows.length} πελάτ${rows.length===1?'ης':'ες'}` : '🎉 Εορτολόγιο';
+  const btns = `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+      ${sent?`<span style="font-size:11px;color:#0F6E56;font-weight:600">✓ ${sent} εστάλησαν σήμερα</span>`:''}
+      <button class="btn btn-ghost btn-sm" onclick="namedayRefresh()" title="Ανανέωση">↻</button>
+      ${rows.length?`<button class="btn btn-ghost btn-sm" onclick="namedayPreviewModal()">👁 Προεπισκόπηση SMS</button>`:''}
+      ${rows.length&&namedayCanSend()?`<button class="btn btn-primary btn-sm" onclick="namedayConfirmSend()" ${ready?'':'disabled'}>📨 Αποστολή SMS${ready?` (${ready})`:''}</button>`:''}
+    </div>`;
+  const namesLine = names.length
+    ? `<div style="padding:8px 16px;font-size:12px;color:var(--text-2);border-bottom:1px solid var(--border-2)">Ονόματα ημέρας: <b style="color:var(--text)">${names.map(esc).join(', ')}</b></div>`
+    : `<div style="padding:16px;font-size:12px;color:var(--text-2)">Καμία γνωστή γιορτή σήμερα.</div>`;
+  const table = rows.length ? `<div class="table-wrap" style="max-height:320px;overflow-y:auto"><table>
+      <thead><tr><th>Όνομα</th><th>Επώνυμο</th><th>Κινητό</th><th>Κατάσταση</th></tr></thead>
+      <tbody>${rows.map(r=>`<tr data-patient="${r.patient_id}" style="cursor:pointer">
+        <td style="font-weight:600">${esc(r.first_name)}</td>
+        <td>${esc(r.last_name||'—')}</td>
+        <td style="font-family:var(--mono);font-size:12px;white-space:nowrap">${esc(r.phone||'—')}${r.phone_normalized?` <span onclick="event.stopPropagation()">${phoneActionsHtml(r.phone, 12)}</span>`:''}</td>
+        <td>${namedayStatusBadge(r.status)}${r.status==='failed'&&r.error?`<div style="font-size:10px;color:#A32D2D;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.error)}">${esc(r.error)}</div>`:''}</td>
+      </tr>`).join('')}</tbody></table></div>`
+    : (names.length ? `<div style="padding:16px;font-size:12px;color:var(--text-2)">Κανένας πελάτης με αυτά τα ονόματα σήμερα.</div>` : '');
+  return `<div class="card" style="margin-bottom:16px" id="nameday-card">${head(title, btns)}${namesLine}${table}</div>`;
+}
+function namedayOverlay(html) {
+  const old = document.getElementById('nd-overlay'); if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'nd-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(10,12,24,0.5);backdrop-filter:blur(3px);z-index:9000;display:flex;align-items:center;justify-content:center;padding:12px';
+  ov.innerHTML = `<div style="background:var(--surface,#fff);border-radius:14px;max-width:640px;width:100%;max-height:90vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.25)">${html}</div>`;
+  ov.onclick = e => { if (e.target===ov) ov.remove(); };
+  document.body.appendChild(ov);
+  return ov;
+}
+function namedayCloseOverlay() { const o=document.getElementById('nd-overlay'); if (o) o.remove(); }
+function namedayPreviewModal() {
+  const pv = S.namedayPreview; if (!pv || !(pv.rows||[]).length) return;
+  namedayOverlay(`
+    <div class="modal-header" style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid var(--border-2)">
+      <div><div style="font-weight:700;font-size:15px">👁 Προεπισκόπηση SMS — ${esc(pv.date||'')}</div>
+      <div style="font-size:11.5px;color:var(--text-2)">Κάθε πελάτης λαμβάνει το δικό του μήνυμα, μόνο με το μικρό του όνομα.</div></div>
+      <button class="btn btn-ghost btn-sm" onclick="namedayCloseOverlay()">✕</button>
+    </div>
+    <div style="padding:8px 20px 16px">
+      ${pv.rows.map(r=>`<div style="padding:10px 0;border-bottom:1px solid var(--border-2)">
+        <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;flex-wrap:wrap">
+          <b>${esc(r.first_name)}</b><span style="color:var(--text-2)">${esc(r.last_name||'')}</span>
+          <span style="font-family:var(--mono);font-size:11.5px;color:var(--text-2)">${esc(r.phone||'—')}</span>${namedayStatusBadge(r.status)}
+        </div>
+        <div style="margin-top:6px;background:#E6F1FB;color:#0B2545;border-radius:12px 12px 12px 3px;padding:8px 12px;font-size:13px;display:inline-block;max-width:100%">${esc(r.message)}</div>
+      </div>`).join('')}
+    </div>
+    <div class="modal-footer" style="display:flex;justify-content:flex-end;gap:8px;padding:12px 20px;border-top:1px solid var(--border-2)">
+      <button class="btn btn-ghost" onclick="namedayCloseOverlay()">Κλείσιμο</button>
+      ${namedayCanSend()&&(pv.counts&&pv.counts.ready)?`<button class="btn btn-primary" onclick="namedayConfirmSend()">📨 Αποστολή SMS (${pv.counts.ready})</button>`:''}
+    </div>`);
+}
+// Έγκριση από άνθρωπο ΠΡΙΝ από κάθε μαζική αποστολή: πόσα, σε ποιους, ποια κινητά,
+// τι κείμενο — και ρητή ερώτηση «Θέλεις να αποσταλούν τα SMS;».
+function namedayConfirmSend() {
+  const pv = S.namedayPreview; if (!pv || !namedayCanSend()) return;
+  const targets = (pv.rows||[]).filter(r=>r.status==='ready'||r.status==='failed');
+  if (!targets.length) { alert('Δεν υπάρχει πελάτης για αποστολή (όλα εστάλησαν ή δεν υπάρχει έγκυρο κινητό).'); return; }
+  const skipped = (pv.rows||[]).length - targets.length;
+  namedayOverlay(`
+    <div style="padding:16px 20px;border-bottom:1px solid var(--border-2)">
+      <div style="font-weight:700;font-size:15px">📨 Έγκριση αποστολής — ${targets.length} SMS</div>
+      <div style="font-size:11.5px;color:var(--text-2);margin-top:2px">Ημερομηνία: ${esc(pv.date||'')} · Αποστολέας: ${esc((pv.settings&&pv.settings.sender_id)||'BeautyLine')}${skipped?` · ${skipped} παραλείπονται (ήδη εστάλησαν / χωρίς κινητό)`:''}</div>
+    </div>
+    <div style="padding:12px 20px">
+      <div class="table-wrap" style="max-height:260px;overflow-y:auto;border:1px solid var(--border-2);border-radius:8px"><table>
+        <thead><tr><th>Όνομα</th><th>Επώνυμο</th><th>Κινητό</th></tr></thead>
+        <tbody>${targets.map(r=>`<tr><td style="font-weight:600">${esc(r.first_name)}</td><td>${esc(r.last_name||'—')}</td><td style="font-family:var(--mono);font-size:12px">${esc(r.phone_normalized||r.phone||'')}</td></tr>`).join('')}</tbody>
+      </table></div>
+      <div style="margin-top:12px;font-size:12px;color:var(--text-2)">Παράδειγμα μηνύματος:</div>
+      <div style="margin-top:4px;background:#E6F1FB;color:#0B2545;border-radius:12px 12px 12px 3px;padding:8px 12px;font-size:13px;display:inline-block">${esc(targets[0].message)}</div>
+      <div style="margin-top:14px;font-weight:700;font-size:14px">Θέλεις να αποσταλούν τα SMS σε ${targets.length} πελάτ${targets.length===1?'η':'ες'};</div>
+      <div id="nd-send-result" style="margin-top:8px;font-size:12.5px"></div>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 20px;border-top:1px solid var(--border-2)">
+      <button class="btn btn-ghost" onclick="namedayCloseOverlay()">Όχι, ακύρωση</button>
+      <button class="btn btn-primary" id="nd-send-btn" onclick="namedaySend()">Ναι, αποστολή ${targets.length} SMS</button>
+    </div>`);
+}
+async function namedaySend() {
+  const btn = document.getElementById('nd-send-btn');
+  const out = document.getElementById('nd-send-result');
+  if (btn) { btn.disabled = true; btn.textContent = 'Αποστολή…'; }
+  const {data, error} = await sb.functions.invoke('nameday-sms', {body:{action:'send', clinic_id: clinicId()}});
+  if (error || !data || data.ok===false) {
+    const msg = (data&&data.error) || (error&&error.message) || 'Αποτυχία αποστολής';
+    if (out) out.innerHTML = `<span style="color:#A32D2D">✗ ${esc(msg)}</span>`;
+    if (btn) { btn.disabled = false; btn.textContent = 'Δοκίμασε ξανά'; }
+    return;
+  }
+  const errs = (data.errors||[]).length ? `<div style="color:#A32D2D;margin-top:4px;font-size:11.5px">${data.errors.slice(0,3).map(e=>esc(e.error)).join('<br>')}</div>` : '';
+  if (out) out.innerHTML = `<span style="color:#0F6E56;font-weight:600">✓ Εστάλησαν ${data.sent||0}</span>${data.failed?` · <span style="color:#A32D2D">απέτυχαν ${data.failed}</span>`:''}${data.skipped_already_sent?` · ${data.skipped_already_sent} είχαν ήδη σταλεί`:''}${errs}`;
+  if (btn) { btn.textContent = 'Ολοκληρώθηκε'; }
+  await namedayRefresh();
+  setTimeout(namedayCloseOverlay, 1800);
+}
+async function namedayTestSms() {
+  const dflt = (S.profile&&S.profile.phone)||'';
+  const phone = prompt('Κινητό για δοκιμαστικό SMS (μόνο ελληνικό κινητό 69…):', dflt);
+  if (!phone) return;
+  const fn = ((S.profile&&S.profile.full_name)||'').trim().split(/\s+/)[0]||'';
+  const first = fn ? fn[0].toUpperCase()+fn.slice(1).toLowerCase() : 'Μαρία';
+  const btn = document.getElementById('nameday-test-sms');
+  if (btn) { btn.disabled = true; btn.textContent = 'Αποστολή…'; }
+  const {data, error} = await sb.functions.invoke('nameday-sms', {body:{action:'test_send', clinic_id: clinicId(), phone, first_name: first}});
+  if (btn) { btn.disabled = false; btn.textContent = '📱 Δοκιμαστικό SMS σε μένα'; }
+  if (error || !data || !data.ok) alert('Αποτυχία: ' + ((data&&data.error)||(error&&error.message)||'άγνωστο σφάλμα'));
+  else alert('✓ Εστάλη δοκιμαστικό SMS:\n\n' + (data.message||''));
+}
+function namedayTemplateCounter(ta) {
+  const el = document.getElementById('nameday-template-count'); if (!el) return;
+  const msg = namedayRender(ta.value.trim()||NAMEDAY_DEFAULT_TEMPLATE, 'Κωνσταντίνα', namedayOrgName());
+  const n = msg.length, parts = n<=70 ? 1 : Math.ceil(n/67);
+  el.innerHTML = `Παράδειγμα (μακρύ όνομα): <i>${esc(msg)}</i> — ${n} χαρακτήρες · ${parts} SMS <span style="color:var(--text-2)">(ελληνικά: 70/τμήμα)</span>`;
+  el.style.color = parts>1 ? '#854F0B' : '';
+}
+function renderNamedaySettingsCard(c) {
+  const s = (c&&c.settings&&c.settings.nameday_sms)||{};
+  const enabled = !!s.enabled;
+  // Απενεργοποιημένος οργανισμός: μόνο ο διαχειριστής πλατφόρμας βλέπει την κάρτα (για να την ενεργοποιήσει).
+  if (!enabled && !isSuperAdmin()) return '';
+  const canEdit = canSee(['super_admin','clinic_admin']);
+  const auto = !!s.auto_send;
+  return `
+      <!-- ΕΟΡΤΟΛΟΓΙΟ & SMS -->
+      <div class="card">
+        <div class="card-header"><span class="card-title">🎉 Εορτολόγιο &amp; SMS</span>${enabled?badge('Ενεργό','#E1F5EE','#0F6E56'):badge('Ανενεργό','#E4E6ED','#53586B')}</div>
+        <div style="padding:16px">
+          <div style="font-size:12px;color:var(--text-2);margin-bottom:14px">Κάθε μέρα το CRM ελέγχει ποια ελληνικά ονόματα γιορτάζουν και βρίσκει τους πελάτες <b>αυτού του οργανισμού</b> με αυτά τα ονόματα (μόνο με έγκυρο κινητό). Στο Dashboard εμφανίζεται η λίστα «Σήμερα γιορτάζουν…» με προεπισκόπηση και, μετά από έγκριση, φεύγει προσωποποιημένο SMS με το <b>μικρό όνομα μόνο</b>. Δεν στέλνεται ποτέ δεύτερο SMS στον ίδιο πελάτη την ίδια ημέρα.</div>
+          ${isSuperAdmin()?`<div class="form-group">
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+              <input type="checkbox" id="nameday-enabled" ${enabled?'checked':''}/> Ενεργό για αυτόν τον οργανισμό <span style="font-size:11px;color:var(--text-2)">(ρύθμιση διαχειριστή πλατφόρμας)</span>
+            </label>
+          </div>`:''}
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Τρόπος αποστολής</label>
+              <select id="nameday-mode" ${canEdit?'':'disabled'}>
+                <option value="approval" ${!auto?'selected':''}>Με έγκριση από χρήστη (προτείνεται)</option>
+                <option value="auto" ${auto?'selected':''}>Αυτόματη αποστολή κάθε μέρα</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Ώρα αποστολής (Αθήνα, μόνο για αυτόματη)</label>
+              <input class="form-control" type="number" min="0" max="23" id="nameday-hour" style="max-width:100px" value="${s.send_hour!=null?s.send_hour:10}" ${canEdit?'':'disabled'}/>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Πρότυπο SMS <span style="font-weight:400;color:var(--text-2)">— {name} = μικρό όνομα, {clinic} = όνομα οργανισμού</span></label>
+            <textarea class="form-control" id="nameday-template" rows="2" placeholder="${esc(NAMEDAY_DEFAULT_TEMPLATE)}" ${canEdit?'':'disabled'}>${esc(s.template||'')}</textarea>
+            <div id="nameday-template-count" style="font-size:11px;margin-top:4px"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Όνομα οργανισμού στο SMS</label>
+              <input class="form-control" id="nameday-org-name" placeholder="${esc(namedayOrgName())}" value="${esc(s.org_name||'')}" ${canEdit?'':'disabled'}/>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Αποστολέας (Sender ID, έως 11 λατινικά)</label>
+              <input class="form-control" id="nameday-sender" maxlength="11" placeholder="BeautyLine" value="${esc(s.sender_id||'')}" ${canEdit?'':'disabled'}/>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            ${canEdit?`<button class="btn btn-primary" id="save-nameday-settings">Αποθήκευση</button>`:''}
+            ${enabled&&namedayCanSend()?`<button class="btn btn-ghost" id="nameday-test-sms">📱 Δοκιμαστικό SMS σε μένα</button>`:''}
+          </div>
+        </div>
+      </div>`;
+}
+
 function renderSettings() {
   const cid = clinicId();
   const c = S.clinic;
@@ -6689,6 +6937,8 @@ function renderSettings() {
           <button class="btn btn-primary" id="save-review-request-settings">Αποθήκευση</button>
         </div>
       </div>
+
+      ${renderNamedaySettingsCard(c)}
 
       <!-- ΚΑΤΑΓΡΑΦΗ ΑΝΑΛΩΣΙΜΩΝ -->
       <div class="card">
@@ -7296,6 +7546,13 @@ function modalNewClinic() {
             </label>`;
           }).join('')}
         </div>
+      </div>
+      <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border-2)">
+        <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Λειτουργίες Πλατφόρμας</div>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+          <input type="checkbox" id="c-nameday-enabled" ${(c.settings&&c.settings.nameday_sms&&c.settings.nameday_sms.enabled)?'checked':''}/> 🎉 Εορτολόγιο &amp; SMS
+        </label>
+        <div style="font-size:11px;color:var(--text-2);margin-top:4px">Ημερήσια πρόταση «Σήμερα γιορτάζουν…» στο Dashboard και προσωποποιημένα SMS ευχών, μόνο για τους πελάτες αυτού του οργανισμού. Απενεργοποιημένο = δεν εμφανίζεται πουθενά και δεν τρέχει τίποτα.</div>
       </div>`:''}
     </div>
     <div class="modal-footer">
@@ -8514,6 +8771,37 @@ function bindEvents() {
     _srr.textContent='✓ Αποθηκεύτηκε!';
     setTimeout(()=>{ _srr.textContent='Αποθήκευση'; }, 2000);
   });
+
+  // 🎉 Εορτολόγιο & SMS — ρυθμίσεις ανά οργανισμό. Το enable/disable το αλλάζει
+  // μόνο ο διαχειριστής πλατφόρμας (super_admin)· τα υπόλοιπα η κλινική.
+  const _sns = document.getElementById('save-nameday-settings');
+  if (_sns) _sns.addEventListener('click', async () => {
+    const prev = (S.clinic&&S.clinic.settings&&S.clinic.settings.nameday_sms)||{};
+    const g = id => document.getElementById(id);
+    const mode = g('nameday-mode') ? g('nameday-mode').value : 'approval';
+    const nd = Object.assign({}, prev, {
+      enabled: g('nameday-enabled') ? g('nameday-enabled').checked : !!prev.enabled,
+      approval_required: mode !== 'auto',
+      auto_send: mode === 'auto',
+      template: g('nameday-template') ? (g('nameday-template').value.trim() || null) : (prev.template||null),
+      org_name: g('nameday-org-name') ? (g('nameday-org-name').value.trim() || null) : (prev.org_name||null),
+      send_hour: g('nameday-hour') ? Math.min(23, Math.max(0, parseInt(g('nameday-hour').value)||10)) : (prev.send_hour!=null?prev.send_hour:10),
+      sender_id: g('nameday-sender') ? (g('nameday-sender').value.trim().replace(/[^A-Za-z0-9]/g,'').slice(0,11) || null) : (prev.sender_id||null),
+    });
+    if (nd.template && !/\{name\}|\[Μικρό Όνομα\]/i.test(nd.template)) {
+      if (!confirm('Το πρότυπο δεν περιέχει το {name} (μικρό όνομα). Να αποθηκευτεί έτσι;')) return;
+    }
+    const settings = Object.assign({}, (S.clinic&&S.clinic.settings)||{}, { nameday_sms: nd });
+    const {error} = await sb.from('clinics').update({settings}).eq('id',clinicId());
+    if (error) { alert(error.message); return; }
+    if (S.clinic) S.clinic.settings = settings;
+    _sns.textContent='✓ Αποθηκεύτηκε!';
+    setTimeout(()=>{ _sns.textContent='Αποθήκευση'; render(); }, 1200);
+  });
+  const _nts = document.getElementById('nameday-test-sms');
+  if (_nts) _nts.addEventListener('click', () => namedayTestSms());
+  const _ntpl = document.getElementById('nameday-template');
+  if (_ntpl) { const upd = () => namedayTemplateCounter(_ntpl); _ntpl.addEventListener('input', upd); upd(); }
 
   // Save consumables-tracking settings (καταγραφή αναλώσιμων — κρυμμένη
   // μέχρι να ενεργοποιηθεί)
@@ -9874,6 +10162,15 @@ function bindModalEvents() {
         moduleToggles.forEach(el => { enabled_modules[el.dataset.module] = el.checked; });
         payload.settings = Object.assign({}, (editingClinic&&editingClinic.settings)||{}, {enabled_modules});
       }
+      // 🎉 Εορτολόγιο & SMS: feature flag ανά οργανισμό (μόνο από εδώ ενεργοποιείται)
+      const ndToggle = document.getElementById('c-nameday-enabled');
+      if (ndToggle) {
+        const editingClinic = (S.clinics||[]).find(x=>x.id===editId);
+        const base = payload.settings || Object.assign({}, (editingClinic&&editingClinic.settings)||{});
+        const prevNd = (base.nameday_sms)||{};
+        base.nameday_sms = Object.assign({ approval_required:true, auto_send:false, template:null, org_name:null, send_hour:10, sender_id:null }, prevNd, { enabled: ndToggle.checked });
+        payload.settings = base;
+      }
       ({error} = await sb.from('clinics').update(payload).eq('id', editId));
     } else {
       payload.active = true;
@@ -10900,6 +11197,7 @@ function viewGdprConsent() {
     ['Email', src.email],
     ['Πόλη', src.city],
     ['Πηγή', src.source],
+    ['Σύσταση από', src.referred_by_name],
     ['Συναίνεση Marketing', src.marketing_opt_in === true ? 'Ναι' : (src.marketing_opt_in === false ? 'Όχι' : '')],
   ].filter(([,v]) => v && String(v).trim());
   const fields = [
@@ -11692,6 +11990,12 @@ async function openEditPatientModal() {
           </select>
           <input class="form-control" id="ep-source-other" placeholder="Προσδιορίστε..." style="margin-top:6px;display:${p.source && !HISTORY_FORM_SOURCES.includes(p.source)?'block':'none'}" value="${esc(p.source && !HISTORY_FORM_SOURCES.includes(p.source)?p.source:'')}"/>
         </div>
+        <div class="form-group" style="grid-column:1/-1;display:${(p.source==='Σύσταση'||p.referred_by_name)?'block':'none'}" id="ep-referrer-wrap">
+          <label class="form-label">Ποιος τον/την σύστησε; <span style="font-weight:400;color:var(--text-2)">— αν είναι πελάτης μας, συνδέεται αυτόματα με την καρτέλα του</span></label>
+          <input class="form-control" id="ep-referred-by" list="ep-referrer-list" autocomplete="off" placeholder="Ονοματεπώνυμο" value="${esc(p.referred_by_name||'')}"/>
+          <datalist id="ep-referrer-list">${(S.patients||[]).filter(x=>x.id!==p.id).slice(0,1500).map(x=>`<option value="${esc(x.full_name)}"></option>`).join('')}</datalist>
+          ${S.patientReferrer?`<div style="font-size:11px;color:#0F6E56;margin-top:4px">✓ Συνδεδεμένο με καρτέλα: ${esc(S.patientReferrer.full_name)}</div>`:''}
+        </div>
         <div class="form-group" style="grid-column:1/-1">
           <label class="form-label">Κατάσταση</label>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -11712,6 +12016,8 @@ async function openEditPatientModal() {
   wireCityField('ep');
   document.getElementById('ep-source').addEventListener('change', (e) => {
     document.getElementById('ep-source-other').style.display = e.target.value==='__other__' ? 'block' : 'none';
+    const rw = document.getElementById('ep-referrer-wrap');
+    if (rw) rw.style.display = (e.target.value==='Σύσταση' || document.getElementById('ep-referred-by').value.trim()) ? 'block' : 'none';
   });
 
   document.getElementById('ep-save').addEventListener('click', async () => {
@@ -11737,12 +12043,64 @@ async function openEditPatientModal() {
       status: statusEl ? statusEl.value : p.status,
       notes: document.getElementById('ep-notes').value.trim() || null,
     };
+    // Σύσταση: ελεύθερο όνομα + αυτόματη σύνδεση με υπάρχουσα καρτέλα (αν ταυτοποιηθεί μονοσήμαντα)
+    const refName = (document.getElementById('ep-referred-by')||{value:''}).value.trim();
+    patch.referred_by_name = refName || null;
+    patch.referred_by_patient_id = refName ? await findReferrerPatientId(refName, p.id) : null;
     const {error} = await sb.from('patients').update(patch).eq('id', p.id);
     if (error) { alert('Σφάλμα: '+error.message); return; }
     document.getElementById('lc-overlay').remove();
     await loadPatientDetail(p.id);
     render();
   });
+}
+
+// ── ΣΥΣΤΑΣΕΙΣ ──
+// Ταυτοποίηση του ατόμου που έκανε τη σύσταση με υπάρχουσα καρτέλα της ΙΔΙΑΣ κλινικής:
+// ίδιο ονοματεπώνυμο (χωρίς τόνους/πεζά-κεφαλαία) ή, για 2+ λέξεις, όλες οι λέξεις
+// μέσα στο όνομα — ΜΟΝΟ αν το αποτέλεσμα είναι ακριβώς ένας ασθενής. Αλλιώς μένει
+// μόνο το ελεύθερο όνομα (και συνδέεται αργότερα από την Επεξεργασία).
+async function findReferrerPatientId(name, excludeId) {
+  const q = normalizeGreek(name);
+  if (!q) return null;
+  let list = S.patients && S.patients.length ? S.patients : null;
+  if (!list) {
+    const {data} = await sb.from('patients').select('id,full_name').eq('clinic_id', clinicId());
+    list = data || [];
+  }
+  const cands = list.filter(x => x.id !== excludeId);
+  const exact = cands.filter(x => normalizeGreek(x.full_name) === q);
+  if (exact.length === 1) return exact[0].id;
+  if (exact.length > 1) return null;
+  const toks = q.split(' ').filter(t => t.length >= 2);
+  if (toks.length < 2) return null;
+  const partial = cands.filter(x => { const n = ' ' + normalizeGreek(x.full_name) + ' '; return toks.every(t => n.includes(' ' + t + ' ') || n.includes(' ' + t)); });
+  return partial.length === 1 ? partial[0].id : null;
+}
+function renderReferralsCard(p) {
+  const refs = S.patientReferrals || [];
+  const referrer = S.patientReferrer;
+  const fromLine = referrer
+    ? `<div style="font-size:12.5px;margin-bottom:10px">Συστήθηκε από: <span style="font-weight:600;cursor:pointer;color:var(--blue)" data-patient="${referrer.id}">${esc(referrer.full_name)}</span></div>`
+    : p.referred_by_name
+      ? `<div style="font-size:12.5px;margin-bottom:10px">Συστήθηκε από: <b>${esc(p.referred_by_name)}</b> <span style="font-size:11px;color:var(--text-2)">(δεν βρέθηκε καρτέλα με αυτό το όνομα — σύνδεσέ το από την Επεξεργασία)</span></div>`
+      : '';
+  return `
+      <div class="card" style="grid-column:1/-1">
+        <div class="card-header"><span class="card-title">🤝 Συστάσεις</span>${refs.length?`<span style="font-size:12px;color:var(--text-2)">Έχει συστήσει <b>${refs.length}</b> πελάτ${refs.length===1?'η':'ες'}</span>`:''}</div>
+        <div style="padding:12px 16px">
+          ${fromLine}
+          ${refs.length ? `<div style="display:flex;flex-direction:column;gap:6px">
+            ${refs.map(r=>`
+            <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg-2,#F7F8FC);border-radius:8px;font-size:12.5px;cursor:pointer" data-patient="${r.id}">
+              <span style="font-weight:600;color:var(--blue);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.full_name)}</span>
+              ${r.status==='vip'?badge('VIP','#FAEEDA','#854F0B'):r.status==='lead'?badge('Lead','#EEEDFE','#534AB7'):''}
+              ${r.referred_by_patient_id?'' : `<span style="font-size:10px;color:var(--text-2)" title="Ταίριασμα με βάση το όνομα που γράφτηκε στη φόρμα">κατά όνομα</span>`}
+              <span style="font-size:11px;color:var(--text-2);white-space:nowrap">${fmt(r.created_at)}</span>
+            </div>`).join('')}
+          </div>` : `<div style="padding:4px 0;color:var(--text-2);font-size:12.5px">Δεν έχει συστήσει κάποιον πελάτη ακόμα. Όταν νέος πελάτης γράψει το όνομά του/της στη φόρμα («Ποιος σας σύστησε;»), εμφανίζεται εδώ.</div>`}
+        </div>
+      </div>`;
 }
 
 // ── ΦΟΡΜΑ ΙΣΤΟΡΙΚΟΥ (ίδια δομή με το εξωτερικό Google Form, αλλά αποθηκεύει
@@ -11826,6 +12184,10 @@ async function openHistoryFormModal(opts) {
           <input type="radio" name="hf-source" value="__other__" ${!srcKnown ? 'checked' : ''} style="accent-color:var(--blue)"/> Other:
           <input class="form-control" id="hf-source-other" value="${esc(srcOther)}" style="max-width:220px"/>
         </label>
+      </div>
+      <div id="hf-referrer-wrap" style="display:${(srcKnown==='Σύσταση'||p.referred_by_name)?'block':'none'};margin:4px 0 6px 24px">
+        <label class="form-label">Ποιος σας σύστησε; (ονοματεπώνυμο)</label>
+        <input class="form-control" id="hf-referred-by" placeholder="π.χ. Μαρία Παπαδοπούλου" value="${esc(p.referred_by_name || '')}" style="max-width:340px"/>
       </div>
 
       <div style="margin-top:18px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px">🩺 Ιατρικό Ιστορικό</div>
@@ -11914,6 +12276,12 @@ async function openHistoryFormModal(opts) {
     });
   }
 
+  // «Ποιος σας σύστησε;» εμφανίζεται μόνο όταν επιλεγεί «Σύσταση»
+  document.querySelectorAll('input[name="hf-source"]').forEach(r => r.addEventListener('change', () => {
+    const w = document.getElementById('hf-referrer-wrap');
+    if (w) w.style.display = r.value === 'Σύσταση' ? 'block' : 'none';
+  }));
+
   document.getElementById('hf-save').addEventListener('click', async () => {
     const errEl = document.getElementById('hf-error');
     const name = document.getElementById('hf-name').value.trim();
@@ -11949,9 +12317,12 @@ async function openHistoryFormModal(opts) {
 
     const btn = document.getElementById('hf-save');
     btn.textContent = 'Αποθήκευση...'; btn.disabled = true;
+    const referredByName = (document.getElementById('hf-referred-by')||{value:''}).value.trim();
     const patch = {
       full_name: normalizePatientName(name), dob: dob || null, phone, email: email || null, city: city || null,
       source: source || null,
+      referred_by_name: referredByName || null,
+      referred_by_patient_id: referredByName ? await findReferrerPatientId(referredByName, selectedPatientId) : null,
       medical_history: medicalHistory || null,
       allergies: document.getElementById('hf-allergies').value.trim() || null,
       medications: document.getElementById('hf-medications').value.trim() || null,
@@ -11980,7 +12351,7 @@ async function openHistoryFormModal(opts) {
     if (_hfHasInk && finalPatientId) {
       const snapshot = {
         full_name: patch.full_name, dob: patch.dob, phone: patch.phone, email: patch.email, city: patch.city,
-        source: patch.source, conditions, condition_other: conditionOther || null,
+        source: patch.source, referred_by_name: patch.referred_by_name, conditions, condition_other: conditionOther || null,
         allergies: patch.allergies, medications: patch.medications, previous_treatments: patch.previous_treatments,
         avoid_body_areas: patch.avoid_body_areas, marketing_opt_in: patch.marketing_opt_in ?? null,
       };
