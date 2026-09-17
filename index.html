@@ -1389,6 +1389,7 @@ async function loadPatientDetail(id, tab) {
     S.patientPhotos = [];
     _selectedPhotoIds.clear();
     S.patPhotoApptFilter = null;
+    S.patPhotoDayFilter = null;
     const {data:photos} = await sb.from('patient_photos').select('*').eq('patient_id',id).order('taken_at',{ascending:false});
     if (photos && photos.length) {
       const signed = await Promise.all(photos.map(async ph => {
@@ -2285,19 +2286,70 @@ function renderPatients() {
 }
 
 // ── PATIENT DETAIL ──
+// Προβολή φωτογραφιών: «Όλες» (χύμα, όπως πάντα) ή «Ανά συνεδρία» (φάκελοι ανά
+// ραντεβού· οι μη συνδεδεμένες ομαδοποιούνται ανά ημέρα λήψης). Η επιλογή
+// θυμάται ανά συσκευή.
+function patPhotoView() {
+  if (!S.patPhotoView) { try { S.patPhotoView = localStorage.getItem('patPhotoView') || 'folders'; } catch(e) { S.patPhotoView = 'folders'; } }
+  return S.patPhotoView;
+}
+function setPatPhotoView(v) {
+  S.patPhotoView = v; try { localStorage.setItem('patPhotoView', v); } catch(e) {}
+  S.patPhotoApptFilter = null; S.patPhotoDayFilter = null; render();
+}
+function openPatPhotoFolder(kind, key) {
+  S.patPhotoApptFilter = kind==='appt' ? key : null;
+  S.patPhotoDayFilter = kind==='day' ? key : null;
+  render();
+}
+// Ομαδοποίηση φωτογραφιών σε «φακέλους»: ένας ανά ραντεβού (ημερομηνία · υπηρεσία),
+// και ένας ανά ημέρα λήψης για όσες δεν έχουν συνδεθεί με ραντεβού.
+function patPhotoFolders(allPhotos) {
+  const appts = (S.patientDetail&&S.patientDetail.appointments)||[];
+  const map = new Map();
+  allPhotos.forEach(ph => {
+    const a = ph.appointment_id ? appts.find(x=>x.id===ph.appointment_id) : null;
+    const key = a ? 'appt:'+a.id : 'day:'+new Date(ph.taken_at).toDateString();
+    if (!map.has(key)) map.set(key, {
+      kind: a?'appt':'day', key: a?a.id:new Date(ph.taken_at).toDateString(),
+      date: a ? new Date(a.start_time) : new Date(ph.taken_at),
+      title: a ? (a.service_name||'Ραντεβού') : 'Χωρίς σύνδεση με ραντεβού',
+      photos: [],
+    });
+    map.get(key).photos.push(ph);
+  });
+  return [...map.values()].sort((x,y)=>y.date-x.date);
+}
 function renderPatientPhotosTab() {
   const allPhotos = S.patientPhotos||[];
+  const view = patPhotoView();
   const apptFilter = S.patPhotoApptFilter||null;
+  const dayFilter = S.patPhotoDayFilter||null;
   const filteredAppt = apptFilter ? ((S.patientDetail&&S.patientDetail.appointments)||[]).find(a=>a.id===apptFilter) : null;
-  const photos = apptFilter ? allPhotos.filter(ph=>ph.appointment_id===apptFilter) : allPhotos;
+  const photos = apptFilter ? allPhotos.filter(ph=>ph.appointment_id===apptFilter)
+    : dayFilter ? allPhotos.filter(ph=>!ph.appointment_id && new Date(ph.taken_at).toDateString()===dayFilter)
+    : allPhotos;
+  const inFolder = !!(apptFilter || dayFilter);
+  const showFolders = view==='folders' && !inFolder;
+  const folders = showFolders ? patPhotoFolders(allPhotos) : [];
   const selCount = _selectedPhotoIds.size;
+  const segBtn = (v, label) => `<button class="btn btn-sm" onclick="setPatPhotoView('${v}')" style="border-radius:0;padding:5px 12px;font-size:12px;background:${view===v?'var(--blue)':'transparent'};color:${view===v?'#fff':'var(--text-2)'};border:none">${label}</button>`;
+  const backBtn = view==='folders'
+    ? `<button class="btn btn-ghost btn-sm" onclick="openPatPhotoFolder(null)">← Φάκελοι</button>`
+    : `<button class="btn btn-ghost btn-sm" onclick="openPatPhotoFolder(null)">✕ Όλες οι φωτογραφίες</button>`;
   return `<div>
     ${filteredAppt?`<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--surface-2);border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px">
       <span>🗓 Φωτογραφίες ραντεβού: <b>${new Date(filteredAppt.start_time).toLocaleDateString('el-GR')} · ${esc(filteredAppt.service_name||'')}</b></span>
-      <button class="btn btn-ghost btn-sm" onclick="S.patPhotoApptFilter=null;render()">✕ Όλες οι φωτογραφίες</button>
+      ${backBtn}
+    </div>`:dayFilter?`<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--surface-2);border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px">
+      <span>📅 Φωτογραφίες <b>${new Date(dayFilter).toLocaleDateString('el-GR')}</b> · χωρίς σύνδεση με ραντεβού <span style="color:var(--text-2)">(σύνδεσε τες με το 🔗 πάνω σε κάθε φωτογραφία)</span></span>
+      ${backBtn}
     </div>`:''}
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px">
-      <span style="font-size:13px;color:var(--text-2)">${photos.length} φωτογραφίες${selCount?` · ${selCount} επιλεγμένες`:''}</span>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <div style="display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden">${segBtn('flat','🖼 Όλες')}${segBtn('folders','📁 Ανά συνεδρία')}</div>
+        <span style="font-size:13px;color:var(--text-2)">${showFolders?`${folders.length} φάκελοι · ${allPhotos.length} φωτογραφίες`:`${photos.length} φωτογραφίες`}${selCount?` · ${selCount} επιλεγμένες`:''}</span>
+      </div>
       <div style="display:flex;gap:8px">
         ${selCount===2?`<button class="btn btn-primary btn-sm" onclick="openPhotoComparison()">🔍 Σύγκριση Before / After</button>`:''}
         ${selCount>0?`<button class="btn btn-ghost btn-sm" onclick="clearPhotoSelection()">Καθαρισμός επιλογής</button>`:''}
@@ -2312,7 +2364,30 @@ function renderPatientPhotosTab() {
       </div>
     </div>
     <div id="photo-upload-status" style="display:none;font-size:12px;color:var(--blue);margin-bottom:10px">Μεταφόρτωση...</div>
-    ${photos.length?`
+    ${showFolders ? (folders.length ? `
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:14px">
+      ${folders.map(f=>{
+        const thumbs = f.photos.slice(0,4);
+        const grid = thumbs.length===1 ? '1fr' : '1fr 1fr';
+        return `<div onclick="openPatPhotoFolder('${f.kind}','${esc(f.key)}')" style="cursor:pointer;border-radius:12px;overflow:hidden;background:var(--surface-2);border:1px solid var(--border-2)" onmouseover="this.style.boxShadow='var(--shadow-lg)'" onmouseout="this.style.boxShadow=''">
+          <div style="display:grid;grid-template-columns:${grid};gap:2px;aspect-ratio:1;background:var(--surface-2)">
+            ${thumbs.map(ph=>`<img src="${ph.url}" style="width:100%;height:100%;object-fit:cover;display:block;${thumbs.length===3?'':''}" loading="lazy"/>`).join('')}
+            ${thumbs.length===3?'<div style="background:var(--bg-2,#F7F8FC)"></div>':''}
+          </div>
+          <div style="padding:8px 10px">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:6px">
+              <span style="font-size:12.5px;font-weight:700">${f.kind==='appt'?'🗓':'📅'} ${f.date.toLocaleDateString('el-GR')}</span>
+              <span style="font-size:10.5px;font-weight:700;background:var(--blue);color:#fff;border-radius:10px;padding:1px 7px">${f.photos.length}</span>
+            </div>
+            <div style="font-size:11.5px;color:${f.kind==='appt'?'var(--text-2)':'#854F0B'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px">${esc(f.title)}</div>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>` : `
+    <div class="empty-state">
+      <div class="empty-icon">📷</div>
+      <div style="margin-bottom:12px">Δεν υπάρχουν φωτογραφίες</div>
+    </div>`) : photos.length?`
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px">
       ${photos.map(ph=>{
         const sel = _selectedPhotoIds.has(ph.id);
@@ -7845,6 +7920,7 @@ function bindEvents() {
     const todaysAppt = ((S.patientDetail&&S.patientDetail.appointments)||[])
       .find(a=>a.status!=='cancelled' && new Date(a.start_time).toDateString()===todayStr);
     const targetApptId = S.patPhotoApptFilter || (todaysAppt ? todaysAppt.id : null);
+    const keepAppt = S.patPhotoApptFilter, keepDay = S.patPhotoDayFilter; // ο ανοιχτός φάκελος να μείνει ανοιχτός
     for (const file of files) {
       const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g,'_');
       const path = `${cid}/${pid}/${Date.now()}_${safeName}`;
@@ -7858,6 +7934,7 @@ function bindEvents() {
       });
     }
     await loadPatientDetail(pid);
+    S.patPhotoApptFilter = keepAppt; S.patPhotoDayFilter = keepDay;
     render();
   };
   const _pui = document.getElementById('photo-upload-input');
