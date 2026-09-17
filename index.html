@@ -427,7 +427,17 @@ async function ensureStaffDirectory() {
 // Ταξινόμηση υπηρεσίας → απαιτούμενη κατηγορία συναίνεσης (global — χρησιμοποιείται
 // και στο Πρόγραμμα για τα warnings, και στην καρτέλα ασθενή για να δείχνει
 // μόνο τις σχετικές συναινέσεις, όχι όλες)
-function classifyConsentGroup(serviceName) {
+// \u039f\u03b9 4 \u03bf\u03bc\u03ac\u03b4\u03b5\u03c2 \u03c3\u03c5\u03bd\u03b1\u03af\u03bd\u03b5\u03c3\u03b7\u03c2 \u03c0\u03bf\u03c5 \u03ad\u03c7\u03bf\u03c5\u03bd \u03c0\u03c1\u03b1\u03b3\u03bc\u03b1\u03c4\u03b9\u03ba\u03ae \u03c6\u03cc\u03c1\u03bc\u03b1 \u03c3\u03c4\u03bf CRM. \u0397 \u03c3\u03b5\u03bb\u03af\u03b4\u03b1 \u00ab\u03a3\u03c5\u03bd\u03b1\u03b9\u03bd\u03ad\u03c3\u03b5\u03b9\u03c2 &
+// \u03a6\u03cc\u03c1\u03bc\u03b5\u03c2 \u2192 \u0391\u03bd\u03c4\u03b9\u03c3\u03c4\u03bf\u03b9\u03c7\u03af\u03c3\u03b5\u03b9\u03c2\u00bb \u03bc\u03c0\u03bf\u03c1\u03b5\u03af \u03bd\u03b1 \u03bf\u03c1\u03af\u03c3\u03b5\u03b9 \u03c1\u03b7\u03c4\u03ac \u03b1\u03bd\u03ac \u03c5\u03c0\u03b7\u03c1\u03b5\u03c3\u03af\u03b1 \u03bc\u03af\u03b1 \u03b1\u03c0\u03cc \u03b1\u03c5\u03c4\u03ad\u03c2 \u03ae
+// \u00ab\u03a7\u03c9\u03c1\u03af\u03c2 \u03c3\u03c5\u03bd\u03b1\u03af\u03bd\u03b5\u03c3\u03b7\u00bb\u00b7 \u03cc,\u03c4\u03b9 \u03b4\u03b5\u03bd \u03ad\u03c7\u03b5\u03b9 \u03bf\u03c1\u03b9\u03c3\u03c4\u03b5\u03af, \u03c4\u03b1\u03be\u03b9\u03bd\u03bf\u03bc\u03b5\u03af\u03c4\u03b1\u03b9 \u03b1\u03c5\u03c4\u03cc\u03bc\u03b1\u03c4\u03b1 \u03b1\u03c0\u03cc \u03c4\u03bf \u03cc\u03bd\u03bf\u03bc\u03b1.
+const CONSENT_GROUP_KEYS = ['laser','cleansing','peelings','oxygen'];
+function consentGroupOverride(serviceName) {
+  const map = (S.clinic&&S.clinic.settings&&S.clinic.settings.service_consent_groups)||{};
+  const v = map[(serviceName||'').trim()];
+  if (v === 'none') return 'none';
+  return CONSENT_GROUP_KEYS.includes(v) ? v : null; // \u03c0\u03b1\u03bb\u03b9\u03ad\u03c2 \u03b5\u03c4\u03b9\u03ba\u03ad\u03c4\u03b5\u03c2 (\u03c0.\u03c7. \u00abPeeling\u00bb) = \u03b1\u03c5\u03c4\u03cc\u03bc\u03b1\u03c4\u03b1
+}
+function classifyConsentGroupAuto(serviceName) {
   let s = (serviceName||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
   // \u03a4\u03bf \u00abNanopeel\u00bb \u0394\u0395\u039d \u03b5\u03af\u03bd\u03b1\u03b9 peeling \u2014 \u03b5\u03af\u03bd\u03b1\u03b9 \u03ae\u03c0\u03b9\u03b1 \u03bc\u03b9\u03ba\u03c1\u03bf\u03b1\u03c0\u03bf\u03bb\u03ad\u03c0\u03b9\u03c3\u03b7 \u03bc\u03ad\u03c3\u03b1 \u03c3\u03b5
   // \u03ba\u03b1\u03b8\u03b1\u03c1\u03b9\u03c3\u03bc\u03bf\u03cd\u03c2/\u03b5\u03bd\u03c5\u03b4\u03b1\u03c4\u03ce\u03c3\u03b5\u03b9\u03c2. \u0395\u03be\u03bf\u03c5\u03b4\u03b5\u03c4\u03b5\u03c1\u03ce\u03bd\u03b5\u03c4\u03b1\u03b9 \u03c0\u03c1\u03b9\u03bd \u03c4\u03bf\u03bd \u03ad\u03bb\u03b5\u03b3\u03c7\u03bf, \u03ce\u03c3\u03c4\u03b5 \u03bd\u03b1
@@ -440,6 +450,11 @@ function classifyConsentGroup(serviceName) {
   if (/peeling|peel|prx|dermapen|μικροβελον|microneedl|tca/.test(s)) return 'peelings';
   if (/οξυγον|ενυδατ|dermalux|λαμψ|λευκανσ|αντιγηρανσ|glow/.test(s)) return 'oxygen';
   return null;
+}
+function classifyConsentGroup(serviceName) {
+  const o = consentGroupOverride(serviceName);
+  if (o === 'none') return null;
+  return o || classifyConsentGroupAuto(serviceName);
 }
 
 // Ομαδοποίηση υπηρεσίας σε κατηγορία για το φίλτρο απόδοσης ανά κατηγορία στις
@@ -1389,6 +1404,7 @@ async function loadPatientDetail(id, tab) {
     S.patientPhotos = [];
     _selectedPhotoIds.clear();
     S.patPhotoApptFilter = null;
+    S.patPhotoDayFilter = null;
     const {data:photos} = await sb.from('patient_photos').select('*').eq('patient_id',id).order('taken_at',{ascending:false});
     if (photos && photos.length) {
       const signed = await Promise.all(photos.map(async ph => {
@@ -2285,19 +2301,70 @@ function renderPatients() {
 }
 
 // ── PATIENT DETAIL ──
+// Προβολή φωτογραφιών: «Όλες» (χύμα, όπως πάντα) ή «Ανά συνεδρία» (φάκελοι ανά
+// ραντεβού· οι μη συνδεδεμένες ομαδοποιούνται ανά ημέρα λήψης). Η επιλογή
+// θυμάται ανά συσκευή.
+function patPhotoView() {
+  if (!S.patPhotoView) { try { S.patPhotoView = localStorage.getItem('patPhotoView') || 'folders'; } catch(e) { S.patPhotoView = 'folders'; } }
+  return S.patPhotoView;
+}
+function setPatPhotoView(v) {
+  S.patPhotoView = v; try { localStorage.setItem('patPhotoView', v); } catch(e) {}
+  S.patPhotoApptFilter = null; S.patPhotoDayFilter = null; render();
+}
+function openPatPhotoFolder(kind, key) {
+  S.patPhotoApptFilter = kind==='appt' ? key : null;
+  S.patPhotoDayFilter = kind==='day' ? key : null;
+  render();
+}
+// Ομαδοποίηση φωτογραφιών σε «φακέλους»: ένας ανά ραντεβού (ημερομηνία · υπηρεσία),
+// και ένας ανά ημέρα λήψης για όσες δεν έχουν συνδεθεί με ραντεβού.
+function patPhotoFolders(allPhotos) {
+  const appts = (S.patientDetail&&S.patientDetail.appointments)||[];
+  const map = new Map();
+  allPhotos.forEach(ph => {
+    const a = ph.appointment_id ? appts.find(x=>x.id===ph.appointment_id) : null;
+    const key = a ? 'appt:'+a.id : 'day:'+new Date(ph.taken_at).toDateString();
+    if (!map.has(key)) map.set(key, {
+      kind: a?'appt':'day', key: a?a.id:new Date(ph.taken_at).toDateString(),
+      date: a ? new Date(a.start_time) : new Date(ph.taken_at),
+      title: a ? (a.service_name||'Ραντεβού') : 'Χωρίς σύνδεση με ραντεβού',
+      photos: [],
+    });
+    map.get(key).photos.push(ph);
+  });
+  return [...map.values()].sort((x,y)=>y.date-x.date);
+}
 function renderPatientPhotosTab() {
   const allPhotos = S.patientPhotos||[];
+  const view = patPhotoView();
   const apptFilter = S.patPhotoApptFilter||null;
+  const dayFilter = S.patPhotoDayFilter||null;
   const filteredAppt = apptFilter ? ((S.patientDetail&&S.patientDetail.appointments)||[]).find(a=>a.id===apptFilter) : null;
-  const photos = apptFilter ? allPhotos.filter(ph=>ph.appointment_id===apptFilter) : allPhotos;
+  const photos = apptFilter ? allPhotos.filter(ph=>ph.appointment_id===apptFilter)
+    : dayFilter ? allPhotos.filter(ph=>!ph.appointment_id && new Date(ph.taken_at).toDateString()===dayFilter)
+    : allPhotos;
+  const inFolder = !!(apptFilter || dayFilter);
+  const showFolders = view==='folders' && !inFolder;
+  const folders = showFolders ? patPhotoFolders(allPhotos) : [];
   const selCount = _selectedPhotoIds.size;
+  const segBtn = (v, label) => `<button class="btn btn-sm" onclick="setPatPhotoView('${v}')" style="border-radius:0;padding:5px 12px;font-size:12px;background:${view===v?'var(--blue)':'transparent'};color:${view===v?'#fff':'var(--text-2)'};border:none">${label}</button>`;
+  const backBtn = view==='folders'
+    ? `<button class="btn btn-ghost btn-sm" onclick="openPatPhotoFolder(null)">← Φάκελοι</button>`
+    : `<button class="btn btn-ghost btn-sm" onclick="openPatPhotoFolder(null)">✕ Όλες οι φωτογραφίες</button>`;
   return `<div>
     ${filteredAppt?`<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--surface-2);border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px">
       <span>🗓 Φωτογραφίες ραντεβού: <b>${new Date(filteredAppt.start_time).toLocaleDateString('el-GR')} · ${esc(filteredAppt.service_name||'')}</b></span>
-      <button class="btn btn-ghost btn-sm" onclick="S.patPhotoApptFilter=null;render()">✕ Όλες οι φωτογραφίες</button>
+      ${backBtn}
+    </div>`:dayFilter?`<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--surface-2);border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px">
+      <span>📅 Φωτογραφίες <b>${new Date(dayFilter).toLocaleDateString('el-GR')}</b> · χωρίς σύνδεση με ραντεβού <span style="color:var(--text-2)">(σύνδεσε τες με το 🔗 πάνω σε κάθε φωτογραφία)</span></span>
+      ${backBtn}
     </div>`:''}
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px">
-      <span style="font-size:13px;color:var(--text-2)">${photos.length} φωτογραφίες${selCount?` · ${selCount} επιλεγμένες`:''}</span>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <div style="display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden">${segBtn('flat','🖼 Όλες')}${segBtn('folders','📁 Ανά συνεδρία')}</div>
+        <span style="font-size:13px;color:var(--text-2)">${showFolders?`${folders.length} φάκελοι · ${allPhotos.length} φωτογραφίες`:`${photos.length} φωτογραφίες`}${selCount?` · ${selCount} επιλεγμένες`:''}</span>
+      </div>
       <div style="display:flex;gap:8px">
         ${selCount===2?`<button class="btn btn-primary btn-sm" onclick="openPhotoComparison()">🔍 Σύγκριση Before / After</button>`:''}
         ${selCount>0?`<button class="btn btn-ghost btn-sm" onclick="clearPhotoSelection()">Καθαρισμός επιλογής</button>`:''}
@@ -2312,7 +2379,30 @@ function renderPatientPhotosTab() {
       </div>
     </div>
     <div id="photo-upload-status" style="display:none;font-size:12px;color:var(--blue);margin-bottom:10px">Μεταφόρτωση...</div>
-    ${photos.length?`
+    ${showFolders ? (folders.length ? `
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:14px">
+      ${folders.map(f=>{
+        const thumbs = f.photos.slice(0,4);
+        const grid = thumbs.length===1 ? '1fr' : '1fr 1fr';
+        return `<div onclick="openPatPhotoFolder('${f.kind}','${esc(f.key)}')" style="cursor:pointer;border-radius:12px;overflow:hidden;background:var(--surface-2);border:1px solid var(--border-2)" onmouseover="this.style.boxShadow='var(--shadow-lg)'" onmouseout="this.style.boxShadow=''">
+          <div style="display:grid;grid-template-columns:${grid};gap:2px;aspect-ratio:1;background:var(--surface-2)">
+            ${thumbs.map(ph=>`<img src="${ph.url}" style="width:100%;height:100%;object-fit:cover;display:block;${thumbs.length===3?'':''}" loading="lazy"/>`).join('')}
+            ${thumbs.length===3?'<div style="background:var(--bg-2,#F7F8FC)"></div>':''}
+          </div>
+          <div style="padding:8px 10px">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:6px">
+              <span style="font-size:12.5px;font-weight:700">${f.kind==='appt'?'🗓':'📅'} ${f.date.toLocaleDateString('el-GR')}</span>
+              <span style="font-size:10.5px;font-weight:700;background:var(--blue);color:#fff;border-radius:10px;padding:1px 7px">${f.photos.length}</span>
+            </div>
+            <div style="font-size:11.5px;color:${f.kind==='appt'?'var(--text-2)':'#854F0B'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px">${esc(f.title)}</div>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>` : `
+    <div class="empty-state">
+      <div class="empty-icon">📷</div>
+      <div style="margin-bottom:12px">Δεν υπάρχουν φωτογραφίες</div>
+    </div>`) : photos.length?`
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px">
       ${photos.map(ph=>{
         const sel = _selectedPhotoIds.has(ph.id);
@@ -2341,11 +2431,46 @@ function renderPatientPhotosTab() {
   </div>`;
 }
 
+// Προβολή εξετάσεων: «Λίστα» (όπως πάντα), «Ανά κατηγορία» (ομάδες βάσει του
+// είδους που έδωσε η AI ταξινόμηση) ή «Ανά ημερομηνία» (ομάδες ανά ημέρα εξέτασης).
+function patExamView() {
+  if (!S.patExamView) { try { S.patExamView = localStorage.getItem('patExamView') || 'list'; } catch(e) { S.patExamView = 'list'; } }
+  return S.patExamView;
+}
+function setPatExamView(v) { S.patExamView = v; try { localStorage.setItem('patExamView', v); } catch(e) {} render(); }
+function patExamGroups(exams, mode) {
+  const map = new Map();
+  exams.forEach(ex => {
+    let key, title, icon;
+    if (mode === 'date') {
+      key = ex.exam_date || 'none';
+      title = ex.exam_date ? new Date(ex.exam_date+'T00:00:00').toLocaleDateString('el-GR',{weekday:'long',day:'numeric',month:'long',year:'numeric'}) : 'Χωρίς ημερομηνία';
+      icon = '📅';
+    } else {
+      const t = (ex.ai_type||'').trim();
+      key = t ? normalizeGreek(t) : 'none';
+      title = t || 'Χωρίς κατηγορία (δεν έχει ταξινομηθεί)';
+      icon = t ? '🗂' : '❔';
+    }
+    if (!map.has(key)) map.set(key, {key, title, icon, items: []});
+    map.get(key).items.push(ex);
+  });
+  const groups = [...map.values()];
+  if (mode === 'date') groups.sort((a,b)=> a.key==='none'?1 : b.key==='none'?-1 : (a.key<b.key?1:-1));
+  else groups.sort((a,b)=> a.key==='none'?1 : b.key==='none'?-1 : (b.items.length-a.items.length) || a.title.localeCompare(b.title,'el'));
+  return groups;
+}
 function renderPatientExamsTab() {
   const exams = S.patientExams||[];
+  const view = patExamView();
+  const segBtn = (v, label) => `<button class="btn btn-sm" onclick="setPatExamView('${v}')" style="border-radius:0;padding:5px 12px;font-size:12px;background:${view===v?'var(--blue)':'transparent'};color:${view===v?'#fff':'var(--text-2)'};border:none">${label}</button>`;
+  const groups = view==='list' ? null : patExamGroups(exams, view);
   return `<div>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px">
-      <span style="font-size:13px;color:var(--text-2)">${exams.length} εξετάσεις</span>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <div style="display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden">${segBtn('list','☰ Λίστα')}${segBtn('category','🗂 Ανά κατηγορία')}${segBtn('date','📅 Ανά ημερομηνία')}</div>
+        <span style="font-size:13px;color:var(--text-2)">${exams.length} εξετάσεις${groups?` · ${groups.length} ${view==='date'?'ημερομηνίες':'κατηγορίες'}`:''}</span>
+      </div>
       <div style="display:flex;gap:8px">
         <label class="btn btn-primary btn-sm" style="cursor:pointer;margin:0">
           📷 Φωτογραφία Εξέτασης
@@ -2358,9 +2483,29 @@ function renderPatientExamsTab() {
       </div>
     </div>
     <div id="exam-upload-status" style="display:none;font-size:12px;color:var(--blue);margin-bottom:10px">Μεταφόρτωση...</div>
-    ${exams.length?`
+    ${exams.length && groups ? `
+    <div style="display:flex;flex-direction:column;gap:12px">
+      ${groups.map(g=>`
+      <details open style="border:1px solid var(--border-2);border-radius:12px;background:var(--surface-2)">
+        <summary style="cursor:pointer;list-style:none;padding:10px 14px;display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700">
+          <span>${g.icon}</span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis">${esc(g.title)}</span>
+          <span style="font-size:10.5px;font-weight:700;background:var(--blue);color:#fff;border-radius:10px;padding:1px 8px">${g.items.length}</span>
+        </summary>
+        <div style="display:flex;flex-direction:column;gap:10px;padding:0 10px 10px">
+          ${g.items.map(ex=>renderPatientExamCard(ex)).join('')}
+        </div>
+      </details>`).join('')}
+    </div>` : exams.length?`
     <div style="display:flex;flex-direction:column;gap:10px">
-      ${exams.map(ex=>{
+      ${exams.map(ex=>renderPatientExamCard(ex)).join('')}
+    </div>`:`
+    <div class="empty-state">
+      <div class="empty-icon">🩺</div>
+      <div style="margin-bottom:12px">Δεν υπάρχουν εξετάσεις</div>
+    </div>`}
+  </div>`;
+}
+function renderPatientExamCard(ex) {
         const isPdf = /\.pdf$/i.test(ex.file_name||'');
         return `<div class="card" style="padding:12px 16px">
           <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">
@@ -2391,13 +2536,6 @@ function renderPatientExamsTab() {
             <button onclick="deletePatientExam('${ex.id}','${esc(ex.storage_path)}')" class="btn btn-ghost btn-sm" style="color:var(--red,#A32D2D);flex-shrink:0">🗑</button>
           </div>
         </div>`;
-      }).join('')}
-    </div>`:`
-    <div class="empty-state">
-      <div class="empty-icon">🩺</div>
-      <div style="margin-bottom:12px">Δεν υπάρχουν εξετάσεις</div>
-    </div>`}
-  </div>`;
 }
 
 function renderPatientConsentsTab() {
@@ -4447,19 +4585,22 @@ function renderConsents() {
     </div>`:''}
     ${conTab==='mapping'?`<div class="card">
       <div style="padding:16px 20px;border-bottom:1px solid var(--border-2)">
-        <div style="font-size:13px;font-weight:600;color:var(--navy)">Ποια υπηρεσία ανήκει σε ποια ομάδα συναίνεσης</div>
-        <div style="font-size:12px;color:var(--text-2);margin-top:4px">Οι υπηρεσίες προέρχονται από τα ραντεβού της κλινικής. Το Laser έχει ήδη τη δική του ξεχωριστή φόρμα.</div>
+        <div style="font-size:13px;font-weight:600;color:var(--navy)">Ποια υπηρεσία χρειάζεται ποια συναίνεση</div>
+        <div style="font-size:12px;color:var(--text-2);margin-top:4px">Αυτό καθορίζει πότε το Πρόγραμμα δείχνει «⚠ Χωρίς Συναίνεση» και ποια φόρμα ανοίγει. «Αυτόματα» = ταξινόμηση από το όνομα της υπηρεσίας (φαίνεται δίπλα τι προκύπτει). Διάλεξε «Χωρίς συναίνεση» για υπηρεσίες που δεν θέλουν καμία φόρμα.</div>
       </div>
       <div class="table-wrap"><table>
-        <thead><tr><th>Υπηρεσία (από ραντεβού)</th><th>Ομάδα Συναίνεσης</th></tr></thead>
-        <tbody>${(S.allServiceNames||[]).length?(S.allServiceNames||[]).map(name=>`<tr>
+        <thead><tr><th>Υπηρεσία (από ραντεβού)</th><th>Απαιτούμενη Συναίνεση</th></tr></thead>
+        <tbody>${(S.allServiceNames||[]).length?(S.allServiceNames||[]).map(name=>{
+          const cur = consentGroupOverride(name) || '';
+          const auto = classifyConsentGroupAuto(name);
+          return `<tr>
           <td style="font-weight:500">${esc(name)}</td>
-          <td><select class="form-control svc-consent-group" data-svc="${esc(name)}" style="max-width:260px">
-            <option value="">— Χωρίς κατηγορία —</option>
-            <option value="laser" ${(S.serviceConsentMap||{})[name]==='laser'?'selected':''}>Laser (ξεχωριστή φόρμα)</option>
-            ${CONSENT_GROUPS.map(g=>`<option value="${esc(g)}" ${(S.serviceConsentMap||{})[name]===g?'selected':''}>${esc(g)}</option>`).join('')}
+          <td><select class="form-control svc-consent-group" data-svc="${esc(name)}" style="max-width:300px">
+            <option value="" ${!cur?'selected':''}>Αυτόματα → ${auto?CONSENT_GROUP_LABELS[auto]:'καμία συναίνεση'}</option>
+            <option value="none" ${cur==='none'?'selected':''}>— Χωρίς συναίνεση —</option>
+            ${CONSENT_GROUP_KEYS.map(k=>`<option value="${k}" ${cur===k?'selected':''}>${esc(CONSENT_GROUP_LABELS[k])}</option>`).join('')}
           </select></td>
-        </tr>`).join(''):`<tr><td colspan="2"><div class="empty-state"><div class="empty-icon">📋</div><div>Δεν βρέθηκαν υπηρεσίες από ραντεβού ακόμα</div></div></td></tr>`}
+        </tr>`;}).join(''):`<tr><td colspan="2"><div class="empty-state"><div class="empty-icon">📋</div><div>Δεν βρέθηκαν υπηρεσίες από ραντεβού ακόμα</div></div></td></tr>`}
         </tbody></table></div>
       <div style="padding:16px 20px;display:flex;align-items:center;gap:12px">
         <button class="btn btn-primary" id="save-service-consent-map">Αποθήκευση Αντιστοιχίσεων</button>
@@ -7845,6 +7986,7 @@ function bindEvents() {
     const todaysAppt = ((S.patientDetail&&S.patientDetail.appointments)||[])
       .find(a=>a.status!=='cancelled' && new Date(a.start_time).toDateString()===todayStr);
     const targetApptId = S.patPhotoApptFilter || (todaysAppt ? todaysAppt.id : null);
+    const keepAppt = S.patPhotoApptFilter, keepDay = S.patPhotoDayFilter; // ο ανοιχτός φάκελος να μείνει ανοιχτός
     for (const file of files) {
       const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g,'_');
       const path = `${cid}/${pid}/${Date.now()}_${safeName}`;
@@ -7858,6 +8000,7 @@ function bindEvents() {
       });
     }
     await loadPatientDetail(pid);
+    S.patPhotoApptFilter = keepAppt; S.patPhotoDayFilter = keepDay;
     render();
   };
   const _pui = document.getElementById('photo-upload-input');
@@ -11280,7 +11423,7 @@ function openLaserConsentModal() {
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:10px;flex-wrap:wrap">
           <button class="btn btn-sm" onclick="lcClearCanvas()" style="font-size:11px">↺ Καθαρισμός</button>
           <div style="font-size:10px;color:var(--text-3)">Υπογράφοντας δηλώνετε αποδοχή των ανωτέρω · ${new Date().toLocaleDateString('el-GR')}</div>
-          <button class="btn" onclick="saveLaserConsent()" style="background:#C4618A;color:#fff;font-weight:700">✓ Υπογραφή & Αποθήκευση</button>
+          <button class="btn" id="lc-save-btn" onclick="saveLaserConsent()" style="background:#C4618A;color:#fff;font-weight:700">✓ Υπογραφή & Αποθήκευση</button>
         </div>
       </div>
     </div>`;
@@ -11338,9 +11481,12 @@ function hfClearCanvas() {
 async function saveLaserConsent() {
   const f = _laserConsentCtx(); if (!f) return;
   if (!_lcHasInk) { alert('Χρειάζεται υπογραφή του ασθενή στο πλαίσιο.'); return; }
+  if (_consentSaving) return; // διπλό πάτημα όσο αποθηκεύεται
+  _consentSaving = true; _consentBtnBusy('lc-save-btn', true);
   const cv = document.getElementById('lc-canvas');
   const photo = document.getElementById('lc-photo');
-  const {data, error} = await sb.from('laser_consents').insert({
+  // upsert: μία laser συναίνεση ανά ασθενή — νέα υπογραφή ανανεώνει την υπάρχουσα
+  const {data, error} = await sb.from('laser_consents').upsert({
     clinic_id: clinicId(),
     patient_id: f.patient_id,
     signed_at: new Date().toISOString(),
@@ -11349,11 +11495,12 @@ async function saveLaserConsent() {
     body_areas: (typeof _laserBodyParts!=='undefined' && _laserBodyParts ? [].concat(_laserBodyParts).join(', ') : ''),
     collected_by: (S.profile&&S.profile.full_name)||'',
     consent_version: 'v1'
-  }).select('*').single();
+  }, {onConflict: 'patient_id'}).select('*').single();
+  _consentSaving = false; _consentBtnBusy('lc-save-btn', false);
   if (error) { alert('Σφάλμα: '+error.message); return; }
   S.laserPatientConsent = data;
   if (S.laserConsentIds) S.laserConsentIds.add(f.patient_id);
-  document.getElementById('lc-overlay').remove();
+  const _lcov = document.getElementById('lc-overlay'); if (_lcov) _lcov.remove();
   if (confirm('✓ Η συναίνεση αποθηκεύτηκε.\n\nΝα σταλεί αντίγραφο στον πελάτη με email (από yourbeautyline@gmail.com);')) {
     await sendLaserConsentEmail();
   }
@@ -12453,7 +12600,7 @@ function openGroupConsentModal(groupKey) {
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:10px;flex-wrap:wrap">
           <button class="btn btn-sm" onclick="svcClearCanvas()" style="font-size:11px">↺ Καθαρισμός</button>
           <div style="font-size:10px;color:var(--text-3)">Υπογράφοντας δηλώνετε αποδοχή των ανωτέρω · ${new Date().toLocaleDateString('el-GR')}</div>
-          <button class="btn" onclick="saveGroupConsent('${groupKey}')" style="background:${g.color};color:#fff;font-weight:700">✓ Υπογραφή & Αποθήκευση</button>
+          <button class="btn" id="svc-save-btn" onclick="saveGroupConsent('${groupKey}')" style="background:${g.color};color:#fff;font-weight:700">✓ Υπογραφή & Αποθήκευση</button>
         </div>
       </div>
     </div>`;
@@ -12480,10 +12627,22 @@ function svcClearCanvas() {
   _svcHasInk = false;
 }
 
+// Προστασία από διπλό/πολλαπλό πάτημα: όσο αποθηκεύεται, το κουμπί κλειδώνει και
+// δείχνει «περιμένετε». Επιπλέον η βάση κρατά ΜΙΑ συναίνεση ανά ασθενή & ομάδα
+// (unique index) — νέα υπογραφή ανανεώνει την υπάρχουσα (upsert), δεν προσθέτει δεύτερη.
+let _consentSaving = false;
+function _consentBtnBusy(id, busy) {
+  const b = document.getElementById(id); if (!b) return;
+  if (busy) { b.dataset.label = b.textContent; b.disabled = true; b.style.opacity = '0.7'; b.textContent = '⏳ Αποθήκευση… περιμένετε'; }
+  else { b.disabled = false; b.style.opacity = ''; b.textContent = b.dataset.label || '✓ Υπογραφή & Αποθήκευση'; }
+}
 async function saveGroupConsent(groupKey) {
   const p = S.patientDetail; if (!p) return;
   const g = SERVICE_CONSENT_GROUPS[groupKey]; if (!g) return;
   if (!_svcHasInk) { alert('Χρειάζεται υπογραφή του ασθενή στο πλαίσιο.'); return; }
+  if (_consentSaving) return;
+  _consentSaving = true; _consentBtnBusy('svc-save-btn', true);
+  try {
   const cv = document.getElementById('svc-canvas');
   const photo = document.getElementById('svc-photo');
   // Πλήρες κείμενο της συναίνεσης όπως το είδε/υπέγραψε ο ασθενής (χωρίς HTML) —
@@ -12492,7 +12651,7 @@ async function saveGroupConsent(groupKey) {
   const _ctDiv = document.createElement('div');
   _ctDiv.innerHTML = g.text(p.full_name||'');
   const consentPlainText = (_ctDiv.textContent||'').replace(/\s*\n\s*/g,'\n').trim();
-  const {data, error} = await sb.from('service_consents').insert({
+  const {data, error} = await sb.from('service_consents').upsert({
     clinic_id: clinicId(),
     patient_id: p.id,
     consent_group: g.dbKey,
@@ -12503,15 +12662,16 @@ async function saveGroupConsent(groupKey) {
     photo_consent: photo ? photo.checked : false,
     collected_by: (S.profile&&S.profile.full_name)||'',
     consent_version: 'v1'
-  }).select('*').single();
+  }, {onConflict: 'patient_id,consent_group'}).select('*').single();
   if (error) { alert('Σφάλμα: '+error.message); return; }
   if (groupKey==='cleansing') { S.serviceConsentCleansing = data; if (S.cleansingConsentIds) S.cleansingConsentIds.add(p.id); }
   else if (groupKey==='peelings') { S.serviceConsentPeelings = data; if (S.peelingsConsentIds) S.peelingsConsentIds.add(p.id); }
   else { S.serviceConsentOxygen = data; if (S.oxygenConsentIds) S.oxygenConsentIds.add(p.id); }
-  document.getElementById('lc-overlay').remove();
+  const ov = document.getElementById('lc-overlay'); if (ov) ov.remove();
   const panel = document.getElementById('appt-detail-panel');
   if (panel) panel.style.display = 'none'; // κλείσιμο popup ραντεβού μετά την υπογραφή
   render();
+  } finally { _consentSaving = false; _consentBtnBusy('svc-save-btn', false); }
 }
 
 // Άνοιγμα φόρμας συναίνεσης απευθείας από το popup ραντεβού στο Πρόγραμμα —
