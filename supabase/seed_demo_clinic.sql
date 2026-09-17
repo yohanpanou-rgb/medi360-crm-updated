@@ -1,16 +1,17 @@
 -- ============================================================================
 -- DEMO CLINIC — εικονικά δεδομένα επίδειξης
 -- ============================================================================
--- Γεμίζει την κλινική «Demo Clinic» (id a787b766-…) με ΠΛΗΡΩΣ εικονικά δεδομένα
--- ώστε να μπορεί να παρουσιαστεί το CRM σε υποψήφιο πελάτη: προσωπικό με
--- ωράριο/άδειες, κατάλογο υπηρεσιών, 60 ασθενείς (με ΑΜΚΑ), ~2.500 ραντεβού
--- 14 μηνών, συναινέσεις κάθε τύπου, consultations, laser forms & πακέτα,
--- πωλήσεις προϊόντων, αυτοματισμούς επικοινωνίας, δώρα γενεθλίων, pipeline.
+-- Γεμίζει την κλινική demo (id a787b766-…) με ΠΛΗΡΩΣ εικονικά δεδομένα ενός
+-- ΔΕΡΜΑΤΟΛΟΓΙΚΟΥ ιατρείου, ώστε να μπορεί να παρουσιαστεί το CRM σε υποψήφιο
+-- πελάτη: 2 δερματολόγοι + αισθητικός + νοσηλεύτρια laser με ωράριο/άδειες,
+-- κατάλογο υπηρεσιών (ιατρική δερματολογία, ενέσιμες, laser & συσκευές,
+-- peelings), 60 ασθενείς (με ΑΜΚΑ), ~2.500 ραντεβού 14 μηνών, συναινέσεις
+-- κάθε τύπου, consultations, laser forms & πακέτα, πωλήσεις προϊόντων,
+-- αυτοματισμούς επικοινωνίας, δώρα γενεθλίων, pipeline.
 --
 -- ΕΠΑΝΕΚΤΕΛΕΣΙΜΟ: σβήνει πρώτα ό,τι υπάρχει για τη demo κλινική και ξαναχτίζει.
 -- Αγγίζει ΜΟΝΟ γραμμές με clinic_id της demo· η Beauty Line δεν επηρεάζεται
--- (από αυτήν διαβάζει μόνο τον κατάλογο υπηρεσιών/οδηγιών/προτύπων, όχι
--- προσωπικά δεδομένα).
+-- (από αυτήν διαβάζει μόνο τη λίστα προϊόντων περιποίησης για τα consultations).
 --
 -- Ασφάλεια αποστολών: οι αυτοματισμοί (appointment-automations, birthday-emails,
 -- daily-schedule-email) τρέχουν ΜΟΝΟ για την κλινική «Beauty Line», οπότε τα
@@ -34,7 +35,7 @@ declare
   s_admin uuid := 'd0000000-0000-4000-8000-000000000001';
   s_maria uuid := 'd0000000-0000-4000-8000-000000000002';
   s_sofia uuid := 'd0000000-0000-4000-8000-000000000003';
-  s_kat   uuid := 'd0000000-0000-4000-8000-000000000004';
+  s_nikos uuid := 'd0000000-0000-4000-8000-000000000004';
   s_niki  uuid := 'd0000000-0000-4000-8000-000000000005';
   bl_settings jsonb;
 
@@ -79,22 +80,24 @@ declare
   inactive_ids int[] := array[40,41,42,43,44,45];
   cities text[]   := array['Κορωπί','Κορωπί','Κορωπί','Παιανία','Μαρκόπουλο','Σπάτα','Γλυφάδα','Βούλα','Βάρη','Λαύριο','Αγία Παρασκευή','Παλλήνη'];
   sources text[]  := array['Social','Σύσταση','Google','Σύσταση','Ταμπέλα','Social','Google','Χρυσός Οδηγός','Website','Booking'];
-  conditions text[] := array['Υποθυρεοειδισμός','Αλλεργική ρινίτιδα','Ήπια υπέρταση','Σιδηροπενική αναιμία','Πολυκυστικές ωοθήκες','Ημικρανίες','Ατοπική δερματίτιδα'];
+  conditions text[] := array['Ατοπική δερματίτιδα','Ψωρίαση (ήπια, αγκώνες)','Ροδόχρους νόσος','Υποθυρεοειδισμός','Αλλεργική ρινίτιδα','Ήπια υπέρταση','Πολυκυστικές ωοθήκες'];
   allergies_l text[] := array['Νικέλιο','Πενικιλίνη','Γύρη','Λάτεξ','Άρωμα / συντηρητικά καλλυντικών'];
-  meds_l text[] := array['Levothyroxine 50mcg','Αντισυλληπτικά','Αντιισταμινικό κατά περιόδους','Συμπλήρωμα σιδήρου','Βιταμίνη D 2000 IU'];
-  prev_l text[] := array['Βαθύς καθαρισμός σε άλλο κέντρο (2024)','Αποτρίχωση με κερί τακτικά','Μεσοθεραπεία προσώπου ×3 (2023)','Peeling γλυκολικού (2025)','Καμία προηγούμενη θεραπεία'];
-  appt_notes text[] := array['Ευαίσθητο δέρμα — χαμηλή ένταση','Πρώτη επίσκεψη','Ζήτησε την ίδια θεραπεύτρια','Ήρθε με 10΄ καθυστέρηση','Πληρωμή με κάρτα','Να θυμίσουμε καθημερινό SPF','Επόμενη συνεδρία σε 6 εβδομάδες'];
-  cats text[] := array['Facials και Μεσοθεραπείες','Καθαρισμός προσώπου & Σώματος','Αποτρίχωση Γυναικών με Laser Αλεξανδρίτη Candela','Massage & Θεραπείες Σώματος','Αποτρίχωση Κλασική','Αποτρίχωση Ανδρών με Laser Αλεξανδρίτη Candela'];
+  meds_l text[] := array['Ισοτρετινοΐνη 20mg (ολοκληρώθηκε 03/2025)','Levothyroxine 50mcg','Αντισυλληπτικά','Αντιισταμινικό κατά περιόδους','Βιταμίνη D 2000 IU'];
+  prev_l text[] := array['Θεραπεία ακμής με ισοτρετινοΐνη (2024)','Laser αποτρίχωση σε άλλο κέντρο (2023)','Botox γλαβέλλας ×2 (2025)','Peeling γλυκολικού (2025)','Καμία προηγούμενη θεραπεία'];
+  appt_notes text[] := array['Ευαίσθητο δέρμα — χαμηλή ένταση','Πρώτη επίσκεψη','Ζήτησε τον ίδιο ιατρό','Ήρθε με 10΄ καθυστέρηση','Πληρωμή με κάρτα','Να θυμίσουμε καθημερινό SPF 50','Επανεξέταση σε 6 εβδομάδες','Φωτογράφηση πριν/μετά — συναίνεση ΟΚ'];
+  -- Κατηγορίες υπηρεσιών του δερματολογικού ιατρείου (δείκτες: 1 ιατρική, 2 ενέσιμες, 3 laser, 4 peelings/αισθητική)
+  cats text[] := array['Ιατρική Δερματολογία','Ενέσιμες Θεραπείες','Laser & Συσκευές','Peelings & Ιατρική Αισθητική'];
+  laser_prefix text := 'Laser Αποτρίχωση ';
   closed date[] := array['2025-12-25','2025-12-26','2026-01-01','2026-01-06','2026-03-25','2026-04-10','2026-04-13','2026-05-01','2026-06-01','2026-08-15','2026-10-28','2026-12-25','2026-12-26']::date[];
-  skin_profiles text[] := array['Λιπαρότητα, Ακμή','Anti-aging, Ρυτίδες','Ξηρότητα / Αφυδάτωση','Ερυθρότητα, Ευαισθησία','Πανάδες, Δυσχρωμίες'];
-  expected_l text[] := array['πιο καθαρή και ομοιόμορφη όψη, μείωση λιπαρότητας, λιγότερα σπυράκια','λείανση λεπτών γραμμών, σύσφιξη, πιο φωτεινή επιδερμίδα','βαθιά ενυδάτωση, απαλότερη υφή, μείωση αίσθησης τραβήγματος','ηρεμία της επιδερμίδας, μείωση ερυθρότητας, ενίσχυση φραγμού','ομοιόμορφος τόνος, μείωση κηλίδων, λάμψη'];
-  step3_l text[] := array['Θεραπεία Ματιών','Μεσοθεραπεία Ματιών','Οξυγονοθεραπεία με Βιταμίνες A,C,E, Σουαλένιο','Συσφικτική Θεραπεία με Facelift','Luminous Glow','Θεραπεία Μαύρου Άνθρακα'];
+  skin_profiles text[] := array['Ακμή, Λιπαρότητα','Φωτογήρανση, Ρυτίδες','Μέλασμα, Δυσχρωμίες','Ροδόχρους νόσος, Ερυθρότητα','Αφυδάτωση, Ευαισθησία'];
+  expected_l text[] := array['μείωση φλεγμονωδών βλαβών και λιπαρότητας, πιο ομοιόμορφη υφή','λείανση λεπτών γραμμών, βελτίωση ελαστικότητας, λάμψη','σταδιακή μείωση των κηλίδων, ομοιόμορφος τόνος (με αυστηρή φωτοπροστασία)','μείωση ερυθρότητας και εξάρσεων, ενίσχυση δερματικού φραγμού','βαθιά ενυδάτωση, ηρεμία, απαλότερη υφή'];
+  step3_l text[] := array['Fractional CO2 Laser Ουλών Ακμής','IPL Φωτοανάπλαση — Πανάδες','Skin Boosters (Profhilo)','Microneedling Dermapen','TCA Peeling','PRP Προσώπου'];
   clean_l text[] := array['Medik8-Surface Radiance Cleanse – 150ml','Chantarelle-IDEAL PURE Anti-Bacterial Herbal Cleansing Gel-200 ml','Juliette Armand -Elements Sensitive Cleansing Gel- 210ml','Medik8-Lipid Balance Cleansing Oil – 140ml'];
   care_l text[] := array['Medik8-C-Tetra – 30ml','Medik8-Crystal Retinal 3 – 30ml','Juliette Armand -Elements Retinoid C Serum -20ml','Medik8-Hydra B5 – 30ml','Helixience -Brightening Dark Spot Serum-30ml','Chantarelle-RED STOP Couperose PHA Acid Day cream SPF 25 UVA/UVB -50ml'];
   prot_l text[] := array['Heliocare Ultra Gel SPF50 – 50ml','Medik8-Advanced Day Total Protect SPF 30 – 50ml','Heliocare Gel Cream Colour SPF50 – 50ml'];
   prod_price numeric[] := array[38,24,29,35,49,79,58,45,62,42,32,34,36];
   prod_l text[] := array['Medik8-Surface Radiance Cleanse – 150ml','Chantarelle-IDEAL PURE Anti-Bacterial Herbal Cleansing Gel-200 ml','Juliette Armand -Elements Sensitive Cleansing Gel- 210ml','Medik8-Lipid Balance Cleansing Oil – 140ml','Medik8-C-Tetra – 30ml','Medik8-Crystal Retinal 3 – 30ml','Juliette Armand -Elements Retinoid C Serum -20ml','Medik8-Hydra B5 – 30ml','Helixience -Brightening Dark Spot Serum-30ml','Chantarelle-RED STOP Couperose PHA Acid Day cream SPF 25 UVA/UVB -50ml','Heliocare Ultra Gel SPF50 – 50ml','Medik8-Advanced Day Total Protect SPF 30 – 50ml','Heliocare Gel Cream Colour SPF50 – 50ml'];
-  consumables_l text[] := array['Αμπούλα Vit C','Μάσκα αλγινικού','Gel υπερήχων','PRX','Κερί ζεστό','Ορός υαλουρονικού','Χαρτί κρεβατιού','Gel laser'];
+  consumables_l text[] := array['Βελόνα 30G','Αναισθητική κρέμα (λιδοκαΐνη)','PRP kit','Gel laser','Γάζες αποστειρωμένες','Αμπούλα Vit C','Χαρτί κρεβατιού','Μάσκα LED (μιας χρήσης)'];
 
   -- Ονόματα μεταβλητών επίτηδες διαφορετικά από ονόματα στηλών (status, price, i,
   -- dow…) — αλλιώς η PL/pgSQL τα θεωρεί αμφίσημα μέσα στα SQL statements.
@@ -128,6 +131,9 @@ begin
   delete from service_consents where clinic_id = demo;
   delete from gdpr_consents where clinic_id = demo;
   delete from appointments where clinic_id = demo;
+  -- Το trigger διαγραφής ραντεβού γράφει στο activity_log (με FK στον ασθενή):
+  -- καθαρίζεται ΑΦΟΥ σβηστούν τα ραντεβού και ΠΡΙΝ σβηστούν οι ασθενείς.
+  delete from activity_log where clinic_id = demo;
   delete from patients where clinic_id = demo;
   delete from staff_services where clinic_id = demo;
   delete from staff_schedules where clinic_id = demo;
@@ -138,8 +144,7 @@ begin
   delete from service_consent_templates where clinic_id = demo;
   delete from services where clinic_id = demo;
   delete from auth.users where id in (select id from profiles where clinic_id = demo)
-     or id in (s_admin, s_maria, s_sofia, s_kat, s_niki);
-  delete from activity_log where clinic_id = demo;
+     or id in (s_admin, s_maria, s_sofia, s_nikos, s_niki);
   -- (Τα αρχεία Storage δεν σβήνονται από SQL — η tmp-demo-media ανεβάζει με upsert,
   --  οπότε σε επανεκτέλεση απλώς αντικαθίστανται.)
   create schema if not exists backup;
@@ -151,18 +156,18 @@ begin
   -- ── 1. Στοιχεία & ρυθμίσεις κλινικής ─────────────────────────────────────
   select settings into bl_settings from clinics where id = bl;
   update clinics set
-    name = 'Demo Clinic',
+    name = 'Demo Dermatology Clinic',
     address = 'Λεωφ. Βασιλέως Κωνσταντίνου 45, Κορωπί 194 00',
     city = 'Κορωπί',
     website = 'https://demo.medi360.gr',
-    instagram = '@demo.aesthetic.clinic',
-    facebook = 'Demo Aesthetic Clinic',
+    instagram = '@dermacare.demo',
+    facebook = 'DermaCare Demo — Δερματολογικό Ιατρείο',
     booking_link = 'https://demo.medi360.gr/booking',
     gdpr_text = gdpr_txt,
     integrations = '{}'::jsonb,
     settings = jsonb_build_object(
       'start_hour', 9, 'end_hour', 21, 'slot_minutes', 15,
-      'brand_name', 'Demo Aesthetic Clinic', 'brand_color', '#2B6CB0',
+      'brand_name', 'DermaCare — Δερματολογικό Ιατρείο', 'brand_color', '#1F6F8B',
       'business_hours', jsonb_build_object(
         'schedule', jsonb_build_array(
           jsonb_build_object('day_of_week',0,'is_open',false,'start','10:00','end','18:00'),
@@ -174,9 +179,19 @@ begin
           jsonb_build_object('day_of_week',6,'is_open',true,'start','09:00','end','15:00')),
         'closed_dates', to_jsonb(closed)),
       'enabled_modules', jsonb_build_object('sms',true,'laser',true,'reports',true,'consents',true,'product-sale',true,'consultations',true,'staff-services',true),
-      'consultation_services', coalesce(bl_settings->'consultation_services','[]'::jsonb),
+      'consultation_services', jsonb_build_array(
+        'Χημικό Peeling Σαλικυλικού','Peeling Γλυκολικού','TCA Peeling','Microneedling Dermapen','Υδροδερμοαπόξεση',
+        'Βαθύς Καθαρισμός Προσώπου — Ιατρικός','Θεραπεία Ροδόχρου Νόσου LED','Οξυγονοθεραπεία','Ενυδάτωση Υαλουρονικού',
+        'Fractional CO2 Laser Ουλών Ακμής','IPL Φωτοανάπλαση — Πανάδες','Skin Boosters (Profhilo)','PRP Προσώπου',
+        'Botox Μετώπου / Γλαβέλλας','Υαλουρονικό Ρινοπαρειακές','Μεσοθεραπεία Τριχωτού'),
       'consultation_products', coalesce(bl_settings->'consultation_products','{}'::jsonb),
-      'service_consent_groups', coalesce(bl_settings->'service_consent_groups','{}'::jsonb),
+      'service_consent_groups', jsonb_build_object(
+        'Χημικό Peeling Σαλικυλικού','Peeling','Peeling Γλυκολικού','Peeling','TCA Peeling','Peeling',
+        'Microneedling Dermapen','Μεσοθεραπεία','PRP Προσώπου','Μεσοθεραπεία','PRP Τριχωτού','Μεσοθεραπεία',
+        'Υδροδερμοαπόξεση','Καθαρισμός Προσώπου','Βαθύς Καθαρισμός Προσώπου — Ιατρικός','Καθαρισμός Προσώπου',
+        'Ενυδάτωση Υαλουρονικού','Θεραπεία Προσώπου','Οξυγονοθεραπεία','Θεραπεία Προσώπου','Θεραπεία Ροδόχρου Νόσου LED','Θεραπεία Προσώπου',
+        'Laser Αποτρίχωση Άνω Χείλος','laser','Laser Αποτρίχωση Μασχάλες','laser','Laser Αποτρίχωση Πόδια Ολόκληρα','laser',
+        'Laser Αποτρίχωση Μπικίνι','laser','Laser Αποτρίχωση Πρόσωπο','laser','Laser Αποτρίχωση Πλάτη Ανδρική','laser'),
       'sms_templates', jsonb_build_object(
         'booking_confirmation', jsonb_build_object('enabled',true,'text','ΤΟ ΡΑΝΤΕΒΟΥ ΣΑΣ ΣΤΟ {clinic} ΚΛΕΙΣΤΗΚΕ ΓΙΑ {date} ΣΤΙΣ {time}. ΗΜΕΡΟΛΟΓΙΟ: {calendar_link}'),
         'confirmation_request', jsonb_build_object('enabled',true,'text','ΥΠΕΝΘΥΜΙΖΟΥΜΕ ΤΟ ΡΑΝΤΕΒΟΥ ΣΑΣ ΣΤΟ {clinic} ΓΙΑ {date} ΣΤΙΣ {time}. ΕΠΙΒΕΒΑΙΩΣΤΕ: {confirm_link}'),
@@ -188,31 +203,97 @@ begin
       'review_link', 'https://g.page/r/demo-clinic/review')
   where id = demo;
 
-  -- ── 2. Κατάλογος υπηρεσιών, οδηγίες, πρότυπα συναινέσεων (αντίγραφο καταλόγου) ──
-  insert into services (clinic_id, name, category, duration_minutes, price, active, consumables)
-    select demo, name, category, duration_minutes, price, active, consumables from services where clinic_id = bl;
-  insert into instruction_sets (clinic_id, name, description, pre_instructions, post_instructions, active)
-    select demo, name, description, pre_instructions, post_instructions, active from instruction_sets where clinic_id = bl;
+  -- ── 2. Κατάλογος υπηρεσιών δερματολογικού ιατρείου, οδηγίες, πρότυπα συναινέσεων ──
+  insert into services (clinic_id, name, category, duration_minutes, price, active) values
+    (demo, 'Δερματολογική Εξέταση', cats[1], 30, 60, true),
+    (demo, 'Επανεξέταση', cats[1], 20, 40, true),
+    (demo, 'Χαρτογράφηση Σπίλων — Δερματοσκόπηση', cats[1], 45, 120, true),
+    (demo, 'Κρυοθεραπεία Μυρμηγκιών / Υπερκερατώσεων', cats[1], 15, 50, true),
+    (demo, 'Βιοψία Δέρματος', cats[1], 30, 150, true),
+    (demo, 'Πρόγραμμα Θεραπείας Ακμής — Έλεγχος', cats[1], 30, 70, true),
+    (demo, 'Τριχόπτωση — Εκτίμηση & Τριχοσκόπηση', cats[1], 45, 90, true),
+    (demo, 'Έλεγχος Ονύχων / Ονυχομυκητίαση', cats[1], 20, 50, true),
+    (demo, 'Αφαίρεση Σπίλου / Θηλώματος', cats[1], 30, 180, true),
+    (demo, 'Patch Test — Αλλεργία Επαφής', cats[1], 30, 130, true),
+    (demo, 'Botox Μετώπου / Γλαβέλλας', cats[2], 30, 250, true),
+    (demo, 'Botox Full Face', cats[2], 45, 380, true),
+    (demo, 'Υαλουρονικό Χείλη (1ml)', cats[2], 45, 300, true),
+    (demo, 'Υαλουρονικό Ρινοπαρειακές', cats[2], 45, 320, true),
+    (demo, 'Skin Boosters (Profhilo)', cats[2], 30, 280, true),
+    (demo, 'PRP Προσώπου', cats[2], 60, 250, true),
+    (demo, 'PRP Τριχωτού', cats[2], 60, 220, true),
+    (demo, 'Μεσοθεραπεία Τριχωτού', cats[2], 45, 120, true),
+    (demo, 'Botox Υπεριδρωσίας Μασχαλών', cats[2], 30, 400, true),
+    (demo, 'Laser Αποτρίχωση Άνω Χείλος', cats[3], 15, 30, true),
+    (demo, 'Laser Αποτρίχωση Μασχάλες', cats[3], 20, 50, true),
+    (demo, 'Laser Αποτρίχωση Πόδια Ολόκληρα', cats[3], 75, 160, true),
+    (demo, 'Laser Αποτρίχωση Μπικίνι', cats[3], 30, 70, true),
+    (demo, 'Laser Αποτρίχωση Πρόσωπο', cats[3], 20, 60, true),
+    (demo, 'Laser Αποτρίχωση Πλάτη Ανδρική', cats[3], 40, 120, true),
+    (demo, 'Fractional CO2 Laser Ουλών Ακμής', cats[3], 45, 350, true),
+    (demo, 'IPL Φωτοανάπλαση — Πανάδες', cats[3], 30, 180, true),
+    (demo, 'Laser Αγγειακών Βλαβών / Ευρυαγγειών', cats[3], 30, 200, true),
+    (demo, 'Laser Αφαίρεση Τατουάζ', cats[3], 30, 150, true),
+    (demo, 'Laser Ονυχομυκητίασης', cats[3], 30, 120, true),
+    (demo, 'Χημικό Peeling Σαλικυλικού', cats[4], 30, 90, true),
+    (demo, 'Peeling Γλυκολικού', cats[4], 30, 80, true),
+    (demo, 'TCA Peeling', cats[4], 45, 150, true),
+    (demo, 'Microneedling Dermapen', cats[4], 60, 180, true),
+    (demo, 'Υδροδερμοαπόξεση', cats[4], 60, 110, true),
+    (demo, 'Βαθύς Καθαρισμός Προσώπου — Ιατρικός', cats[4], 60, 75, true),
+    (demo, 'Θεραπεία Ροδόχρου Νόσου LED', cats[4], 30, 60, true),
+    (demo, 'Οξυγονοθεραπεία', cats[4], 45, 70, true),
+    (demo, 'Ενυδάτωση Υαλουρονικού', cats[4], 45, 65, true);
+
+  insert into instruction_sets (clinic_id, name, description, pre_instructions, post_instructions, active) values
+    (demo, 'Laser Αποτρίχωσης', 'Οδηγίες πριν/μετά τη συνεδρία laser',
+      E'• Ξύρισμα της περιοχής 24 ώρες πριν (όχι κερί/τσιμπιδάκι για 4 εβδομάδες)\n• Αποφυγή ήλιου & σολάριουμ για 2 εβδομάδες\n• Χωρίς αυτομαυριστικά, κρέμες με ρετινόλη ή οξέα για 5 ημέρες\n• Ενημερώστε μας για φάρμακα φωτοευαισθησίας ή εγκυμοσύνη',
+      E'• Κρύες κομπρέσες / αλόη σε ερυθρότητα\n• SPF 50 καθημερινά στην περιοχή για 2 εβδομάδες\n• Όχι σάουνα, έντονη άσκηση, ζεστό μπάνιο για 24 ώρες\n• Οι τρίχες πέφτουν σταδιακά σε 7–14 ημέρες — μην τις τραβάτε', true),
+    (demo, 'Χημικό Peeling', 'Οδηγίες πριν/μετά το peeling',
+      E'• Διακοπή ρετινοειδών και οξέων 5 ημέρες πριν\n• Χωρίς αποτρίχωση/ξύρισμα προσώπου 48 ώρες πριν\n• Αποφυγή ήλιου την προηγούμενη εβδομάδα\n• Ενημερώστε μας για επεισόδιο έρπητα ή ισοτρετινοΐνη τους τελευταίους 6 μήνες',
+      E'• Ήπιος καθαρισμός & ενυδατική — χωρίς τρίψιμο\n• Μην αφαιρείτε την απολέπιση με τα χέρια\n• SPF 50 κάθε 2–3 ώρες σε έκθεση για 2 εβδομάδες\n• Μακιγιάζ από την επόμενη ημέρα, όχι σάουνα/πισίνα για 3 ημέρες', true),
+    (demo, 'Ενέσιμες Θεραπείες (Botox / Fillers)', 'Οδηγίες πριν/μετά τις ενέσιμες θεραπείες',
+      E'• Αποφυγή ασπιρίνης, ιβουπροφαίνης, ωμέγα-3 & βιταμίνης Ε για 5 ημέρες (μειώνουν τις εκχυμώσεις)\n• Χωρίς αλκοόλ 24 ώρες πριν\n• Έρθετε χωρίς μακιγιάζ\n• Ενημερώστε μας για εγκυμοσύνη/θηλασμό, νευρομυϊκά νοσήματα ή αντιπηκτικά',
+      E'• Μην τρίβετε/πιέζετε την περιοχή για 6 ώρες — όρθια στάση για 4 ώρες\n• Χωρίς έντονη άσκηση, σάουνα, ζέστη για 24 ώρες\n• Παγοκύστη σε τυχόν πρήξιμο (fillers)\n• Το Botox αποδίδει σε 5–14 ημέρες — επανέλεγχος στις 2 εβδομάδες', true),
+    (demo, 'Microneedling / PRP', 'Οδηγίες πριν/μετά microneedling & PRP',
+      E'• Καλή ενυδάτωση (νερό) την προηγούμενη ημέρα — ιδίως για PRP\n• Διακοπή ρετινοειδών 3 ημέρες πριν\n• Χωρίς αντιφλεγμονώδη 3 ημέρες πριν (PRP)\n• Χωρίς μακιγιάζ την ημέρα της θεραπείας',
+      E'• Ερυθρότητα σαν ηλιακό έγκαυμα για 24–48 ώρες είναι αναμενόμενη\n• Μόνο ήπιος καθαρισμός & ενυδατική για 3 ημέρες — χωρίς οξέα/ρετινόλη για 1 εβδομάδα\n• SPF 50 αυστηρά για 2 εβδομάδες\n• Χωρίς πισίνα/σάουνα/γυμναστήριο για 48 ώρες', true),
+    (demo, 'Fractional CO2 / IPL / Laser Βλαβών', 'Οδηγίες πριν/μετά ενεργειακές θεραπείες προσώπου',
+      E'• Καμία έκθεση στον ήλιο για 3 εβδομάδες πριν — μαυρισμένο δέρμα ΔΕΝ γίνεται θεραπεία\n• Διακοπή ρετινοειδών/οξέων 1 εβδομάδα πριν\n• Αντιιική προφύλαξη αν έχετε ιστορικό έρπητα (θα σας δοθεί συνταγή)\n• Ξεκινήστε την προετοιμασία δέρματος που σας δόθηκε',
+      E'• Επουλωτική αλοιφή όπως συνταγογραφήθηκε 3–5 φορές την ημέρα\n• Χωρίς μακιγιάζ μέχρι να πέσουν οι κρούστες (5–7 ημέρες)\n• Καθόλου ήλιος για 4 εβδομάδες, SPF 50 για 3 μήνες\n• Επικοινωνήστε άμεσα για έντονο πόνο, πύον ή πυρετό', true),
+    (demo, 'Βιοψία / Μικροεπέμβαση', 'Οδηγίες πριν/μετά βιοψία, αφαίρεση σπίλου, κρυοθεραπεία',
+      E'• Ενημερώστε μας για αντιπηκτικά, αλλεργία σε τοπικά αναισθητικά ή βηματοδότη\n• Φάτε κανονικά — δεν απαιτείται νηστεία\n• Φορέστε άνετα ρούχα που αφήνουν ελεύθερη την περιοχή',
+      E'• Κρατήστε το επίθεμα στεγνό για 24 ώρες, μετά καθημερινή αλλαγή\n• Αποφύγετε τέντωμα/άσκηση της περιοχής για 5–7 ημέρες\n• Αφαίρεση ραμμάτων σε 7–14 ημέρες (θα οριστεί ραντεβού)\n• Το ιστολογικό αποτέλεσμα βγαίνει σε 10–15 ημέρες — θα σας ενημερώσουμε', true);
+
   insert into service_instruction_map (clinic_id, service_id, instruction_set_id)
-    select demo, ds.id, di.id
-    from service_instruction_map m
-    join services bs on bs.id = m.service_id
-    join instruction_sets bi on bi.id = m.instruction_set_id
-    join services ds on ds.clinic_id = demo and ds.name = bs.name
-    join instruction_sets di on di.clinic_id = demo and di.name = bi.name
-    where m.clinic_id = bl;
-  insert into service_consent_templates (clinic_id, service_name, consent_text, active)
-    select demo, service_name, consent_text, active from service_consent_templates where clinic_id = bl;
+    select demo, s.id, i.id from services s join instruction_sets i on i.clinic_id = demo
+    where s.clinic_id = demo and (
+      (i.name = 'Laser Αποτρίχωσης' and s.name like laser_prefix || '%') or
+      (i.name = 'Χημικό Peeling' and s.name ilike '%Peeling%') or
+      (i.name = 'Ενέσιμες Θεραπείες (Botox / Fillers)' and (s.name ilike 'Botox%' or s.name ilike 'Υαλουρονικό%' or s.name ilike 'Skin Boosters%')) or
+      (i.name = 'Microneedling / PRP' and (s.name ilike '%PRP%' or s.name ilike '%Microneedling%' or s.name ilike 'Μεσοθεραπεία%')) or
+      (i.name = 'Fractional CO2 / IPL / Laser Βλαβών' and (s.name ilike 'Fractional%' or s.name ilike 'IPL%' or s.name ilike 'Laser Αγγειακ%' or s.name ilike 'Laser Αφαίρεση%')) or
+      (i.name = 'Βιοψία / Μικροεπέμβαση' and (s.name ilike 'Βιοψία%' or s.name ilike 'Αφαίρεση%' or s.name ilike 'Κρυοθεραπεία%')));
+
+  insert into service_consent_templates (clinic_id, service_name, consent_text, active) values
+    (demo, 'Καθαρισμός Προσώπου', 'ΣΥΝΑΙΝΕΣΗ ΓΙΑ ΚΑΘΑΡΙΣΜΟ ΠΡΟΣΩΠΟΥ / ΥΔΡΟΔΕΡΜΟΑΠΟΞΕΣΗ' || E'\n\n' || 'Ενημερώθηκα για τη φύση της θεραπείας, τα αναμενόμενα αποτελέσματα και τις πιθανές παροδικές αντιδράσεις (ερυθρότητα, ευαισθησία, μικρές εκχυμώσεις). Δήλωσα με ακρίβεια το ιατρικό μου ιστορικό, τα φάρμακα και τις αλλεργίες μου. Κατανοώ ότι τα αποτελέσματα διαφέρουν ανά άτομο και συναινώ στη διενέργεια της θεραπείας.', true),
+    (demo, 'Peeling', 'ΣΥΝΑΙΝΕΣΗ ΓΙΑ ΧΗΜΙΚΟ PEELING' || E'\n\n' || 'Ενημερώθηκα ότι το χημικό peeling προκαλεί ελεγχόμενη απολέπιση και ότι είναι αναμενόμενα ερυθρότητα, αίσθημα καύσου, ξηρότητα και απολέπιση για 3–7 ημέρες. Κατανοώ τους σπάνιους κινδύνους (μεταφλεγμονώδης υπέρχρωση, λοίμωξη, ενεργοποίηση έρπητα) και τη σημασία της αυστηρής φωτοπροστασίας. Δεν λαμβάνω ισοτρετινοΐνη τους τελευταίους 6 μήνες. Συναινώ στη θεραπεία.', true),
+    (demo, 'Θεραπεία Προσώπου', 'ΣΥΝΑΙΝΕΣΗ ΓΙΑ ΘΕΡΑΠΕΙΑ ΠΡΟΣΩΠΟΥ (LED / ΟΞΥΓΟΝΟΘΕΡΑΠΕΙΑ / ΕΝΥΔΑΤΩΣΗ)' || E'\n\n' || 'Ενημερώθηκα για τη διαδικασία και τα αναμενόμενα αποτελέσματα. Δήλωσα τυχόν φωτοευαισθησία, φάρμακα και αλλεργίες. Κατανοώ ότι μπορεί να εμφανιστεί παροδική ερυθρότητα και συναινώ στη θεραπεία.', true),
+    (demo, 'Μεσοθεραπεία', 'ΣΥΝΑΙΝΕΣΗ ΓΙΑ MICRONEEDLING / PRP / ΜΕΣΟΘΕΡΑΠΕΙΑ' || E'\n\n' || 'Ενημερώθηκα ότι η θεραπεία περιλαμβάνει μικροτραυματισμό του δέρματος ή/και έγχυση αυτόλογου πλάσματος. Αναμενόμενα: ερυθρότητα, οίδημα, μικρές εκχυμώσεις 1–3 ημέρες. Κατανοώ τους σπάνιους κινδύνους λοίμωξης ή υπέρχρωσης και τη σημασία της φωτοπροστασίας. Συναινώ στη θεραπεία και στη λήψη φωτογραφιών για τον ιατρικό μου φάκελο.', true),
+    (demo, 'Ενέσιμες Θεραπείες', 'ΣΥΝΑΙΝΕΣΗ ΓΙΑ ΕΝΕΣΙΜΕΣ ΘΕΡΑΠΕΙΕΣ (ΒΟΤΟΥΛΙΝΙΚΗ ΤΟΞΙΝΗ / ΥΑΛΟΥΡΟΝΙΚΟ ΟΞΥ)' || E'\n\n' || 'Ενημερώθηκα από τον ιατρό για τον σκοπό, τη διαδικασία, τα αναμενόμενα αποτελέσματα και τη διάρκειά τους, καθώς και για τις πιθανές ανεπιθύμητες ενέργειες (εκχύμωση, οίδημα, ασυμμετρία, σπανίως πτώση βλεφάρου ή αγγειακή απόφραξη). Δήλωσα ότι δεν είμαι έγκυος/θηλάζουσα και δεν πάσχω από νευρομυϊκό νόσημα. Συναινώ στη θεραπεία.', true),
+    (demo, 'Laser', 'ΣΥΝΑΙΝΕΣΗ ΓΙΑ ΘΕΡΑΠΕΙΑ LASER' || E'\n\n' || 'Ενημερώθηκα ότι η θεραπεία με laser μπορεί να προκαλέσει παροδική ερυθρότητα, οίδημα, σπανίως φυσαλίδες, υπέρ/υπόχρωση ή ουλή. Δήλωσα την πρόσφατη έκθεση στον ήλιο, τα φάρμακα φωτοευαισθησίας και το ιστορικό μου. Κατανοώ ότι απαιτούνται πολλαπλές συνεδρίες και συναινώ στη θεραπεία.', true);
 
   -- ── 3. Προσωπικό: λογαριασμοί, προφίλ, ωράριο, άδειες, υπηρεσίες ─────────
   create temp table tmp_staff (id uuid, name text, role text, email text, phone text, active boolean, leave numeric,
     pool text[], days int[], st time, en time, sat_st time, sat_en time, until date) on commit drop;
+  -- Δερματολόγος-διευθύντρια, δερματολόγος (laser & μικροεπεμβάσεις), αισθητικός,
+  -- νοσηλεύτρια laser αποτρίχωσης, και μία πρώην αισθητικός (ανενεργή).
   insert into tmp_staff values
     (s_admin,'Δρ. Ελένη Παπαδάκη','clinic_admin','eleni.papadaki@demo-clinic.gr','6971000001',true,25, array[cats[1],cats[2]], array[1,2,3,4,5], '10:00','18:00', null, null, null),
-    (s_maria,'Μαρία Κωνσταντίνου','therapist','maria.konstantinou@demo-clinic.gr','6971000002',true,20, array[cats[1],cats[2],cats[4]], array[2,3,4,5,6], '12:00','21:00', '09:00','15:00', null),
-    (s_sofia,'Σοφία Αντωνίου','therapist','sofia.antoniou@demo-clinic.gr','6971000003',true,20, array[cats[3],cats[6],cats[5]], array[1,2,3,4,5,6], '12:00','21:00', '09:00','15:00', null),
-    (s_kat,'Κατερίνα Δημητρίου','therapist','katerina.dimitriou@demo-clinic.gr','6971000004',true,20, array[cats[4],cats[5],cats[2]], array[1,2,3,4,5,6], '09:00','17:00', '09:00','14:00', null),
-    (s_niki,'Νίκη Αλεξίου','therapist','niki.alexiou@demo-clinic.gr','6971000005',false,20, array[cats[1],cats[2]], array[1,2,3,4,5], '09:00','17:00', null, null, '2026-05-29');
+    (s_nikos,'Δρ. Νίκος Αντωνόπουλος','therapist','nikos.antonopoulos@demo-clinic.gr','6971000004',true,25, array[cats[1],cats[2],cats[3]], array[1,2,3,4,5], '12:00','21:00', '09:00','14:00', null),
+    (s_maria,'Μαρία Κωνσταντίνου','therapist','maria.konstantinou@demo-clinic.gr','6971000002',true,20, array[cats[4]], array[2,3,4,5,6], '12:00','21:00', '09:00','15:00', null),
+    (s_sofia,'Σοφία Αντωνίου','therapist','sofia.antoniou@demo-clinic.gr','6971000003',true,20, array[cats[3]], array[1,2,3,4,5,6], '09:00','17:00', '09:00','15:00', null),
+    (s_niki,'Νίκη Αλεξίου','therapist','niki.alexiou@demo-clinic.gr','6971000005',false,20, array[cats[4]], array[1,2,3,4,5], '09:00','17:00', null, null, '2026-05-29');
 
   for st in select * from tmp_staff loop
     insert into auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -237,8 +318,13 @@ begin
         case when wd = 6 then coalesce(st.sat_st, '09:00'::time) else st.st end,
         case when wd = 6 then coalesce(st.sat_en, '15:00'::time) else st.en end);
     end loop;
+    -- Η Σοφία (νοσηλεύτρια) κάνει ΜΟΝΟ laser αποτρίχωσης — τα ιατρικά laser
+    -- (CO2, IPL, αγγειακά, τατουάζ) τα κάνει μόνο ο Δρ. Αντωνόπουλος.
     insert into staff_services (clinic_id, staff_id, service_id, online_booking_enabled)
-      select demo, st.id, s.id, (s.category in (cats[1], cats[3])) from services s where s.clinic_id = demo and s.category = any(st.pool);
+      select demo, st.id, s.id, (s.category in (cats[1], cats[4]) or s.name like laser_prefix || '%')
+      from services s where s.clinic_id = demo and s.category = any(st.pool)
+        and not (st.id = s_sofia and s.name not like laser_prefix || '%')
+        and not (st.id = s_nikos and s.name like laser_prefix || '%');
   end loop;
 
   insert into staff_time_off (clinic_id, staff_id, start_date, end_date, type, days_count, notes) values
@@ -249,9 +335,9 @@ begin
     (demo, s_maria, '2026-03-03', '2026-03-04', 'sick', 2, 'Ίωση'),
     (demo, s_sofia, '2026-08-17', '2026-08-28', 'vacation', 10, null),
     (demo, s_sofia, '2026-05-22', '2026-05-22', 'other', 1, 'Σεμινάριο Candela'),
-    (demo, s_kat, '2026-08-10', '2026-08-21', 'vacation', 10, null),
-    (demo, s_kat, '2026-09-08', '2026-09-09', 'sick', 2, null),
-    (demo, s_kat, '2026-12-28', '2026-12-31', 'vacation', 4, 'Πρωτοχρονιά'),
+    (demo, s_nikos, '2026-08-10', '2026-08-21', 'vacation', 10, null),
+    (demo, s_nikos, '2026-09-08', '2026-09-09', 'sick', 2, null),
+    (demo, s_nikos, '2026-12-28', '2026-12-31', 'vacation', 4, 'Πρωτοχρονιά'),
     (demo, s_niki, '2026-04-13', '2026-04-17', 'vacation', 5, null);
   insert into staff_schedule_overrides (clinic_id, staff_id, date, is_working, start_time, end_time, notes) values
     (demo, s_sofia, '2026-09-19', false, null, null, 'Προσωπικός λόγος'),
@@ -276,8 +362,8 @@ begin
       '697' || lpad(((1000000 + (ii * 7919) % 8999999))::text, 7, '0'),
       null,
       ii = any(lead_ids), ii = any(inactive_ids),
-      case when ii between 51 and 58 then cats[6]
-           else cats[1 + (ii % 5)] end,
+      case when ii between 51 and 54 then cats[1] when ii between 55 and 58 then cats[3]
+           else cats[1 + (ii % 4)] end,
       case when ii = any(lead_ids) then null
            when ii <= 20 then date '2025-10-01' + (random() * 40)::int
            when ii = any(inactive_ids) then date '2025-10-01' + (random() * 45)::int
@@ -364,7 +450,7 @@ begin
           insert into appointments (id, clinic_id, patient_id, therapist_id, service_name, body_parts, start_time, end_time, duration_minutes,
             status, notes, price, paid_amount, from_booking, sms_sent, sms_confirmed, created_at, updated_at, created_by)
           values (aid, demo, pid, st.id, sv.name,
-            case when sv.category in (cats[3], cats[6]) then array[split_part(sv.name, ' - ', 1)] else null end,
+            case when sv.name like laser_prefix || '%' then array[substr(sv.name, length(laser_prefix) + 1)] else null end,
             start_ts, start_ts + (dur || ' minutes')::interval, dur, a_status, a_note, a_price, a_paid,
             (random() < 0.3), (d >= '2026-06-01' and d < today), (a_status = 'confirmed'),
             created_ts, created_ts, case when random() < 0.5 then s_admin else st.id end);
@@ -418,14 +504,17 @@ begin
            (array_agg(a.therapist_id order by a.start_time))[1] ther
     from appointments a
     cross join lateral (
-      select case when a.service_name ilike '%Καθαρισμ%' or a.service_name ilike '%Υδροδερμ%' or a.service_name ilike '%Δερμοαπόξεση%' then 'cleansing_poreover'
-                  when a.service_name ilike '%Peeling%' or a.service_name ilike '%Dermapen%' or a.service_name ilike '%Μεσοθεραπ%' or a.service_name ilike '%Ρετινόλ%' then 'peelings_microneedling'
-                  when a.service_name ilike '%Ενυδάτωση%' or a.service_name ilike '%Οξυγονο%' or a.service_name ilike '%Luminous%' or a.service_name ilike '%Ματιών%' then 'oxygen_facetreatments' end as grp_name,
-             case when a.service_name ilike '%Καθαρισμ%' or a.service_name ilike '%Υδροδερμ%' or a.service_name ilike '%Δερμοαπόξεση%' then 'Καθαρισμός Προσώπου / Σώματος'
-                  when a.service_name ilike '%Peeling%' or a.service_name ilike '%Dermapen%' or a.service_name ilike '%Μεσοθεραπ%' or a.service_name ilike '%Ρετινόλ%' then 'Peeling & Microneedling'
-                  else 'Ενυδάτωση & Θεραπείες Λάμψης' end as svc_label,
-             case when a.service_name ilike '%Καθαρισμ%' or a.service_name ilike '%Υδροδερμ%' or a.service_name ilike '%Δερμοαπόξεση%' then 'Καθαρισμός Προσώπου'
-                  when a.service_name ilike '%Peeling%' or a.service_name ilike '%Dermapen%' or a.service_name ilike '%Μεσοθεραπ%' or a.service_name ilike '%Ρετινόλ%' then 'Peeling'
+      -- Οι 3 ομάδες συναινέσεων είναι σταθερές στο CRM (καρτέλα ασθενή): αντιστοίχιση
+      -- των δερματολογικών υπηρεσιών σε αυτές.
+      select case when a.service_name ilike '%Καθαρισμ%' or a.service_name ilike '%Υδροδερμ%' then 'cleansing_poreover'
+                  when a.service_name ilike '%Peeling%' or a.service_name ilike '%Microneedling%' or a.service_name ilike '%PRP%' or a.service_name ilike 'Μεσοθεραπεία%' then 'peelings_microneedling'
+                  when a.service_name ilike '%Ενυδάτωση%' or a.service_name ilike '%Οξυγονο%' or a.service_name ilike '%LED%' then 'oxygen_facetreatments' end as grp_name,
+             case when a.service_name ilike '%Καθαρισμ%' or a.service_name ilike '%Υδροδερμ%' then 'Καθαρισμός Προσώπου / Υδροδερμοαπόξεση'
+                  when a.service_name ilike '%Peeling%' or a.service_name ilike '%Microneedling%' or a.service_name ilike '%PRP%' or a.service_name ilike 'Μεσοθεραπεία%' then 'Peeling & Microneedling / PRP'
+                  else 'Θεραπείες Προσώπου (LED / Οξυγόνο / Ενυδάτωση)' end as svc_label,
+             case when a.service_name ilike '%Καθαρισμ%' or a.service_name ilike '%Υδροδερμ%' then 'Καθαρισμός Προσώπου'
+                  when a.service_name ilike '%Peeling%' then 'Peeling'
+                  when a.service_name ilike '%Microneedling%' or a.service_name ilike '%PRP%' or a.service_name ilike 'Μεσοθεραπεία%' then 'Μεσοθεραπεία'
                   else 'Θεραπεία Προσώπου' end as tmpl_name) g
     where a.clinic_id = demo and a.status = 'completed' and g.grp_name is not null
     group by a.patient_id, grp_name, svc_label, tmpl_name
@@ -478,7 +567,7 @@ begin
       pkg_id := gen_random_uuid();
       insert into patient_packages (id, clinic_id, patient_id, name, service_name, total_sessions, price, purchased_at, notes, laser_form_id, body_parts,
                                     receipt_mark, receipt_issued_at, receipt_amount, receipt_payment_method, created_at)
-      values (pkg_id, demo, pr.patient_id, 'Πακέτο 6 συνεδριών — ' || pr.bp, pr.service_name, 6, round(pr.svc_price * 6 * 0.85),
+      values (pkg_id, demo, pr.patient_id, 'Πακέτο 6 συνεδριών Laser — ' || pr.bp, pr.service_name, 6, round(pr.svc_price * 6 * 0.85),
               (pr.first_start at time zone tz)::date, case when n % 2 = 0 then 'Προπληρωμή με έκπτωση 15%' else null end, form_id, array[pr.bp],
               case when n <= 5 then '400001' || lpad((9000000 + n * 1234567)::text, 9, '0') else null end,
               case when n <= 5 then pr.first_start + interval '40 minutes' else null end,
@@ -493,9 +582,9 @@ begin
   for pr in
     select a.patient_id, a.id, a.end_time, a.therapist_id, a.start_time
     from appointments a join services s on s.clinic_id = demo and s.name = a.service_name
-    where a.clinic_id = demo and a.status = 'completed' and s.category in (cats[1], cats[2]) and a.start_time >= '2026-02-01'
+    where a.clinic_id = demo and a.status = 'completed' and s.category = cats[4] and a.start_time >= '2026-02-01'
       and a.id = (select b.id from appointments b join services s2 on s2.clinic_id = demo and s2.name = b.service_name
-                  where b.patient_id = a.patient_id and b.clinic_id = demo and b.status = 'completed' and s2.category in (cats[1], cats[2]) and b.start_time >= '2026-02-01'
+                  where b.patient_id = a.patient_id and b.clinic_id = demo and b.status = 'completed' and s2.category = cats[4] and b.start_time >= '2026-02-01'
                   order by b.start_time limit 1)
     order by a.patient_id limit 22
   loop
@@ -505,11 +594,11 @@ begin
     -- το tab να δείχνει «✓ Έγινε»· βήμα 3: μία που δεν έχει γίνει ακόμα (⏳).
     select string_agg(service_name, '|') into s1 from (
       select distinct service_name from appointments b join services s on s.clinic_id = demo and s.name = b.service_name
-      where b.patient_id = pr.patient_id and b.clinic_id = demo and b.start_time > pr.end_time and s.category in (cats[1], cats[2]) limit 2) x;
+      where b.patient_id = pr.patient_id and b.clinic_id = demo and b.start_time > pr.end_time and s.category in (cats[4], cats[2]) limit 2) x;
     s2 := split_part(coalesce(s1, ''), '|', 2);
     s1 := split_part(coalesce(s1, ''), '|', 1);
-    if s1 = '' then s1 := 'Βαθύς Καθαρισμός με Nanopeel'; end if;
-    if s2 = '' then s2 := 'Ενυδάτωση με Υπερήχους και Υ/Ο'; end if;
+    if s1 = '' then s1 := 'Χημικό Peeling Σαλικυλικού'; end if;
+    if s2 = '' then s2 := 'Ενυδάτωση Υαλουρονικού'; end if;
     s3 := step3_l[1 + (n % array_length(step3_l,1))];
     consult_text := 'Skincare Plan | Θεραπεύτρια: ' || coalesce((select full_name from profiles where id = pr.therapist_id), 'Δρ. Ελένη Παπαδάκη')
       || E'\nSKIN PROFILE\nΤύπος δέρματος / κύρια ανάγκη:\n' || skin_profiles[skin_i]
@@ -537,7 +626,7 @@ begin
     r := case when random() < 0.1 then 2 else 1 end;
     insert into product_sales (clinic_id, patient_id, product_name, quantity, unit_price, amount, payment_method, created_by, created_at)
     values (demo, pid, prod_l[n], r, prod_price[n], prod_price[n] * r, (array['cash','card'])[1 + (random())::int],
-            (array[s_admin, s_maria, s_kat])[1 + (random() * 2)::int],
+            (array[s_admin, s_maria, s_nikos])[1 + (random() * 2)::int],
             (date '2026-01-05' + (random() * (today - date '2026-01-05' - 1))::int)::timestamp at time zone tz + ((10 + (random() * 9)::int) || ' hours')::interval);
   end loop;
   insert into appointment_consumables (clinic_id, appointment_id, patient_id, item_name, quantity, unit, created_by, created_at)
@@ -606,8 +695,8 @@ begin
 
   insert into pipeline_deals (clinic_id, patient_id, patient_name, phone, service_name, value, stage, probability, source, notes, assigned_to, expected_close, created_at)
     select demo, p.id, p.name, p.phone,
-      (array['Full Body Γυναικείο - Alexandrite Laser','Πακέτο 6 Υδροδερμοαπόξεσης','Μεσοθεραπεία με Dermapen ×4','Πόδια Ανδρικά - Alexandrite Laser','Peeling Σώματος - Ενυδάτωση - Μασάζ','Full Body Ανδρικό - Alexandrite Laser','Retinal Shine by Medik8 ×3','Πακέτο Laser Μασχάλες + Μπικίνι'])[rn],
-      (array[1860, 540, 360, 1044, 216, 2010, 240, 620])[rn],
+      (array['Fractional CO2 Laser Ουλών Ακμής ×3','Πακέτο 6 συνεδριών Laser — Πόδια Ολόκληρα','Botox Full Face','PRP Τριχωτού ×4','Χαρτογράφηση Σπίλων (οικογένεια, 3 άτομα)','Laser Αφαίρεση Τατουάζ ×6','Skin Boosters (Profhilo) ×2','Botox Υπεριδρωσίας Μασχαλών'])[rn],
+      (array[945, 816, 380, 790, 360, 810, 560, 400])[rn],
       (array['lead','lead','consultation','consultation','proposal','won','lost','lead'])[rn],
       (array[20, 20, 40, 40, 60, 100, 0, 20])[rn],
       p.source,
@@ -621,7 +710,7 @@ begin
     union all select demo, (select id from tmp_p where i = 51), (select id from tmp_p where i = 9), 'Σύζυγοι';
 
   insert into activity_log (clinic_id, patient_id, user_id, event_type, event_data, created_at)
-    select demo, a.patient_id, (array[s_admin, s_maria, s_sofia, s_kat])[1 + (random() * 3)::int], 'appointment_status_changed',
+    select demo, a.patient_id, (array[s_admin, s_maria, s_sofia, s_nikos])[1 + (random() * 3)::int], 'appointment_status_changed',
            jsonb_build_object('appointment_id', a.id, 'from', 'booked', 'to', a.status, 'start_time', a.start_time, 'service_name', a.service_name),
            a.start_time - ((1 + (random() * 2)::int) || ' days')::interval
     from appointments a where a.clinic_id = demo and a.status in ('cancelled','no_show') and a.start_time >= '2026-08-01' and a.start_time < now();
@@ -633,7 +722,7 @@ begin
            row_number() over (partition by a.patient_id order by a.start_time desc) rn
     from appointments a join tmp_p p on p.id = a.patient_id join services s on s.clinic_id = demo and s.name = a.service_name
     where a.clinic_id = demo and a.status = 'completed' and a.start_time >= '2026-03-01' and p.i in (2,5,7,9,12,16,19,25,29,52)
-      and s.category in (cats[1], cats[2], cats[3], cats[6])
+      and s.category in (cats[2], cats[3], cats[4])
   loop
     continue when pr.rn > 2;
     for k in 1..2 loop
@@ -647,7 +736,7 @@ begin
       values ('patient-photos', demo || '/' || pr.patient_id || '/' || photo_ts || '_demo_' || case when k = 1 then 'before' else 'after' end || '.svg', 'photo',
               jsonb_build_object('label', case when k = 1 then 'ΠΡΙΝ' else 'ΜΕΤΑ' end, 'after', k = 2,
                 'service', pr.service_name, 'date', to_char(pr.start_time at time zone tz, 'DD/MM/YYYY'),
-                'variant', case when pr.category in (cats[3], cats[6]) then 'laser' else 'face' end, 'seed', pr.i * 10 + pr.rn));
+                'variant', case when pr.service_name like laser_prefix || '%' then 'laser' else 'face' end, 'seed', pr.i * 10 + pr.rn));
     end loop;
   end loop;
 
@@ -655,8 +744,8 @@ begin
   insert into tmp_ex values
     (1, 1, '2026-05-14', 'Γενική Αίματος', 'Geniki_Aimatos_2026-05.svg', 'Ήπια έλλειψη βιταμίνης D. Λοιπές παράμετροι εντός φυσιολογικών ορίων.', true,
       '[["Αιμοσφαιρίνη (Hb)","13.4","g/dL","12.0 – 15.5"],["Αιματοκρίτης (Hct)","40.1","%","36 – 46"],["Λευκά (WBC)","6.2","K/μL","4.0 – 10.5"],["Αιμοπετάλια (PLT)","245","K/μL","150 – 400"],["Σίδηρος (Fe)","78","μg/dL","50 – 170"],["Φερριτίνη","34","ng/mL","15 – 150"],["Γλυκόζη νηστείας","88","mg/dL","70 – 100"],["Βιταμίνη D (25-OH)","24 ↓","ng/mL","30 – 100"]]'),
-    (2, 1, '2026-09-02', 'Βιοχημικός Έλεγχος', 'Vioximikos_2026-09.svg', 'Φυσιολογικό λιπιδαιμικό προφίλ. Ηπατική και νεφρική λειτουργία εντός ορίων.', false,
-      '[["Χοληστερόλη ολική","198","mg/dL","< 200"],["HDL","62","mg/dL","> 45"],["LDL","118","mg/dL","< 130"],["Τριγλυκερίδια","96","mg/dL","< 150"],["SGOT (AST)","21","U/L","< 35"],["SGPT (ALT)","19","U/L","< 35"],["Κρεατινίνη","0.8","mg/dL","0.5 – 1.1"],["TSH","2.1","μIU/mL","0.4 – 4.0"]]'),
+    (2, 1, '2026-09-02', 'Ιστολογική Εξέταση (Βιοψία Δέρματος)', 'Istologiki_Viopsia_2026-09.svg', 'Καλοήθης σύνθετος μελανοκυτταρικός σπίλος, πλήρως εξαιρεθείς. Δεν απαιτείται περαιτέρω θεραπεία — κλινική παρακολούθηση.', false,
+      '[["Εντόπιση","Ράχη, δεξιά ωμοπλάτη","—","—"],["Είδος δείγματος","Εκτομή ατράκτου 8×4 mm","—","—"],["Μακροσκοπικά","Καφέ βλατίδα 5 mm, σαφή όρια","—","—"],["Μικροσκοπικά","Φωλεές μελανοκυττάρων χωρίς ατυπία","—","—"],["Διάγνωση","Σύνθετος μελανοκυτταρικός σπίλος","—","—"],["Όρια εκτομής","Ελεύθερα (> 1 mm)","—","—"],["Κακοήθεια","Δεν ανευρέθη","—","—"],["Σύσταση","Επανέλεγχος χαρτογράφησης σε 12 μήνες","—","—"]]'),
     (3, 3, '2026-04-20', 'Ορμονολογικός Έλεγχος', 'Ormonologikos_2026-04.svg', 'Ορμονολογικός έλεγχος εντός φυσιολογικών ορίων. Δεν προκύπτει αντένδειξη για θεραπείες προσώπου.', true,
       '[["TSH","1.8","μIU/mL","0.4 – 4.0"],["FT4","1.2","ng/dL","0.8 – 1.8"],["Προλακτίνη","14","ng/mL","4 – 23"],["Τεστοστερόνη ολική","38","ng/dL","15 – 70"],["DHEA-S","210","μg/dL","35 – 430"],["Ινσουλίνη νηστείας","9.5","μIU/mL","2.6 – 24.9"],["Οιστραδιόλη (E2)","85","pg/mL","ανάλογα φάσης"],["Βιταμίνη Β12","410","pg/mL","200 – 900"]]'),
     (4, 5, '2026-06-11', 'Βιοχημικός Έλεγχος', 'Vioximikos_2026-06.svg', 'Χαμηλή φερριτίνη — συνιστάται επανέλεγχος σε 3 μήνες.', true,

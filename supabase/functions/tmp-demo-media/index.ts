@@ -89,7 +89,7 @@ function examSvg(p: { patient: string; dob: string; date: string; type: string; 
 <rect x="20" y="20" width="${W - 40}" height="${H - 40}" fill="#fff" stroke="#d1d5db"/>
 <text x="60" y="80" font-size="26" font-weight="700" fill="#111">Βιοπαθολογικό Εργαστήριο «Υγεία Demo»</text>
 <text x="60" y="106" font-size="13" fill="#666">Λ. Βάρης-Κορωπίου 120, Κορωπί · Τηλ. 210 000 0000 · Δείγμα επίδειξης — μη πραγματικά αποτελέσματα</text>
-<line x1="60" y1="124" x2="740" y2="124" stroke="#2B6CB0" stroke-width="3"/>
+<line x1="60" y1="124" x2="740" y2="124" stroke="#1F6F8B" stroke-width="3"/>
 <text x="60" y="166" font-size="16" fill="#222"><tspan font-weight="700">Ασθενής:</tspan> ${esc(p.patient)}</text>
 <text x="440" y="166" font-size="16" fill="#222"><tspan font-weight="700">Ημ. Γέννησης:</tspan> ${esc(p.dob)}</text>
 <text x="60" y="194" font-size="16" fill="#222"><tspan font-weight="700">Ημ. Εξέτασης:</tspan> ${esc(p.date)}</text>
@@ -106,7 +106,7 @@ ${lines.map((l, i) => `<text x="130" y="${cy + i * 22}" font-size="15" fill="#33
 <text x="400" y="600" text-anchor="middle" font-size="140" font-weight="700" fill="#b91c1c" opacity="0.07" transform="rotate(-25 400 600)">DEMO</text>
 <line x1="60" y1="${H - 110}" x2="740" y2="${H - 110}" stroke="#e5e7eb"/>
 <text x="60" y="${H - 84}" font-size="12" fill="#888">Εικονικό έγγραφο για σκοπούς επίδειξης του Medi360 CRM.</text>
-<text x="60" y="${H - 64}" font-size="12" fill="#888">Υπογραφή: Δρ. Α. Δημόπουλος, Βιοπαθολόγος (demo)</text>
+<text x="60" y="${H - 64}" font-size="12" fill="#888">Υπογραφή: Δρ. Α. Δημόπουλος, Παθολογοανατόμος / Βιοπαθολόγος (demo)</text>
 </svg>`;
 }
 
