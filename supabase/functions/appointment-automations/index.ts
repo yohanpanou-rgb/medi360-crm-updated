@@ -251,7 +251,7 @@ const SMS_LINK_TOKEN: Record<string, string> = {
   review_request: '{review_link}',
 };
 
-interface SmsAutomationConfig { enabled?: boolean; text?: string }
+interface SmsAutomationConfig { enabled?: boolean; text?: string; channel?: string }
 
 function smsConfigFor(settings: Record<string, unknown> | undefined, key: string): { enabled: boolean; text: string } {
   const all = (settings && (settings.sms_templates as Record<string, SmsAutomationConfig> | undefined)) || {};
@@ -259,6 +259,27 @@ function smsConfigFor(settings: Record<string, unknown> | undefined, key: string
   return {
     enabled: cfg.enabled !== false,
     text: (cfg.text && cfg.text.trim()) || SMS_DEFAULT_TEMPLATES[key],
+  };
+}
+
+// Πολιτική καναλιού ανά μήνυμα (clinics.settings.sms_templates[key].channel):
+//   'both'           email + SMS (προεπιλογή — η μέχρι τώρα συμπεριφορά)
+//   'email'          μόνο email (SMS off)
+//   'sms'            μόνο SMS (δεν φεύγει email)
+//   'email_else_sms' email αν υπάρχει έγκυρο email, αλλιώς SMS
+//   'off'            τίποτα (ο κύκλος καταγράφεται ως 'disabled' για να μην ξαναδοκιμάζει)
+// Παλιές ρυθμίσεις χωρίς channel: enabled=false σήμαινε «χωρίς SMS» → 'email'.
+type ChannelPolicy = { email: boolean; sms: boolean; emailElseSms: boolean; off: boolean; name: string };
+function channelPolicyFor(settings: Record<string, unknown> | undefined, key: string): ChannelPolicy {
+  const all = (settings && (settings.sms_templates as Record<string, SmsAutomationConfig> | undefined)) || {};
+  const cfg = all[key] || {};
+  const ch = cfg.channel || (cfg.enabled === false ? 'email' : 'both');
+  return {
+    name: ch,
+    off: ch === 'off',
+    email: ch === 'both' || ch === 'email' || ch === 'email_else_sms',
+    sms: ch === 'both' || ch === 'sms',
+    emailElseSms: ch === 'email_else_sms',
   };
 }
 
@@ -481,7 +502,7 @@ Deno.serve(async (req: Request) => {
     const alreadyDone = async (a: Appt, type: string) => {
       const { data } = await supabase.from('communication_log').select('id')
         .eq('appointment_id', a.id).eq('automation_type', type).eq('cycle', a.start_time)
-        .in('status', ['sent', 'no_email', 'no_set', 'failed_final']).limit(1);
+        .in('status', ['sent', 'no_email', 'no_set', 'failed_final', 'disabled']).limit(1);
       return !!(data && data.length);
     };
 
@@ -570,8 +591,11 @@ Deno.serve(async (req: Request) => {
       const cancelLink = `${CONFIRM_URL}?id=${first.id}&ts=${ts}&cancel=1`;
       const icsUrl = `${CONFIRM_URL}?id=${first.id}&ts=${ts}&ics=1`;
 
+      const pol = channelPolicyFor(clinicSettings, 'confirmation_request');
+      if (pol.off) { for (const a of pending) await log(a, 'confirmation_request', channel, 'disabled'); return; }
+      const emailOk = isValidEmail(first.patients && first.patients.email);
       const smsCfg = smsConfigFor(clinicSettings, 'confirmation_request');
-      if (smsCfg.enabled) {
+      if (pol.sms || (pol.emailElseSms && !emailOk)) {
         const smsPhone = first.patients && first.patients.phone;
         const smsLink = await makeShortLink(supabase, first.id, ts, 'confirm');
         const smsMsg = fillSmsTemplate(smsCfg.text, {
@@ -582,6 +606,12 @@ Deno.serve(async (req: Request) => {
         }, SMS_LINK_TOKEN.confirmation_request, smsLink);
         const smsResult = await sendSms(smsPhone, smsMsg);
         for (const a of pending) await logSms(a, 'confirmation_request', smsPhone || '', smsMsg, smsResult.ok, smsResult.error);
+        if (!pol.email || (pol.emailElseSms && !emailOk)) {
+          // Μόνο SMS για αυτό το μήνυμα: ο κύκλος κλείνει εδώ (χωρίς email).
+          for (const a of pending) await log(a, 'confirmation_request', 'sms', smsResult.ok ? 'sent' : 'failed', { metadata: { sms_only: true, grouped: sorted.length }, error: smsResult.ok ? null : (smsResult.error || null) });
+          if (smsResult.ok) results.confirmations++; else results.errors++;
+          return;
+        }
       }
 
       const email = first.patients && first.patients.email;
@@ -621,8 +651,11 @@ Deno.serve(async (req: Request) => {
       };
 
       const insTs = Math.floor(new Date(a.start_time).getTime() / 1000);
+      const insPol = channelPolicyFor(clinicSettings, 'instructions');
+      if (insPol.off) { await logAll('disabled'); return; }
+      const insEmailOk = isValidEmail(a.patients && a.patients.email);
       const insCfg = smsConfigFor(clinicSettings, 'instructions');
-      if (insCfg.enabled) {
+      if (insPol.sms || (insPol.emailElseSms && !insEmailOk)) {
         const insLink = await makeShortLink(supabase, a.id, insTs, 'instructions');
         const smsPhone = a.patients && a.patients.phone;
         const smsMsg = fillSmsTemplate(insCfg.text, {
@@ -633,6 +666,11 @@ Deno.serve(async (req: Request) => {
         }, SMS_LINK_TOKEN.instructions, insLink);
         const smsResult = await sendSms(smsPhone, smsMsg);
         await logSms(a, 'instructions', smsPhone || '', smsMsg, smsResult.ok, smsResult.error);
+        if (!insPol.email || (insPol.emailElseSms && !insEmailOk)) {
+          await logAll(smsResult.ok ? 'sent' : 'failed', { metadata: { sms_only: true, instruction_set: set ? set.name : null, grouped: logGroup.length }, error: smsResult.ok ? null : (smsResult.error || null) });
+          if (smsResult.ok) results.instructions++; else results.errors++;
+          return;
+        }
       }
 
       const email = a.patients && a.patients.email;
@@ -671,8 +709,11 @@ Deno.serve(async (req: Request) => {
         for (const g of logGroup) await log(g, 'review_request', channel, status, extra);
       };
 
+      const revPol = channelPolicyFor(clinicSettings, 'review_request');
+      if (revPol.off) { await logAll('disabled'); return; }
+      const revEmailOk = isValidEmail(a.patients && a.patients.email);
       const revCfg = smsConfigFor(clinicSettings, 'review_request');
-      if (revCfg.enabled) {
+      if (revPol.sms || (revPol.emailElseSms && !revEmailOk)) {
         const smsPhone = a.patients && a.patients.phone;
         const smsMsg = fillSmsTemplate(revCfg.text, {
           '{name}': (a.patients && a.patients.full_name) || '',
@@ -682,6 +723,11 @@ Deno.serve(async (req: Request) => {
         }, SMS_LINK_TOKEN.review_request, reviewLink);
         const smsResult = await sendSms(smsPhone, smsMsg);
         await logSms(a, 'review_request', smsPhone || '', smsMsg, smsResult.ok, smsResult.error);
+        if (!revPol.email || (revPol.emailElseSms && !revEmailOk)) {
+          await logAll(smsResult.ok ? 'sent' : 'failed', { metadata: { sms_only: true, grouped: logGroup.length }, error: smsResult.ok ? null : (smsResult.error || null) });
+          if (smsResult.ok) results.review_requests = (results.review_requests || 0) + 1; else results.errors++;
+          return;
+        }
       }
 
       const email = a.patients && a.patients.email;
@@ -708,8 +754,11 @@ Deno.serve(async (req: Request) => {
       const bookTs = Math.floor(new Date(a.start_time).getTime() / 1000);
       const bookIcsUrl = `${CONFIRM_URL}?id=${a.id}&ts=${bookTs}&ics=1`;
 
+      const bookPol = channelPolicyFor(clinicSettings, 'booking_confirmation');
+      if (bookPol.off) { await log(a, 'booking_confirmation', channel, 'disabled'); return; }
+      const bookEmailOk = isValidEmail(a.patients && a.patients.email);
       const bookCfg = smsConfigFor(clinicSettings, 'booking_confirmation');
-      if (bookCfg.enabled) {
+      if (bookPol.sms || (bookPol.emailElseSms && !bookEmailOk)) {
         const smsPhone = a.patients && a.patients.phone;
         const smsIcsLink = await makeShortLink(supabase, a.id, bookTs, 'ics');
         const smsMsg = fillSmsTemplate(bookCfg.text, {
@@ -720,6 +769,11 @@ Deno.serve(async (req: Request) => {
         }, SMS_LINK_TOKEN.booking_confirmation, smsIcsLink);
         const smsResult = await sendSms(smsPhone, smsMsg);
         await logSms(a, 'booking_confirmation', smsPhone || '', smsMsg, smsResult.ok, smsResult.error);
+        if (!bookPol.email || (bookPol.emailElseSms && !bookEmailOk)) {
+          await log(a, 'booking_confirmation', 'sms', smsResult.ok ? 'sent' : 'failed', { metadata: { sms_only: true }, error: smsResult.ok ? null : (smsResult.error || null) });
+          if (smsResult.ok) results.booking_confirmations = (results.booking_confirmations || 0) + 1; else results.errors++;
+          return;
+        }
       }
 
       const email = a.patients && a.patients.email;

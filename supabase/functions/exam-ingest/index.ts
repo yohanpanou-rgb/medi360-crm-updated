@@ -82,9 +82,21 @@ Deno.serve(async (req: Request) => {
       }
 
       const { data: patients } = await supabase.from('patients')
-        .select('id').eq('clinic_id', cid).ilike('email', senderEmail).limit(1);
+        .select('id,gdpr_signed').eq('clinic_id', cid).ilike('email', senderEmail).limit(1);
       const patientId = patients && patients[0] && patients[0].id;
       if (!patientId) return { messageId: row.messageId, filename: row.filename, ok: false, reason: 'no_patient' };
+
+      // 🔒 Χωρίς υπογεγραμμένο GDPR δεν αποθηκεύουμε δεδομένα υγείας. Επιστρέφει
+      // ok:false ώστε το Apps Script να ΜΗΝ σημειώσει το email ως synced — μόλις
+      // υπογράψει ο ασθενής, το επόμενο τρέξιμο το εισάγει κανονικά. Καταγράφεται
+      // στο activity_log για να φαίνεται στην καρτέλα ότι κάτι περιμένει.
+      if (!patients[0].gdpr_signed) {
+        await supabase.from('activity_log').insert({
+          clinic_id: cid, patient_id: patientId, event_type: 'exam_blocked_no_gdpr',
+          event_data: { filename: row.filename, sender_email: senderEmail, message_id: row.messageId },
+        }).then(() => {}, () => {});
+        return { messageId: row.messageId, filename: row.filename, ok: false, reason: 'no_gdpr' };
+      }
 
       const { data: existing } = await supabase.from('patient_exams')
         .select('id').eq('patient_id', patientId).eq('file_name', row.filename).limit(1);
