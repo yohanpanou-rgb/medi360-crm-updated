@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="el">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Οδηγίες Πρόσβασης — Beauty Line</title>
+</head>
+<body style="margin:0;font-family:Arial,Helvetica,sans-serif;background:#FAF3F6;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;">
+  <div style="max-width:460px;width:100%;background:#fff;border-radius:18px;overflow:hidden;box-shadow:0 10px 40px rgba(196,97,138,.18);">
+    <div id="band" style="background:#C4618A;padding:26px;text-align:center;">
+      <div id="logo"></div>
+      <div style="font-size:40px;line-height:1;">🅿️</div>
+      <div id="title" style="font-size:20px;font-weight:bold;color:#fff;margin-top:8px;">Πώς θα μας βρείτε</div>
+    </div>
+    <div style="padding:24px 26px;font-size:15px;line-height:1.7;color:#333;">
+      <div id="address-block" style="display:none;margin-bottom:16px;">
+        <div style="font-size:12px;font-weight:bold;color:#8A6070;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">Διεύθυνση</div>
+        <div id="address" style="font-size:15px;font-weight:600;"></div>
+        <a id="maps-link" href="#" target="_blank" rel="noopener" style="display:inline-block;margin-top:10px;background:#185FA5;color:#fff;text-decoration:none;font-size:13px;font-weight:bold;padding:9px 18px;border-radius:22px;">🗺️ Google Maps</a>
+      </div>
+      <div id="body"></div>
+      <div id="footer" style="margin-top:20px;font-size:12px;color:#8A6070;text-align:center;">Beauty Line by Lina Panou</div>
+    </div>
+  </div>
+<script>
+  function esc(s) {
+    return (s == null ? '' : String(s)).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  var p = new URLSearchParams(location.search);
+  var address = p.get('address') || '';
+  var text = p.get('text') || '';
+  var brandColor = /^#[0-9a-fA-F]{3,8}$/.test(p.get('color') || '') ? p.get('color') : '#C4618A';
+  var brandLogo = p.get('logo') || '';
+
+  document.getElementById('band').style.background = brandColor;
+  document.getElementById('footer').textContent = p.get('brand') || 'Beauty Line by Lina Panou';
+  document.title = 'Οδηγίες Πρόσβασης — ' + (p.get('brand') || 'Beauty Line');
+  if (brandLogo && /^https:\/\//i.test(brandLogo)) {
+    var img = document.createElement('img');
+    img.src = brandLogo;
+    img.alt = p.get('brand') || 'Beauty Line by Lina Panou';
+    img.style.maxHeight = '40px';
+    img.style.marginBottom = '8px';
+    document.getElementById('logo').appendChild(img);
+  }
+
+  if (address) {
+    document.getElementById('address').textContent = address;
+    document.getElementById('maps-link').href = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(address);
+    document.getElementById('address-block').style.display = 'block';
+  }
+
+  if (text) {
+    var items = text.split(/•|\r?\n/).map(function (s) { return s.trim(); }).filter(Boolean);
+    var rows = items.map(function (item) {
+      return '<li style="margin:0 0 6px;">' + esc(item) + '</li>';
+    }).join('');
+    document.getElementById('body').innerHTML = '<div style="font-size:14px;font-weight:bold;color:#185FA5;margin:0 0 8px;">🅿️ Οδηγίες πρόσβασης</div>' +
+      '<ul style="margin:0;padding-left:20px;background:#E6F1FB;border-radius:12px;padding:14px 18px 14px 30px;font-size:13.5px;color:#333;">' + rows + '</ul>';
+  } else if (!address) {
+    document.getElementById('body').innerHTML = '<p style="color:#8A6070;text-align:center;">Δεν υπάρχουν ειδικές οδηγίες πρόσβασης.</p>';
+  }
+</script>
+</body>
+</html>

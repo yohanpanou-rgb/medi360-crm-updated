@@ -841,3 +841,10 @@ select 'a787b766-9d23-45b2-9660-7bb480856a1b', p.id, 'exam_blocked_no_gdpr',
        now() - interval '2 days'
 from p
 where not exists (select 1 from public.activity_log a where a.patient_id=p.id and a.event_type='exam_blocked_no_gdpr');
+
+-- ── 17. Οδηγίες πρόσβασης/parking (clinics.settings.access_instructions) ──────
+update public.clinics set settings = jsonb_set(coalesce(settings,'{}'::jsonb), '{access_instructions}',
+  to_jsonb($$Δωρεάν πάρκινγκ επί της Λεωφ. Βασιλέως Κωνσταντίνου, ακριβώς έξω από την είσοδο
+Πάρκινγκ Δημαρχείου Κορωπίου, 3 λεπτά με τα πόδια (πληρωμένο)
+Στάση λεωφορείου «Κορωπί — Κέντρο», απέναντι από την κλινική$$::text))
+where id='a787b766-9d23-45b2-9660-7bb480856a1b';

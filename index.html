@@ -7512,6 +7512,19 @@ function renderSettings() {
         </div>
       </div>
 
+      <!-- ΟΔΗΓΙΕΣ ΠΡΟΣΒΑΣΗΣ / PARKING -->
+      <div class="card">
+        <div class="card-header"><span class="card-title">🅿️ Οδηγίες Πρόσβασης &amp; Parking</span></div>
+        <div style="padding:16px">
+          <div style="font-size:12px;color:var(--text-2);margin-bottom:14px">Εμφανίζεται στο email επιβεβαίωσης ραντεβού και στο email κλεισίματος ραντεβού, δίπλα στη διεύθυνση. Μία γραμμή ανά τρόπο πρόσβασης (π.χ. parking, ΜΜΜ). Για να εμφανιστεί σύνδεσμος και στο SMS, πρόσθεσε το <code>{access_link}</code> στο κείμενο SMS επιβεβαίωσης/κλεισίματος (καρτέλα SMS &amp; Αυτοματισμοί) — χωρίς αυτό, τα SMS μένουν όπως είναι σήμερα.</div>
+          <div class="form-group">
+            <label class="form-label">Οδηγίες (μία γραμμή ανά σημείο)</label>
+            <textarea class="form-control" id="access-instructions" rows="4" placeholder="π.χ.&#10;Δωρεάν πάρκινγκ στην οδό Χ, 50μ από την είσοδο&#10;Πάρκινγκ ΟΑΣΘ πλατεία Υ (πληρωμένο)&#10;Στάση λεωφορείου 12, απέναντι από την είσοδο">${esc((c&&c.settings&&c.settings.access_instructions)||'')}</textarea>
+          </div>
+          <button class="btn btn-primary" id="save-access-instructions">Αποθήκευση</button>
+        </div>
+      </div>
+
       <!-- ΖΗΤΗΣΗ ΑΞΙΟΛΟΓΗΣΗΣ -->
       <div class="card">
         <div class="card-header"><span class="card-title">⭐ Ζήτηση Αξιολόγησης</span></div>
@@ -9426,6 +9439,23 @@ function bindEvents() {
     if (S.clinic) S.clinic.settings = settings;
     _sbs.textContent='✓ Αποθηκεύτηκε!';
     setTimeout(()=>{ _sbs.textContent='Αποθήκευση'; }, 2000);
+  });
+
+  // Save access/parking instructions — εμφανίζονται στα emails επιβεβαίωσης/
+  // κλεισίματος ραντεβού δίπλα στη διεύθυνση (βλ. accessInstructionsHtml στο
+  // appointment-automations edge function). Χωρίς αυτές, καμία αλλαγή στα
+  // υπάρχοντα emails/SMS.
+  const _sai = document.getElementById('save-access-instructions');
+  if (_sai) _sai.addEventListener('click', async () => {
+    const text = document.getElementById('access-instructions');
+    const settings = Object.assign({}, (S.clinic&&S.clinic.settings)||{}, {
+      access_instructions: text ? text.value.trim() : '',
+    });
+    const {error} = await sb.from('clinics').update({settings}).eq('id',clinicId());
+    if (error) { alert(error.message); return; }
+    if (S.clinic) S.clinic.settings = settings;
+    _sai.textContent='✓ Αποθηκεύτηκε!';
+    setTimeout(()=>{ _sai.textContent='Αποθήκευση'; }, 2000);
   });
 
   // Save review-request settings (ζήτηση αξιολόγησης — παραμένει ανενεργή

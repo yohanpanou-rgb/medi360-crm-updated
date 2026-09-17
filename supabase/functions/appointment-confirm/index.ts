@@ -75,16 +75,17 @@ function icsEsc(s: string): string {
   return (s || '').replace(/\\/g, '\\\\').replace(/([,;])/g, '\\$1').replace(/\n/g, '\\n');
 }
 
-async function loadBrand(supabase: ReturnType<typeof createClient>, clinicId: string): Promise<{ brand: Brand; address: string }> {
+async function loadBrand(supabase: ReturnType<typeof createClient>, clinicId: string): Promise<{ brand: Brand; address: string; accessInstructions: string }> {
   const { data: clinicRow } = await supabase.from('clinics').select('*').eq('id', clinicId).single();
-  const cRow = (clinicRow || {}) as { address?: string; name?: string; settings?: { address?: string; brand_name?: string; brand_color?: string; brand_logo_url?: string } };
+  const cRow = (clinicRow || {}) as { address?: string; name?: string; settings?: { address?: string; brand_name?: string; brand_color?: string; brand_logo_url?: string; access_instructions?: string } };
   const address = cRow.address || (cRow.settings && cRow.settings.address) || cRow.name || DEFAULT_BRAND.name;
   const brand: Brand = {
     name: (cRow.settings && cRow.settings.brand_name) || cRow.name || DEFAULT_BRAND.name,
     color: (cRow.settings && cRow.settings.brand_color) || DEFAULT_BRAND.color,
     logoUrl: (cRow.settings && cRow.settings.brand_logo_url) || '',
   };
-  return { brand, address };
+  const accessInstructions = (cRow.settings && cRow.settings.access_instructions) || '';
+  return { brand, address, accessInstructions };
 }
 
 Deno.serve(async (req: Request) => {
@@ -155,6 +156,7 @@ Deno.serve(async (req: Request) => {
   let ts = url.searchParams.get('ts') || '';
   let wantsIcs = url.searchParams.get('ics') === '1';
   let viewInstructions = url.searchParams.get('view') === 'instructions';
+  let viewAccess = url.searchParams.get('view') === 'access';
   const wantsCancel = url.searchParams.get('cancel') === '1';
 
   // ── Σύντομος σύνδεσμος SMS (?c=<8-char code>) — λύνεται σε id/ts/kind μέσω
@@ -170,6 +172,7 @@ Deno.serve(async (req: Request) => {
     ts = String(codeRow.ts);
     if (codeRow.kind === 'ics') wantsIcs = true;
     else if (codeRow.kind === 'instructions') viewInstructions = true;
+    else if (codeRow.kind === 'access') viewAccess = true;
   }
 
   if (!/^[0-9a-f-]{36}$/i.test(id) || !/^\d+$/.test(ts)) {
@@ -181,7 +184,20 @@ Deno.serve(async (req: Request) => {
     .eq('id', id).single();
   if (!appt) return redirectPage('notfound', DEFAULT_BRAND);
 
-  const { brand, address } = await loadBrand(supabase, appt.clinic_id);
+  const { brand, address, accessInstructions } = await loadBrand(supabase, appt.clinic_id);
+
+  // ── Οδηγίες πρόσβασης/parking (σύνδεσμος SMS, {access_link}) — read-only,
+  // ίδια λογική με τις οδηγίες πριν/μετά παρακάτω: redirect σε στατική σελίδα
+  // με όλα τα στοιχεία στο URL, ώστε το SMS να κρατάει μόνο το μικρό σύνδεσμο.
+  if (viewAccess) {
+    const u = new URL(SITE_URL + '/access.html');
+    u.searchParams.set('address', address);
+    if (accessInstructions) u.searchParams.set('text', accessInstructions);
+    u.searchParams.set('brand', brand.name);
+    u.searchParams.set('color', brand.color);
+    if (brand.logoUrl) u.searchParams.set('logo', brand.logoUrl);
+    return new Response(null, { status: 302, headers: { Location: u.toString() } });
+  }
 
   // ── Οδηγίες πριν/μετά (σύνδεσμος SMS3) — ο ίδιος μηχανισμός με τα
   // confirm/cancel links: το SMS κρατάει μόνο αυτό το ΜΙΚΡΟ σύνδεσμο, εδώ
