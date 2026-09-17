@@ -526,8 +526,12 @@ const ALL_FIXED_THERAPIST_NAMES = ['Λίνα','Χριστιάνα','Αθανασ
 function activeFixedTherapists(staffList, keepName) {
   return ALL_FIXED_THERAPIST_NAMES.filter(n => {
     if (keepName && sameStaffName(n, keepName)) return true;
+    // Στήλη σταθερή ΜΟΝΟ αν υπάρχει ΠΡΑΓΜΑΤΙΚΟ ενεργό προσωπικό με αυτό το
+    // όνομα ΣΕ ΑΥΤΗ την κλινική — αλλιώς (π.χ. demo clinic, όπου αυτά τα
+    // ονόματα ανήκουν στη Beauty Line και δεν υπάρχουν καθόλου ως προσωπικό)
+    // η στήλη δεν πρέπει να εμφανίζεται καθόλου.
     const st = (staffList||[]).find(s=>sameStaffName(s.full_name, n));
-    return !st || st.active !== false;
+    return !!st && st.active !== false;
   });
 }
 
@@ -888,7 +892,7 @@ async function loadPageData() {
     // δωμάτιο) — για την προβολή «Ανά δωμάτιο» και τα χρώματα ανά κατηγορία.
     const [{data:rooms},{data:svcLite}] = await Promise.all([
       sb.from('clinic_rooms').select('*').eq('clinic_id',cid).order('sort_order').order('name'),
-      sb.from('services').select('id,name,category,default_room_id').eq('clinic_id',cid),
+      sb.from('services').select('id,name,category,default_room_id,price').eq('clinic_id',cid),
     ]);
     S.clinicRooms = rooms||[];
     S.clinicServicesLite = svcLite||[];
@@ -4209,21 +4213,12 @@ function renderLaserDetail() {
                   <th style="padding:8px 10px;text-align:center;color:#C4618A;font-weight:600">DCD</th>
                   <th style="padding:8px 10px;text-align:left;color:#C4618A;font-weight:600">Παρατηρήσεις</th>
                 </tr></thead>
-                <tbody>
-                  ${Array(6).fill(null).map((_,si)=>{
-                    const s=(r.sessions&&r.sessions[si])||{};
-                    return `<tr style="border-top:1px solid #FCE4EE">
-                      <td style="padding:6px 10px;text-align:center;font-weight:600;color:#C4618A">${si+1}</td>
-                      <td style="padding:4px 6px"><input type="date" value="${s.date||''}" onchange="updateSession(${ri},${si},'date',this.value)" style="font-size:11px;padding:3px 6px;border-radius:5px;border:1px solid #e8b4ca;width:100%;text-align:center"/></td>
-                      <td style="padding:4px 6px"><input type="text" value="${esc(s.spot_size||'')}" placeholder="mm" onchange="updateSession(${ri},${si},'spot_size',this.value)" style="font-size:11px;padding:3px 6px;border-radius:5px;border:1px solid #e8b4ca;width:100%;text-align:center"/></td>
-                      <td style="padding:4px 6px"><input type="text" value="${esc(s.energy||'')}" placeholder="j/cm²" onchange="updateSession(${ri},${si},'energy',this.value)" style="font-size:11px;padding:3px 6px;border-radius:5px;border:1px solid #e8b4ca;width:100%;text-align:center"/></td>
-                      <td style="padding:4px 6px"><input type="text" value="${esc(s.dcd||'')}" placeholder="DCD" onchange="updateSession(${ri},${si},'dcd',this.value)" style="font-size:11px;padding:3px 6px;border-radius:5px;border:1px solid #e8b4ca;width:100%;text-align:center"/></td>
-                      <td style="padding:4px 6px"><input type="text" value="${esc(s.notes||'')}" placeholder="..." onchange="updateSession(${ri},${si},'notes',this.value)" style="font-size:11px;padding:3px 6px;border-radius:5px;border:1px solid #e8b4ca;width:100%"/></td>
-                    </tr>`;
-                  }).join('')}
+                <tbody id="sessions-tbody-${ri}">
+                  ${(r.sessions&&r.sessions.length?r.sessions:Array(6).fill(null).map(()=>({}))).map((s,si)=>sessionRowHtml(ri,si,s)).join('')}
                 </tbody>
               </table>
             </div>
+            <button class="btn btn-ghost btn-sm" onclick="addSessionRow(${ri})" style="margin:8px 10px;border-color:#C4618A;color:#C4618A;font-size:11px">+ Προσθήκη Συνεδρίας</button>
           </div>`).join('')}
           <button class="btn btn-ghost btn-sm" onclick="addRegionRow()" style="border-color:#C4618A;color:#C4618A;align-self:flex-start">+ Προσθήκη Περιοχής</button>
         </div>
@@ -4256,6 +4251,28 @@ function selectSkinType(st) {
 function updateRegionPart(ri,val) { if(_laserRegions[ri]) _laserRegions[ri].body_part=val; }
 function updateSession(ri,si,field,val) { if(_laserRegions[ri]&&_laserRegions[ri].sessions&&_laserRegions[ri].sessions[si]) _laserRegions[ri].sessions[si][field]=val; }
 function updateRegionNotes(ri,val) { if(_laserRegions[ri]) _laserRegions[ri].notes=val; }
+function sessionRowHtml(ri,si,s) {
+  s = s||{};
+  return `<tr style="border-top:1px solid #FCE4EE">
+    <td style="padding:6px 10px;text-align:center;font-weight:600;color:#C4618A">${si+1}</td>
+    <td style="padding:4px 6px"><input type="date" value="${s.date||''}" onchange="updateSession(${ri},${si},'date',this.value)" style="font-size:11px;padding:3px 6px;border-radius:5px;border:1px solid #e8b4ca;width:100%;text-align:center"/></td>
+    <td style="padding:4px 6px"><input type="text" value="${esc(s.spot_size||'')}" placeholder="mm" onchange="updateSession(${ri},${si},'spot_size',this.value)" style="font-size:11px;padding:3px 6px;border-radius:5px;border:1px solid #e8b4ca;width:100%;text-align:center"/></td>
+    <td style="padding:4px 6px"><input type="text" value="${esc(s.energy||'')}" placeholder="j/cm²" onchange="updateSession(${ri},${si},'energy',this.value)" style="font-size:11px;padding:3px 6px;border-radius:5px;border:1px solid #e8b4ca;width:100%;text-align:center"/></td>
+    <td style="padding:4px 6px"><input type="text" value="${esc(s.dcd||'')}" placeholder="DCD" onchange="updateSession(${ri},${si},'dcd',this.value)" style="font-size:11px;padding:3px 6px;border-radius:5px;border:1px solid #e8b4ca;width:100%;text-align:center"/></td>
+    <td style="padding:4px 6px"><input type="text" value="${esc(s.notes||'')}" placeholder="..." onchange="updateSession(${ri},${si},'notes',this.value)" style="font-size:11px;padding:3px 6px;border-radius:5px;border:1px solid #e8b4ca;width:100%"/></td>
+  </tr>`;
+}
+// Επιτρέπει να προστεθεί 7η+ συνεδρία σε μια περιοχή — πριν ήταν σκληρά
+// κλειδωμένο σε ακριβώς 6 γραμμές (Array(6)) και δεν υπήρχε τρόπος να
+// καταγραφεί καμία συνεδρία πέρα από την 6η.
+function addSessionRow(ri) {
+  if (!_laserRegions[ri]) return;
+  if (!_laserRegions[ri].sessions) _laserRegions[ri].sessions = [];
+  const si = _laserRegions[ri].sessions.length;
+  _laserRegions[ri].sessions.push({date:'',spot_size:'',energy:'',dcd:'',notes:''});
+  const tbody = document.getElementById('sessions-tbody-'+ri);
+  if (tbody) tbody.insertAdjacentHTML('beforeend', sessionRowHtml(ri,si,_laserRegions[ri].sessions[si]));
+}
 function addRegionRow() {
   const newRow = {body_part:'',sessions:Array(6).fill(null).map(()=>({date:'',spot_size:'',energy:'',dcd:'',notes:''})),notes:''};
   _laserRegions.push(newRow);
@@ -4282,18 +4299,12 @@ function addRegionRow() {
           <th style="padding:8px 10px;text-align:center;color:#C4618A;font-weight:600">DCD</th>
           <th style="padding:8px 10px;text-align:left;color:#C4618A;font-weight:600">Παρατηρήσεις</th>
         </tr></thead>
-        <tbody>
-          ${Array(6).fill(null).map((_,si)=>`<tr style="border-top:1px solid #FCE4EE">
-            <td style="padding:6px 10px;text-align:center;font-weight:600;color:#C4618A">${si+1}</td>
-            <td style="padding:4px 6px"><input type="date" onchange="updateSession(${ri},${si},'date',this.value)" style="font-size:11px;padding:3px 6px;border-radius:5px;border:1px solid #e8b4ca;width:100%;text-align:center"/></td>
-            <td style="padding:4px 6px"><input type="text" placeholder="mm" onchange="updateSession(${ri},${si},'spot_size',this.value)" style="font-size:11px;padding:3px 6px;border-radius:5px;border:1px solid #e8b4ca;width:100%;text-align:center"/></td>
-            <td style="padding:4px 6px"><input type="text" placeholder="j/cm²" onchange="updateSession(${ri},${si},'energy',this.value)" style="font-size:11px;padding:3px 6px;border-radius:5px;border:1px solid #e8b4ca;width:100%;text-align:center"/></td>
-            <td style="padding:4px 6px"><input type="text" placeholder="DCD" onchange="updateSession(${ri},${si},'dcd',this.value)" style="font-size:11px;padding:3px 6px;border-radius:5px;border:1px solid #e8b4ca;width:100%;text-align:center"/></td>
-            <td style="padding:4px 6px"><input type="text" placeholder="..." onchange="updateSession(${ri},${si},'notes',this.value)" style="font-size:11px;padding:3px 6px;border-radius:5px;border:1px solid #e8b4ca;width:100%"/></td>
-          </tr>`).join('')}
+        <tbody id="sessions-tbody-${ri}">
+          ${newRow.sessions.map((s,si)=>sessionRowHtml(ri,si,s)).join('')}
         </tbody>
       </table>
-    </div>`;
+    </div>
+    <button class="btn btn-ghost btn-sm" onclick="addSessionRow(${ri})" style="margin:8px 10px;border-color:#C4618A;color:#C4618A;font-size:11px">+ Προσθήκη Συνεδρίας</button>`;
   container.appendChild(div);
 }
 
@@ -6505,7 +6516,7 @@ function printDaySchedule() {
   const dayStr = base.toDateString();
   const appts = (S.appointments||[]).filter(a=>new Date(a.start_time).toDateString()===dayStr && a.status!=='cancelled')
     .sort((a,b)=>new Date(a.start_time)-new Date(b.start_time));
-  const FIXED = ['Λίνα','Χριστιάνα','Αθανασία','Νάνσυ'];
+  const FIXED = activeFixedTherapists(S.staff);
   const canon = t => FIXED.find(f=>sameStaffName(f,t)) || t || 'Μη ανατεθειμένα';
   const groups = {};
   appts.forEach(a=>{ const k = canon(apptStaffName(a, S.staff||[])); (groups[k]=groups[k]||[]).push(a); });
@@ -6518,7 +6529,7 @@ function printDaySchedule() {
     .sub{font-size:12px;color:#666;margin-bottom:14px}h2{font-size:14px;border-bottom:2px solid #333;padding-bottom:4px;margin:18px 0 6px}
     table{width:100%;border-collapse:collapse}td,th{padding:6px 8px;border-bottom:1px solid #ddd;font-size:12px;text-align:left}
     th{background:#f3f3f3}</style></head><body>
-    <h1>Beauty Line by Lina Panou — Ημερήσιο Πρόγραμμα</h1>
+    <h1>${esc((S.clinic&&S.clinic.name)||'')} — Ημερήσιο Πρόγραμμα</h1>
     <div class="sub">${base.toLocaleDateString('el-GR',{weekday:'long',day:'numeric',month:'long',year:'numeric'})} · ${appts.length} ραντεβού</div>
     ${order.length?order.map(k=>`<h2>${esc(k)} (${groups[k].length})</h2>
     <table><tr><th style="width:60px">Ώρα</th><th>Πελάτης</th><th style="width:110px">Τηλέφωνο</th><th>Υπηρεσία</th><th style="width:60px">Διάρκεια</th></tr>
@@ -9265,6 +9276,19 @@ function bindEvents() {
           </label>
         </div>
         <div id="appt-photo-status" style="display:none;font-size:11px;color:var(--blue);margin-top:4px;text-align:center">Μεταφόρτωση...</div>`:''}`}
+        ${a.is_internal ? '' : (()=>{
+          // Αλλαγή υπηρεσίας εκ των υστέρων — π.χ. ο πελάτης τελικά έκανε άλλη
+          // θεραπεία από αυτήν με την οποία είχε κλειστεί το ραντεβού.
+          const cats = [...new Set((S.clinicServicesLite||[]).map(s=>(s.category||'Άλλο').trim()))];
+          const curKnown = (S.clinicServicesLite||[]).some(s=>s.name===a.service_name);
+          return `<div style="margin-top:8px">
+            <div style="font-size:11px;color:var(--text-2);margin-bottom:3px">Υπηρεσία</div>
+            <select id="appt-service-edit" style="width:100%;font-size:12px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-family:var(--font)">
+              ${!curKnown && a.service_name ? `<option value="${esc(a.service_name)}" selected>${esc(a.service_name)} (τρέχουσα)</option>` : ''}
+              ${cats.map(c=>`<optgroup label="${esc(c)}">${(S.clinicServicesLite||[]).filter(s=>(s.category||'Άλλο').trim()===c).map(s=>`<option value="${esc(s.name)}" ${s.name===a.service_name?'selected':''}>${esc(s.name)}</option>`).join('')}</optgroup>`).join('')}
+            </select>
+          </div>`;
+        })()}
         ${(()=>{
           // Θεραπευτής: δικό του πεδίο — η αλλαγή εδώ ισοδυναμεί με drag & drop
           // (ενημερώνει therapist_id + notes και μετακινεί την κάρτα στη στήλη του).
@@ -9383,6 +9407,21 @@ function bindEvents() {
         if (error) { alert('✗ Η αλλαγή δωματίου απέτυχε: '+error.message); return; }
         a.room_id = newRoomId;
         render();
+      });
+      // Αλλαγή υπηρεσίας από το popup — π.χ. ο πελάτης τελικά έκανε άλλη
+      // θεραπεία από αυτήν με την οποία είχε κλειστεί το ραντεβού.
+      const _sve=content.querySelector('#appt-service-edit');if(_sve)_sve.addEventListener('change', async () => {
+        const newName = _sve.value;
+        if (!newName || newName===a.service_name) return;
+        if (!confirm(`Αλλαγή υπηρεσίας σε «${newName}»;`)) { _sve.value = a.service_name; return; }
+        const svc = (S.clinicServicesLite||[]).find(s=>s.name===newName);
+        const upd = {service_name: newName};
+        if (canFin && svc && svc.price!=null && confirm(`Να ενημερωθεί και η τιμή σε ${euro(svc.price)};`)) upd.price = svc.price;
+        const {error} = await sb.from('appointments').update(upd).eq('id',a.id);
+        if (error) { alert('✗ Η αλλαγή υπηρεσίας απέτυχε: '+error.message); _sve.value = a.service_name; return; }
+        Object.assign(a, upd);
+        render();
+        const p3 = document.getElementById('appt-detail-panel'); if (p3) p3.style.display='block';
       });
       // Αλλαγή θεραπευτή από το popup — ίδια ενημέρωση με το drag & drop
       // (therapist_id + γραμμή «Προσωπικό:» στα notes), η κάρτα μετακινείται.
