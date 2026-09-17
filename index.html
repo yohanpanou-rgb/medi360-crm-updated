@@ -1285,6 +1285,10 @@ async function loadPageData() {
       S.marketingPhotos = [];
     }
   }
+  if (S.page==='marketing-campaigns') {
+    const {data:campaigns} = await sb.from('marketing_campaigns').select('*').eq('clinic_id',cid).order('created_at',{ascending:false}).limit(30);
+    S.campaignHistory = campaigns||[];
+  }
   if (S.page==='settings') {
     const {data:uc} = await sb.from('unmatched_consultations').select('*').eq('clinic_id',cid).order('received_at',{ascending:false});
     S.unmatchedConsultations = uc||[];
@@ -1661,6 +1665,7 @@ function render() {
       S.page==='product-sale' ? renderProductSale() :
       S.page==='reports' ? renderReports() :
       S.page==='marketing-gallery' ? renderMarketingGallery() :
+      S.page==='marketing-campaigns' ? renderMarketingCampaigns() :
       S.page==='staff-services' ? renderStaffServices() :
       S.page==='settings' ? renderSettings() :
       `<div class="page"><div class="empty-state"><div class="empty-icon">🚧</div><div>Σύντομα διαθέσιμο</div></div></div>`
@@ -1752,12 +1757,13 @@ function renderShell(content) {
     {page:'product-sale',icon:'🧴',label:'Πώληση Καλλυντικού',roles:['super_admin','clinic_admin','receptionist','therapist']},
     {page:'reports',icon:'▤',label:'Αναφορές',roles:['super_admin','clinic_admin']},
     {page:'marketing-gallery',icon:'📸',label:'Marketing Φωτογραφίες',roles:['super_admin','clinic_admin']},
+    {page:'marketing-campaigns',icon:'📢',label:'Μαζικά Μηνύματα',roles:['super_admin','clinic_admin']},
     {page:'staff-services',icon:'🗂',label:'Προσωπικό & Υπηρεσίες',roles:['super_admin','clinic_admin']},
     {page:'clinics',icon:'⊞',label:'Κλινικές',roles:['super_admin']},
     {page:'settings',icon:'⚙',label:'Ρυθμίσεις',roles:['super_admin','clinic_admin']},
   ].filter(n => n.roles.includes(role) && (isSuperAdmin() && !cid ? ['dashboard','clinics'].includes(n.page) : true) && isModuleEnabled(n.page));
 
-  const PAGE_TITLES = {dashboard:'Dashboard',patients:'Ασθενείς','patient-detail':'Ασθενής',appointments:'Ραντεβού',calendar:'Πρόγραμμα',pipeline:'Pipeline',clinics:'Κλινικές',sms:'SMS & Αυτοματισμοί',laser:'Laser Forms',consultations:'Consultation',consents:'Συναινέσεις','product-sale':'Πώληση Καλλυντικού',reports:'Αναφορές','marketing-gallery':'Marketing Φωτογραφίες','staff-services':'Προσωπικό & Υπηρεσίες',settings:'Ρυθμίσεις'};
+  const PAGE_TITLES = {dashboard:'Dashboard',patients:'Ασθενείς','patient-detail':'Ασθενής',appointments:'Ραντεβού',calendar:'Πρόγραμμα',pipeline:'Pipeline',clinics:'Κλινικές',sms:'SMS & Αυτοματισμοί',laser:'Laser Forms',consultations:'Consultation',consents:'Συναινέσεις','product-sale':'Πώληση Καλλυντικού',reports:'Αναφορές','marketing-gallery':'Marketing Φωτογραφίες','marketing-campaigns':'Μαζικά Μηνύματα','staff-services':'Προσωπικό & Υπηρεσίες',settings:'Ρυθμίσεις'};
 
   return `
   <div class="overlay ${S.sidebarOpen?'open':''}" id="overlay"></div>
@@ -5772,6 +5778,146 @@ function renderMarketingGallery() {
         : `<div class="empty-state"><div class="empty-icon">🔍</div><div>Κανένα ζεύγος Πριν/Μετά με αυτά τα φίλτρα.</div></div>`)
       : (photos.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:14px">${photos.map(ph=>photoCard(ph, galleryPhotoMeta(ph))).join('')}</div>`
         : `<div class="empty-state"><div class="empty-icon">🔍</div><div>Καμία φωτογραφία με αυτά τα φίλτρα.</div></div>`)}
+  </div>`;
+}
+
+// ── Μαζικά Μηνύματα (καμπάνιες μάρκετινγκ / ευχές γιορτών) ──
+// Στέλνει ΜΟΝΟ σε πελάτες με marketing_opt_in=true (η δηλωμένη συναίνεσή
+// τους από τη φόρμα ιατρικού ιστορικού). Πραγματική αποστολή γίνεται ΜΟΝΟ
+// για τη Beauty Line (ίδιος κανόνας με τους αυτοματισμούς ραντεβού) — για
+// άλλες κλινικές (π.χ. demo) το bulk-messaging edge function επιστρέφει
+// πάντα προεπισκόπηση, χωρίς πραγματική αποστολή.
+function campaignForm() {
+  if (!S.campaignForm) S.campaignForm = {name:'', channel:'email', subject:'', body:'', filterBranch:'', filterLastVisitBefore:'', filterCategory:''};
+  return S.campaignForm;
+}
+function setCampaignField(key, value) {
+  campaignForm()[key] = value;
+  S.campaignPreview = null;
+  render();
+}
+async function previewCampaignRecipients() {
+  const f = campaignForm();
+  const cid = clinicId();
+  const {data:base} = await sb.from('patients').select('id,full_name,email,phone').eq('clinic_id',cid).eq('marketing_opt_in', true);
+  let candidates = base||[];
+  if (f.filterBranch) {
+    const {data:apts} = await sb.from('appointments').select('patient_id').eq('clinic_id',cid).eq('branch_id', f.filterBranch);
+    const ids = new Set((apts||[]).map(a=>a.patient_id));
+    candidates = candidates.filter(p=>ids.has(p.id));
+  }
+  if (f.filterCategory) {
+    const names = (S.clinicServicesLite||[]).filter(s=>(s.category||'').trim()===f.filterCategory).map(s=>s.name);
+    if (names.length) {
+      const {data:apts} = await sb.from('appointments').select('patient_id').eq('clinic_id',cid).in('service_name', names);
+      const ids = new Set((apts||[]).map(a=>a.patient_id));
+      candidates = candidates.filter(p=>ids.has(p.id));
+    } else {
+      candidates = [];
+    }
+  }
+  if (f.filterLastVisitBefore && candidates.length) {
+    const ids = candidates.map(p=>p.id);
+    const {data:apts} = await sb.from('appointments').select('patient_id,start_time').eq('clinic_id',cid).neq('status','cancelled').in('patient_id', ids);
+    const lastVisit = {};
+    for (const a of (apts||[])) {
+      if (!lastVisit[a.patient_id] || a.start_time > lastVisit[a.patient_id]) lastVisit[a.patient_id] = a.start_time;
+    }
+    const cutoff = f.filterLastVisitBefore;
+    candidates = candidates.filter(p => !lastVisit[p.id] || lastVisit[p.id].slice(0,10) < cutoff);
+  }
+  S.campaignPreview = {ids: candidates.map(p=>p.id), sample: candidates.slice(0,8), count: candidates.length};
+  render();
+}
+async function sendCampaignNow() {
+  const f = campaignForm();
+  const preview = S.campaignPreview;
+  if (!f.name.trim()) return alert('Συμπλήρωσε όνομα καμπάνιας.');
+  if (!f.body.trim()) return alert('Συμπλήρωσε το κείμενο του μηνύματος.');
+  if (f.channel==='email' && !f.subject.trim()) return alert('Συμπλήρωσε θέμα email.');
+  if (!preview || !preview.count) return alert('Πάτησε πρώτα «Προεπισκόπηση παραληπτών» — δεν υπάρχουν παραλήπτες.');
+  if (!confirm(`Θα σταλεί σε ${preview.count} πελάτες μέσω ${f.channel==='email'?'email':'SMS'}. Συνέχεια;`)) return;
+  try {
+    const cid = clinicId();
+    const {data:campaign, error: insErr} = await sb.from('marketing_campaigns').insert({
+      clinic_id: cid, created_by: S.user && S.user.id, name: f.name.trim(), channel: f.channel,
+      subject: f.channel==='email' ? f.subject.trim() : null, body: f.body,
+      filters: {branch_id: f.filterBranch||null, last_visit_before: f.filterLastVisitBefore||null, category: f.filterCategory||null},
+    }).select().single();
+    if (insErr) throw new Error(insErr.message);
+    const {data, error} = await sb.functions.invoke('bulk-messaging', {body:{
+      campaign_id: campaign.id, clinic_id: cid, channel: f.channel, subject: f.subject, body: f.body, patient_ids: preview.ids,
+    }});
+    if (error) throw new Error(await extractInvokeErrorMessage(error));
+    if (data && data.error) throw new Error(data.error);
+    if (data.isRealSend) {
+      alert(`✓ Στάλθηκαν ${data.sent_count} / ${data.recipient_count}${data.failed_count?` (${data.failed_count} απέτυχαν)`:''}.`);
+    } else {
+      if (data.sample) showAutomationPreviewModal(f.channel==='email' ? {email:{subject:data.sample.subject,html:data.sample.html}} : {sms:{text:data.sample.text}});
+      alert(`🔍 Αυτή η κλινική δεν έχει ρυθμισμένους πραγματικούς αυτοματισμούς — καταγράφηκε ΠΡΟΕΠΙΣΚΟΠΗΣΗ για ${data.recipient_count} πελάτες, καμία πραγματική αποστολή.`);
+    }
+    S.campaignForm = null;
+    S.campaignPreview = null;
+    const {data:campaigns} = await sb.from('marketing_campaigns').select('*').eq('clinic_id',cid).order('created_at',{ascending:false}).limit(30);
+    S.campaignHistory = campaigns||[];
+    render();
+  } catch(e) {
+    alert('Σφάλμα: '+(e.message||e));
+  }
+}
+function renderMarketingCampaigns() {
+  if (!canSee(['super_admin','clinic_admin'])) return `<div class="page"><div class="empty-state"><div class="empty-icon">🔒</div><div>Δεν έχεις πρόσβαση</div></div></div>`;
+  const f = campaignForm();
+  const preview = S.campaignPreview;
+  const branches = S.clinicBranches||[];
+  const cats = serviceCategories();
+  const history = S.campaignHistory||[];
+  const statusLabel = {draft:'Πρόχειρο', sending:'Αποστολή…', sent:'✓ Στάλθηκε', preview:'🔍 Προεπισκόπηση'};
+  return `<div class="page">
+    <div class="page-header">
+      <div><h1 class="page-title">📢 Μαζικά Μηνύματα</h1><p class="page-sub">Καμπάνιες μάρκετινγκ ή ευχές γιορτών σε φιλτραρισμένη λίστα πελατών — μόνο σε όσους έχουν συναινέσει.</p></div>
+    </div>
+    <div class="card" style="padding:16px 18px;margin-bottom:16px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:10px">
+        <div class="form-group" style="margin:0"><label class="form-label">Όνομα καμπάνιας</label>
+          <input class="form-control" value="${esc(f.name)}" placeholder="π.χ. Ευχές Χριστουγέννων 2026" onchange="setCampaignField('name', this.value)"/></div>
+        <div class="form-group" style="margin:0"><label class="form-label">Κανάλι</label>
+          <select class="form-control" onchange="setCampaignField('channel', this.value)">
+            <option value="email" ${f.channel==='email'?'selected':''}>📧 Email</option>
+            <option value="sms" ${f.channel==='sms'?'selected':''}>📱 SMS</option>
+          </select></div>
+      </div>
+      ${f.channel==='email' ? `<div class="form-group"><label class="form-label">Θέμα email</label>
+        <input class="form-control" value="${esc(f.subject)}" placeholder="π.χ. Καλές Γιορτές από το ${esc((S.clinic&&S.clinic.name)||'')}!" onchange="setCampaignField('subject', this.value)"/></div>` : ''}
+      <div class="form-group"><label class="form-label">Κείμενο μηνύματος ${f.channel==='sms'?'(σύντομο, χωρίς τόνους θα σταλεί)':''} — μπορείς να χρησιμοποιήσεις {name} για το όνομα του πελάτη</label>
+        <textarea class="form-control" rows="${f.channel==='sms'?3:6}" placeholder="Αγαπητή/έ {name}, ..." onchange="setCampaignField('body', this.value)">${esc(f.body)}</textarea></div>
+      <div style="font-size:12px;font-weight:600;color:var(--text-2);margin:14px 0 8px">Φίλτρα παραληπτών (πάντα μόνο όσοι έχουν συναινέσει σε marketing)</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:14px">
+        <div class="form-group" style="margin:0"><label class="form-label">Υποκατάστημα</label>
+          <select class="form-control" onchange="setCampaignField('filterBranch', this.value)">
+            <option value="">Όλα</option>
+            ${branches.map(b=>`<option value="${esc(b.id)}" ${f.filterBranch===b.id?'selected':''}>${esc(b.name)}</option>`).join('')}
+          </select></div>
+        <div class="form-group" style="margin:0"><label class="form-label">Χωρίς επίσκεψη μετά από</label>
+          <input class="form-control" type="date" value="${esc(f.filterLastVisitBefore)}" onchange="setCampaignField('filterLastVisitBefore', this.value)"/></div>
+        <div class="form-group" style="margin:0"><label class="form-label">Υπηρεσία/Κατηγορία</label>
+          <select class="form-control" onchange="setCampaignField('filterCategory', this.value)">
+            <option value="">Όλες</option>
+            ${cats.map(c=>`<option value="${esc(c)}" ${f.filterCategory===c?'selected':''}>${esc(c)}</option>`).join('')}
+          </select></div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <button class="btn btn-ghost" onclick="previewCampaignRecipients()">🔍 Προεπισκόπηση παραληπτών</button>
+        ${preview ? `<span style="font-size:13px;color:var(--text-2)"><b>${preview.count}</b> παραλήπτες${preview.sample.length?' — π.χ. '+preview.sample.slice(0,3).map(p=>esc(p.full_name)).join(', '):''}</span>` : ''}
+        ${preview && preview.count ? `<button class="btn" style="background:#0891B2;color:#fff" onclick="sendCampaignNow()">📤 Αποστολή</button>` : ''}
+      </div>
+    </div>
+    <div class="card" style="padding:14px 16px">
+      <div style="font-size:13px;font-weight:600;margin-bottom:10px">Ιστορικό καμπανιών</div>
+      ${history.length ? `<table class="data-table"><thead><tr><th>Όνομα</th><th>Κανάλι</th><th>Παραλήπτες</th><th>Κατάσταση</th><th>Ημερομηνία</th></tr></thead><tbody>
+        ${history.map(c=>`<tr><td>${esc(c.name)}</td><td>${c.channel==='email'?'📧 Email':'📱 SMS'}</td><td>${c.sent_count||0}/${c.recipient_count||0}</td><td>${statusLabel[c.status]||c.status}</td><td>${fmtDt(c.created_at)}</td></tr>`).join('')}
+      </tbody></table>` : `<div class="empty-state"><div class="empty-icon">📢</div><div>Καμία καμπάνια ακόμα.</div></div>`}
+    </div>
   </div>`;
 }
 
