@@ -2416,11 +2416,46 @@ function renderPatientPhotosTab() {
   </div>`;
 }
 
+// Προβολή εξετάσεων: «Λίστα» (όπως πάντα), «Ανά κατηγορία» (ομάδες βάσει του
+// είδους που έδωσε η AI ταξινόμηση) ή «Ανά ημερομηνία» (ομάδες ανά ημέρα εξέτασης).
+function patExamView() {
+  if (!S.patExamView) { try { S.patExamView = localStorage.getItem('patExamView') || 'list'; } catch(e) { S.patExamView = 'list'; } }
+  return S.patExamView;
+}
+function setPatExamView(v) { S.patExamView = v; try { localStorage.setItem('patExamView', v); } catch(e) {} render(); }
+function patExamGroups(exams, mode) {
+  const map = new Map();
+  exams.forEach(ex => {
+    let key, title, icon;
+    if (mode === 'date') {
+      key = ex.exam_date || 'none';
+      title = ex.exam_date ? new Date(ex.exam_date+'T00:00:00').toLocaleDateString('el-GR',{weekday:'long',day:'numeric',month:'long',year:'numeric'}) : 'Χωρίς ημερομηνία';
+      icon = '📅';
+    } else {
+      const t = (ex.ai_type||'').trim();
+      key = t ? normalizeGreek(t) : 'none';
+      title = t || 'Χωρίς κατηγορία (δεν έχει ταξινομηθεί)';
+      icon = t ? '🗂' : '❔';
+    }
+    if (!map.has(key)) map.set(key, {key, title, icon, items: []});
+    map.get(key).items.push(ex);
+  });
+  const groups = [...map.values()];
+  if (mode === 'date') groups.sort((a,b)=> a.key==='none'?1 : b.key==='none'?-1 : (a.key<b.key?1:-1));
+  else groups.sort((a,b)=> a.key==='none'?1 : b.key==='none'?-1 : (b.items.length-a.items.length) || a.title.localeCompare(b.title,'el'));
+  return groups;
+}
 function renderPatientExamsTab() {
   const exams = S.patientExams||[];
+  const view = patExamView();
+  const segBtn = (v, label) => `<button class="btn btn-sm" onclick="setPatExamView('${v}')" style="border-radius:0;padding:5px 12px;font-size:12px;background:${view===v?'var(--blue)':'transparent'};color:${view===v?'#fff':'var(--text-2)'};border:none">${label}</button>`;
+  const groups = view==='list' ? null : patExamGroups(exams, view);
   return `<div>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px">
-      <span style="font-size:13px;color:var(--text-2)">${exams.length} εξετάσεις</span>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <div style="display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden">${segBtn('list','☰ Λίστα')}${segBtn('category','🗂 Ανά κατηγορία')}${segBtn('date','📅 Ανά ημερομηνία')}</div>
+        <span style="font-size:13px;color:var(--text-2)">${exams.length} εξετάσεις${groups?` · ${groups.length} ${view==='date'?'ημερομηνίες':'κατηγορίες'}`:''}</span>
+      </div>
       <div style="display:flex;gap:8px">
         <label class="btn btn-primary btn-sm" style="cursor:pointer;margin:0">
           📷 Φωτογραφία Εξέτασης
@@ -2433,9 +2468,29 @@ function renderPatientExamsTab() {
       </div>
     </div>
     <div id="exam-upload-status" style="display:none;font-size:12px;color:var(--blue);margin-bottom:10px">Μεταφόρτωση...</div>
-    ${exams.length?`
+    ${exams.length && groups ? `
+    <div style="display:flex;flex-direction:column;gap:12px">
+      ${groups.map(g=>`
+      <details open style="border:1px solid var(--border-2);border-radius:12px;background:var(--surface-2)">
+        <summary style="cursor:pointer;list-style:none;padding:10px 14px;display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700">
+          <span>${g.icon}</span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis">${esc(g.title)}</span>
+          <span style="font-size:10.5px;font-weight:700;background:var(--blue);color:#fff;border-radius:10px;padding:1px 8px">${g.items.length}</span>
+        </summary>
+        <div style="display:flex;flex-direction:column;gap:10px;padding:0 10px 10px">
+          ${g.items.map(ex=>renderPatientExamCard(ex)).join('')}
+        </div>
+      </details>`).join('')}
+    </div>` : exams.length?`
     <div style="display:flex;flex-direction:column;gap:10px">
-      ${exams.map(ex=>{
+      ${exams.map(ex=>renderPatientExamCard(ex)).join('')}
+    </div>`:`
+    <div class="empty-state">
+      <div class="empty-icon">🩺</div>
+      <div style="margin-bottom:12px">Δεν υπάρχουν εξετάσεις</div>
+    </div>`}
+  </div>`;
+}
+function renderPatientExamCard(ex) {
         const isPdf = /\.pdf$/i.test(ex.file_name||'');
         return `<div class="card" style="padding:12px 16px">
           <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">
@@ -2466,13 +2521,6 @@ function renderPatientExamsTab() {
             <button onclick="deletePatientExam('${ex.id}','${esc(ex.storage_path)}')" class="btn btn-ghost btn-sm" style="color:var(--red,#A32D2D);flex-shrink:0">🗑</button>
           </div>
         </div>`;
-      }).join('')}
-    </div>`:`
-    <div class="empty-state">
-      <div class="empty-icon">🩺</div>
-      <div style="margin-bottom:12px">Δεν υπάρχουν εξετάσεις</div>
-    </div>`}
-  </div>`;
 }
 
 function renderPatientConsentsTab() {
