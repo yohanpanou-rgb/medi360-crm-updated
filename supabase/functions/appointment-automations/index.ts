@@ -191,7 +191,7 @@ async function makeShortLink(
   supabase: ReturnType<typeof createClient>,
   appointmentId: string,
   ts: number,
-  kind: 'confirm' | 'ics' | 'instructions',
+  kind: 'confirm' | 'ics' | 'instructions' | 'access',
 ): Promise<string> {
   for (let attempt = 0; attempt < 5; attempt++) {
     let code = '';
@@ -201,8 +201,26 @@ async function makeShortLink(
     const { error } = await supabase.from('link_codes').insert({ code, appointment_id: appointmentId, ts, kind });
     if (!error) return `${CONFIRM_URL}?c=${code}`;
   }
-  const suffix = kind === 'ics' ? '&ics=1' : kind === 'instructions' ? '&view=instructions' : '';
+  const suffix = kind === 'ics' ? '&ics=1' : kind === 'instructions' ? '&view=instructions' : kind === 'access' ? '&view=access' : '';
   return `${CONFIRM_URL}?id=${appointmentId}&ts=${ts}${suffix}`;
+}
+
+// 🅿️ Προαιρετικός σύνδεσμος οδηγιών πρόσβασης/parking μέσα σε SMS: ΜΟΝΟ αν η
+// κλινική έχει βάλει η ίδια το {access_link} στο κείμενο του SMS (δεν το
+// προσθέτουμε ποτέ αυτόματα — ένα δεύτερο link θα πρόσθετε ένα ολόκληρο SMS
+// segment κόστους σε ΚΑΘΕ αποστολή, ακόμα και σε κλινικές που δεν το θέλουν).
+// Ο έλεγχος γίνεται case-insensitive επειδή το fillSmsTemplate κεφαλαιοποιεί
+// ήδη όλο το κείμενο (smsCaps) πριν φτάσουμε εδώ.
+async function injectAccessLink(
+  supabase: ReturnType<typeof createClient>,
+  appointmentId: string,
+  ts: number,
+  msg: string,
+  accessInstructions: string,
+): Promise<string> {
+  if (!accessInstructions || !/\{ACCESS_LINK\}/i.test(msg)) return msg;
+  const link = await makeShortLink(supabase, appointmentId, ts, 'access');
+  return msg.replace(/\{ACCESS_LINK\}/i, link);
 }
 
 // SMS σε ΚΕΦΑΛΑΙΑ χωρίς τόνους. ΠΟΤΕ μην το εφαρμόζεις σε link
@@ -373,7 +391,7 @@ function headerBand(brand: Brand, emoji: string, title: string): string {
 
 // Δέχεται 1+ ραντεβού ΤΗΣ ΙΔΙΑΣ ΗΜΕΡΑΣ — ένα email με «ώρα προσέλευσης»
 // του πρώτου και λίστα όλων.
-function confirmationEmailHtml(name: string, appts: Appt[], confirmLink: string, cancelLink: string, calBtn: string, brand: Brand): string {
+function confirmationEmailHtml(name: string, appts: Appt[], confirmLink: string, cancelLink: string, calBtn: string, accessHtml: string, brand: Brand): string {
   const sorted = [...appts].sort((a, b) => (a.start_time < b.start_time ? -1 : 1));
   const first = sorted[0];
   const multi = sorted.length > 1;
@@ -394,6 +412,7 @@ function confirmationEmailHtml(name: string, appts: Appt[], confirmLink: string,
           <a href="${esc(confirmLink)}" style="display:inline-block;background-color:#0F6E56;color:#FFFFFF;-webkit-text-fill-color:#FFFFFF;font-size:15px;font-weight:bold;text-decoration:none;padding:14px 34px;border-radius:30px;">✅ Επιβεβαιώνω ${multi ? 'τα ραντεβού' : 'το ραντεβού'}</a>
         </td></tr></table>
         ${calBtn}
+        ${accessHtml}
         <p style="font-size:13px;line-height:1.7;color:#8A6070;-webkit-text-fill-color:#8A6070;margin:14px 0 0;text-align:center;">Αν η ώρα δεν σας εξυπηρετεί ή θέλετε αλλαγή, απαντήστε σε αυτό το email ή τηλεφωνήστε μας.<br/>Δεν μπορείτε να έρθετε; <a href="${esc(cancelLink)}" style="color:#8A6070;text-decoration:underline;">Ακυρώστε ${multi ? 'τα ραντεβού σας' : 'το ραντεβού σας'} εδώ</a>.</p>
       </td></tr>`, brand);
 }
@@ -441,14 +460,37 @@ function reviewRequestEmailHtml(name: string, service: string, reviewLink: strin
       </td></tr>`, brand);
 }
 
-function bookingConfirmationEmailHtml(name: string, service: string, whenStr: string, calBtn: string, brand: Brand): string {
+function bookingConfirmationEmailHtml(name: string, service: string, whenStr: string, calBtn: string, accessHtml: string, brand: Brand): string {
   return shell(`
       ${headerBand(brand, '✅', 'Το ραντεβού σας κλείστηκε')}
       <tr><td style="padding:28px 30px;">
         <p style="font-size:15px;line-height:1.7;color:#333333;-webkit-text-fill-color:#333333;margin:0 0 14px;">Αγαπητή/έ κε/κα <b>${esc(name)}</b>,</p>
         <p style="font-size:14.5px;line-height:1.7;color:#333333;-webkit-text-fill-color:#333333;margin:0;">Το ραντεβού σας για <b>${esc(service)}</b> κλείστηκε για <b>${esc(whenStr)}</b>. Σας περιμένουμε! ✨</p>
         ${calBtn}
+        ${accessHtml}
       </td></tr>`, brand);
+}
+
+// 🅿️ Οδηγίες πρόσβασης/parking (clinics.settings.access_instructions) —
+// προαιρετικό ελεύθερο κείμενο, μία γραμμή/bullet ανά τρόπο πρόσβασης.
+// Εμφανίζεται στα ίδια δύο email που δείχνουν πότε είναι το ραντεβού
+// (επιβεβαίωση + κλείσιμο) — στο ίδιο "σημείο" που θα εμφανιζόταν η
+// διεύθυνση αν την είχαμε ήδη βάλει στο ορατό σώμα του email (σήμερα η
+// διεύθυνση φτάνει στον πελάτη μόνο μέσα από το συνημμένο ημερολόγιο).
+function accessInstructionsHtml(text: string): string {
+  if (!text) return '';
+  const items = text.split(/•|\r?\n/).map((s) => s.trim()).filter(Boolean);
+  if (!items.length) return '';
+  const rows = items.map((item) => `
+              <tr>
+                <td style="padding:4px 8px 4px 0;font-size:13.5px;line-height:1.6;color:#185FA5;-webkit-text-fill-color:#185FA5;vertical-align:top;width:14px;">•</td>
+                <td style="padding:4px 0;font-size:13.5px;line-height:1.6;color:#333333;-webkit-text-fill-color:#333333;">${esc(item)}</td>
+              </tr>`).join('');
+  return `
+        <div style="font-size:14px;font-weight:bold;color:#185FA5;-webkit-text-fill-color:#185FA5;margin:18px 0 8px;">🅿️ Πώς θα μας βρείτε</div>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#E6F1FB;border-radius:12px;"><tr><td style="padding:12px 18px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows}</table>
+        </td></tr></table>`;
 }
 
 interface Appt {
@@ -545,9 +587,13 @@ Deno.serve(async (req: Request) => {
     // ραντεβού κάθε άλλης κλινικής της βάσης (π.χ. της demo με εικονικά email/
     // τηλέφωνα) θα έπαιρναν μηνύματα από τον λογαριασμό της Beauty Line.
     const configuredClinicId: string = ((clinicRow as { id?: string } | null)?.id) || '00000000-0000-0000-0000-000000000000';
-    const cRow = (clinicRow || {}) as { name?: string; address?: string; settings?: { address?: string; brand_name?: string; brand_color?: string; brand_logo_url?: string; review_request_enabled?: boolean; review_link?: string; review_request_delay_days?: number; review_request_delay_minutes?: number; sms_templates?: Record<string, SmsAutomationConfig> } };
+    const cRow = (clinicRow || {}) as { name?: string; address?: string; settings?: { address?: string; brand_name?: string; brand_color?: string; brand_logo_url?: string; review_request_enabled?: boolean; review_link?: string; review_request_delay_days?: number; review_request_delay_minutes?: number; sms_templates?: Record<string, SmsAutomationConfig>; access_instructions?: string } };
     const clinicSettings = cRow.settings as Record<string, unknown> | undefined;
     const clinicAddress = cRow.address || (cRow.settings && cRow.settings.address) || 'Beauty Line by Lina Panou';
+    // 🅿️ Οδηγίες πρόσβασης/parking — προαιρετικές, Ρυθμίσεις → Κλινική. Χωρίς
+    // αυτές, τα δύο emails/SMS συνεχίζουν ακριβώς όπως πριν (καμία αλλαγή).
+    const accessInstructions = (cRow.settings && cRow.settings.access_instructions) || '';
+    const accessHtml = accessInstructionsHtml(accessInstructions);
     const brand: Brand = {
       name: (cRow.settings && cRow.settings.brand_name) || cRow.name || 'Beauty Line by Lina Panou',
       color: (cRow.settings && cRow.settings.brand_color) || '#C4618A',
@@ -598,12 +644,13 @@ Deno.serve(async (req: Request) => {
       if (pol.sms || (pol.emailElseSms && !emailOk)) {
         const smsPhone = first.patients && first.patients.phone;
         const smsLink = await makeShortLink(supabase, first.id, ts, 'confirm');
-        const smsMsg = fillSmsTemplate(smsCfg.text, {
+        let smsMsg = fillSmsTemplate(smsCfg.text, {
           '{name}': (first.patients && first.patients.full_name) || '',
           '{clinic}': brandNameShort,
           '{date}': athensDateOnly(first.start_time),
           '{time}': athensTime(first.start_time),
         }, SMS_LINK_TOKEN.confirmation_request, smsLink);
+        smsMsg = await injectAccessLink(supabase, first.id, ts, smsMsg, accessInstructions);
         const smsResult = await sendSms(smsPhone, smsMsg);
         for (const a of pending) await logSms(a, 'confirmation_request', smsPhone || '', smsMsg, smsResult.ok, smsResult.error);
         if (!pol.email || (pol.emailElseSms && !emailOk)) {
@@ -626,7 +673,7 @@ Deno.serve(async (req: Request) => {
         results.errors++; return;
       }
       const { gcal, outlook, ics } = buildCalendarBits(sorted, clinicAddress, brand);
-      const html = confirmationEmailHtml((first.patients && first.patients.full_name) || '', sorted, link, cancelLink, calendarButtonHtml(gcal, outlook, icsUrl), brand);
+      const html = confirmationEmailHtml((first.patients && first.patients.full_name) || '', sorted, link, cancelLink, calendarButtonHtml(gcal, outlook, icsUrl), accessHtml, brand);
       try {
         const msgId = await sendEmail(await gmail(), String(email), (sorted.length > 1 ? '📅 Επιβεβαιώστε τα ραντεβού σας — ' : '📅 Επιβεβαιώστε το ραντεβού σας — ') + brand.name, html, ics, brand.name);
         for (const a of pending) await log(a, 'confirmation_request', channel, 'sent', { metadata: { gmail_id: msgId, grouped: sorted.length } });
@@ -761,12 +808,13 @@ Deno.serve(async (req: Request) => {
       if (bookPol.sms || (bookPol.emailElseSms && !bookEmailOk)) {
         const smsPhone = a.patients && a.patients.phone;
         const smsIcsLink = await makeShortLink(supabase, a.id, bookTs, 'ics');
-        const smsMsg = fillSmsTemplate(bookCfg.text, {
+        let smsMsg = fillSmsTemplate(bookCfg.text, {
           '{name}': (a.patients && a.patients.full_name) || '',
           '{clinic}': brandNameShort,
           '{date}': athensDateOnly(a.start_time),
           '{time}': athensTime(a.start_time),
         }, SMS_LINK_TOKEN.booking_confirmation, smsIcsLink);
+        smsMsg = await injectAccessLink(supabase, a.id, bookTs, smsMsg, accessInstructions);
         const smsResult = await sendSms(smsPhone, smsMsg);
         await logSms(a, 'booking_confirmation', smsPhone || '', smsMsg, smsResult.ok, smsResult.error);
         if (!bookPol.email || (bookPol.emailElseSms && !bookEmailOk)) {
@@ -779,7 +827,7 @@ Deno.serve(async (req: Request) => {
       const email = a.patients && a.patients.email;
       if (!isValidEmail(email)) { await log(a, 'booking_confirmation', channel, 'no_email'); results.no_email++; return; }
       const { gcal, outlook } = buildCalendarBits([a], clinicAddress, brand);
-      const html = bookingConfirmationEmailHtml((a.patients && a.patients.full_name) || '', a.service_name || '', athensDT(a.start_time), calendarButtonHtml(gcal, outlook, bookIcsUrl), brand);
+      const html = bookingConfirmationEmailHtml((a.patients && a.patients.full_name) || '', a.service_name || '', athensDT(a.start_time), calendarButtonHtml(gcal, outlook, bookIcsUrl), accessHtml, brand);
       try {
         const msgId = await sendEmail(await gmail(), String(email), 'Το ραντεβού σας κλείστηκε — ' + brand.name, html, undefined, brand.name);
         await log(a, 'booking_confirmation', channel, 'sent', { metadata: { gmail_id: msgId } });
