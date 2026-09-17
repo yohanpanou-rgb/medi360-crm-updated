@@ -12890,9 +12890,9 @@ async function openHistoryFormModal(opts) {
       ${standalone ? `
       <div style="margin-bottom:18px;padding-bottom:18px;border-bottom:1px dashed var(--border-2);position:relative">
         <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px">Ασθενής</div>
-        <input class="form-control" id="hf-patient-search" placeholder="Αναζήτηση υπάρχοντα ασθενή (όνομα/τηλέφωνο)..." value="${esc(p.full_name||'')}" autocomplete="off"/>
+        <input class="form-control" id="hf-patient-search" placeholder="Πληκτρολόγησε το τηλέφωνό σου για να βρεθεί η καρτέλα σου..." value="${esc(p.phone||'')}" autocomplete="off" inputmode="tel"/>
         <div id="hf-patient-results" style="display:none;position:absolute;left:0;right:0;background:var(--white);border:1px solid var(--border-2);border-radius:8px;box-shadow:var(--shadow-lg);z-index:20;max-height:220px;overflow-y:auto;margin-top:4px"></div>
-        <div id="hf-patient-mode" style="margin-top:8px;font-size:12px;color:${selectedPatientId?'var(--green)':'var(--text-2)'}">${selectedPatientId?'✓ Επεξεργασία υπάρχοντος ασθενή':'✏️ Γράψε όνομα για αναζήτηση, ή συμπλήρωσε τα στοιχεία παρακάτω για νέο ασθενή'}</div>
+        <div id="hf-patient-mode" style="margin-top:8px;font-size:12px;color:${selectedPatientId?'var(--green)':'var(--text-2)'}">${selectedPatientId?'✓ Βρέθηκε η καρτέλα σου':'✏️ Πληκτρολόγησε ολόκληρο το τηλέφωνό σου, ή συμπλήρωσε τα στοιχεία παρακάτω αν είναι η πρώτη σου φορά'}</div>
       </div>` : ''}
 
       <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px">📌 Προσωπικά Στοιχεία</div>
@@ -12979,13 +12979,19 @@ async function openHistoryFormModal(opts) {
     const resEl = document.getElementById('hf-patient-results');
     const modeEl = document.getElementById('hf-patient-mode');
     let psTimer = null;
+    // 🔒 Tablet/kiosk mode: ο πελάτης μπορεί να κρατάει ο ίδιος τη συσκευή, οπότε
+    // ΔΕΝ κάνουμε αναζήτηση με όνομα (θα έδειχνε ονόματα/τηλέφωνα άλλων πελατών
+    // με απλό autocomplete καθώς πληκτρολογεί) — μόνο με το ΠΛΗΡΕΣ τηλέφωνό του
+    // (τελευταία 9+ ψηφία, δηλαδή ουσιαστικά όλος ο αριθμός). Ένα σωστό τηλέφωνο
+    // επιστρέφει ΤΟ ΠΟΛΥ μία καρτέλα, ποτέ λίστα για μπράουζινγκ.
     const showResults = async () => {
-      const q = psEl.value.trim().replace(/[,()]/g,' ');
-      if (q.length < 1) { resEl.style.display='none'; return; }
+      const digits = psEl.value.replace(/\D/g,'');
+      if (digits.length < 9) { resEl.style.display='none'; return; }
+      const last9 = digits.slice(-9);
       const {data} = await sb.from('patients').select('id,full_name,phone').eq('clinic_id',clinicId())
-        .or(`full_name.ilike.%${q}%,phone.ilike.%${q}%`).order('full_name').limit(8);
+        .ilike('phone', `%${last9}`).limit(5);
       const rows = (data||[]).map(pt=>`<div class="hf-pt-opt" style="padding:9px 12px;cursor:pointer;font-size:12px" data-pid="${pt.id}">${esc(pt.full_name)} · ${esc(pt.phone||'')}</div>`).join('');
-      resEl.innerHTML = rows || `<div style="padding:9px 12px;font-size:12px;color:var(--text-3)">Κανένα αποτέλεσμα — θα δημιουργηθεί νέος ασθενής με τα στοιχεία που θα συμπληρώσεις</div>`;
+      resEl.innerHTML = rows || `<div style="padding:9px 12px;font-size:12px;color:var(--text-3)">Δεν βρέθηκε καρτέλα με αυτό το τηλέφωνο — θα δημιουργηθεί νέα με τα στοιχεία που θα συμπληρώσεις</div>`;
       resEl.style.display='block';
       resEl.querySelectorAll('.hf-pt-opt').forEach(el => {
         el.onmouseover = () => el.style.background='var(--surface)';
@@ -13001,7 +13007,7 @@ async function openHistoryFormModal(opts) {
     psEl.oninput = () => {
       selectedPatientId = null;
       modeEl.style.color = 'var(--text-2)';
-      modeEl.textContent = '✏️ Γράψε όνομα για αναζήτηση, ή συμπλήρωσε τα στοιχεία παρακάτω για νέο ασθενή';
+      modeEl.textContent = '✏️ Πληκτρολόγησε ολόκληρο το τηλέφωνό σου, ή συμπλήρωσε τα στοιχεία παρακάτω αν είναι η πρώτη σου φορά';
       clearTimeout(psTimer); psTimer = setTimeout(showResults, 200);
     };
     document.addEventListener('click', (e) => {
