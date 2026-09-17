@@ -826,3 +826,18 @@ update public.patients set critical_note = case full_name
   else critical_note end,
   arrives_late = full_name in ('ΝΙΚΟΣ ΚΑΡΑΓΙΑΝΝΗΣ','ΦΑΙΗ ΚΑΤΣΑΡΟΥ')
 where clinic_id='a787b766-9d23-45b2-9660-7bb480856a1b';
+
+-- ── 16. Εξέταση από email που ΜΠΛΟΚΑΡΙΣΤΗΚΕ λόγω έλλειψης GDPR ─────────────────
+-- (το exam-ingest καταγράφει event 'exam_blocked_no_gdpr' — φαίνεται ως banner
+--  στην καρτέλα Εξετάσεις του ασθενή μέχρι να υπογράψει τη Φόρμα Ιστορικού)
+with p as (
+  select id, email from public.patients
+  where clinic_id='a787b766-9d23-45b2-9660-7bb480856a1b' and gdpr_signed=false and email is not null
+  order by full_name limit 1
+)
+insert into public.activity_log (clinic_id, patient_id, event_type, event_data, created_at)
+select 'a787b766-9d23-45b2-9660-7bb480856a1b', p.id, 'exam_blocked_no_gdpr',
+       jsonb_build_object('filename','Γενική_Αίματος_2026-09.pdf','sender_email',p.email,'message_id','demo-msg-1'),
+       now() - interval '2 days'
+from p
+where not exists (select 1 from public.activity_log a where a.patient_id=p.id and a.event_type='exam_blocked_no_gdpr');
