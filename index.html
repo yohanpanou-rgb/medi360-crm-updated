@@ -10742,7 +10742,7 @@ function bindModalEvents() {
     if (!phone) { warning.style.display='none'; return; }
     const dup = await findDuplicatePatientByPhone(phone);
     warning.style.display = dup ? 'block' : 'none';
-    warning.textContent = dup ? `⚠ Υπάρχει ήδη ασθενής με αυτό το τηλέφωνο: ${dup.full_name}` : '';
+    warning.textContent = dup ? `⚠ Υπάρχει ήδη ασθενής με αυτό το τηλέφωνο: ${dup.full_name}. Θα χρειαστεί σύνδεση (π.χ. συγγενείς) για να αποθηκευτεί.` : '';
   });
 
   // Save patient
@@ -10752,24 +10752,40 @@ function bindModalEvents() {
     const name = `${firstName} ${lastName}`.trim();
     const phone = document.getElementById('f-phone').value.trim();
     const email = document.getElementById('f-email').value.trim();
-    if (!firstName||!lastName||!phone||!email) return alert('Συμπλήρωσε τα υποχρεωτικά πεδία: Όνομα, Επώνυμο, Τηλέφωνο, Email');
-    if (!/^\S+@\S+\.\S+$/.test(email)) return alert('Το email δεν είναι έγκυρο');
+    if (!firstName||!lastName||!phone) return alert('Συμπλήρωσε τα υποχρεωτικά πεδία: Όνομα, Επώνυμο, Τηλέφωνο');
+    if (email && !/^\S+@\S+\.\S+$/.test(email)) return alert('Το email δεν είναι έγκυρο');
     if (!/^\+?\d{10,13}$/.test(phone.replace(/\s/g,''))) return alert('Το τηλέφωνο δεν είναι έγκυρο (10-13 ψηφία)');
     const amka = (document.getElementById('f-amka')||{value:''}).value.replace(/\s/g,'');
     if (amka && !/^\d{11}$/.test(amka)) return alert('Το ΑΜΚΑ πρέπει να έχει ακριβώς 11 ψηφία.');
-    const dup = await findDuplicatePatientByPhone(phone);
-    if (dup && !confirm(`Υπάρχει ήδη ασθενής με αυτό το τηλέφωνο: ${dup.full_name}. Θέλεις να συνεχίσεις με νέα καταχώρηση;`)) return;
+    // Ίδιο τηλέφωνο/email με άλλον πελάτη επιτρέπεται ΜΟΝΟ αν συνδεθούν ρητά
+    // (π.χ. συγγενείς) — αλλιώς μπλοκάρει την καταχώρηση.
+    const links = [];
+    const dupPhone = await findDuplicatePatientByPhone(phone);
+    if (dupPhone) {
+      const relType = await confirmLinkPatients(dupPhone, 'τηλέφωνο');
+      if (!relType) return;
+      links.push({id: dupPhone.id, relationship_type: relType});
+    }
+    if (email) {
+      const dupEmail = await findDuplicatePatientByEmail(email);
+      if (dupEmail && !links.some(l=>l.id===dupEmail.id)) {
+        const relType = await confirmLinkPatients(dupEmail, 'email');
+        if (!relType) return;
+        links.push({id: dupEmail.id, relationship_type: relType});
+      }
+    }
     const btn = document.getElementById('save-patient');
     btn.textContent='Αποθήκευση...'; btn.disabled=true;
-    const {error} = await sb.from('patients').insert({
-      full_name:normalizePatientName(name), phone, email:document.getElementById('f-email').value,
+    const {data:newPt, error} = await sb.from('patients').insert({
+      full_name:normalizePatientName(name), phone, email: email || null,
       amka: amka || null,
       gender:document.getElementById('f-gender').value,
       status:document.getElementById('f-status').value,
       source:document.getElementById('f-source').value,
       clinic_id:clinicId()
-    });
+    }).select('id').single();
     if (error) { alert(error.message); btn.textContent='Αποθήκευση'; btn.disabled=false; return; }
+    for (const l of links) await sb.from('patient_relationships').insert({clinic_id:clinicId(), patient_a_id:newPt.id, patient_b_id:l.id, relationship_type:l.relationship_type});
     closeModal(); await loadPageData();
   });
 
@@ -10810,12 +10826,29 @@ function bindModalEvents() {
         if (!name || name.length<2) return;
         const phone = (prompt('Τηλέφωνο (υποχρεωτικό):')||'').trim();
         if (!/^\+?\d{10,13}$/.test(phone.replace(/\s/g,''))) { alert('Το τηλέφωνο είναι υποχρεωτικό (10-13 ψηφία)'); return; }
-        const email = (prompt('Email (υποχρεωτικό):')||'').trim();
-        if (!/^\S+@\S+\.\S+$/.test(email)) { alert('Το email είναι υποχρεωτικό και πρέπει να είναι έγκυρο'); return; }
+        const email = (prompt('Email (προαιρετικό):')||'').trim();
+        if (email && !/^\S+@\S+\.\S+$/.test(email)) { alert('Το email δεν είναι έγκυρο'); return; }
+        // Ίδιο τηλέφωνο/email με άλλον πελάτη επιτρέπεται ΜΟΝΟ αν συνδεθούν ρητά.
+        const links = [];
+        const dupPhone = await findDuplicatePatientByPhone(phone);
+        if (dupPhone) {
+          const relType = await confirmLinkPatients(dupPhone, 'τηλέφωνο');
+          if (!relType) return;
+          links.push({id: dupPhone.id, relationship_type: relType});
+        }
+        if (email) {
+          const dupEmail = await findDuplicatePatientByEmail(email);
+          if (dupEmail && !links.some(l=>l.id===dupEmail.id)) {
+            const relType = await confirmLinkPatients(dupEmail, 'email');
+            if (!relType) return;
+            links.push({id: dupEmail.id, relationship_type: relType});
+          }
+        }
         const {data:np, error} = await sb.from('patients')
-          .insert({clinic_id:clinicId(), full_name:normalizePatientName(name), phone, email, status:'active'})
+          .insert({clinic_id:clinicId(), full_name:normalizePatientName(name), phone, email: email || null, status:'active'})
           .select('id,full_name').single();
         if (error) { alert('Σφάλμα: '+error.message); return; }
+        for (const l of links) await sb.from('patient_relationships').insert({clinic_id:clinicId(), patient_a_id:np.id, patient_b_id:l.id, relationship_type:l.relationship_type});
         document.getElementById('a-patient-id').value = np.id;
         ps.value = np.full_name;
         res.style.display='none';
@@ -11302,6 +11335,39 @@ async function findDuplicatePatientByPhone(phone) {
   if (!norm || norm.length < 9) return null;
   const {data} = await sb.from('patients').select('id,full_name').eq('clinic_id',clinicId()).ilike('phone','%'+norm+'%').limit(1);
   return (data&&data[0])||null;
+}
+async function findDuplicatePatientByEmail(email) {
+  const norm = (email||'').trim().toLowerCase();
+  if (!norm) return null;
+  const {data} = await sb.from('patients').select('id,full_name').eq('clinic_id',clinicId()).ilike('email', norm).limit(1);
+  return (data&&data[0])||null;
+}
+// Ίδιο τηλέφωνο/email σε 2+ πελάτες επιτρέπεται ΜΟΝΟ αν συνδεθούν ρητά
+// μεταξύ τους (π.χ. συγγενείς, γονέας-ανήλικο παιδί χωρίς δικό του email) —
+// έτσι δεν καταλήγουν ποτέ δύο ανεξάρτητοι πελάτες με κοινά στοιχεία
+// επικοινωνίας χωρίς κανείς να το έχει προσέξει. Επιστρέφει τον τύπο σχέσης
+// που επιλέχθηκε, ή null αν ο χρήστης ακύρωσε (τότε η καταχώρηση μπλοκάρει).
+function confirmLinkPatients(dup, fieldLabel) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:9999;display:flex;align-items:center;justify-content:center';
+    overlay.innerHTML = `
+      <div style="background:var(--white);border-radius:12px;padding:20px;width:320px;max-width:90vw;box-shadow:0 10px 40px rgba(0,0,0,0.25)">
+        <div style="font-size:14px;font-weight:600;margin-bottom:10px">⚠ Ίδιο ${esc(fieldLabel)} με υπάρχοντα πελάτη</div>
+        <div style="font-size:12.5px;color:var(--text-2);margin-bottom:12px">Ο πελάτης <b>${esc(dup.full_name)}</b> έχει ήδη αυτό το ${esc(fieldLabel)}. Για να συνεχίσεις, σύνδεσε τον νέο πελάτη μαζί του:</div>
+        <div style="font-size:11px;color:var(--text-2);margin-bottom:4px">Σχέση</div>
+        <select id="link-rel-type" class="form-control" style="width:100%;margin-bottom:14px">${RELATIONSHIP_TYPES.map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join('')}</select>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-ghost btn-sm" id="link-cancel" style="flex:1;justify-content:center">Άκυρο</button>
+          <button class="btn btn-sm" id="link-ok" style="flex:1;justify-content:center;background:#0891B2;color:#fff">Σύνδεση &amp; Συνέχεια</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const cleanup = (result) => { overlay.remove(); resolve(result); };
+    overlay.querySelector('#link-cancel').onclick = () => cleanup(null);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(null); });
+    overlay.querySelector('#link-ok').onclick = () => cleanup(document.getElementById('link-rel-type').value);
+  });
 }
 
 // ── ΣΥΓΧΩΝΕΥΣΗ ΔΙΠΛΟΤΥΠΩΝ ΑΣΘΕΝΩΝ ──
