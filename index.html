@@ -1001,8 +1001,9 @@ async function loadPageData() {
     S.consultDates = map;
   }
   if (S.page==='appointments' || S.page==='dashboard') {
-    const {data} = await sb.from('appointments').select('*, patients(full_name,phone,status,gdpr_signed,medical_history,allergies)').eq('clinic_id',cid).order('start_time',{ascending:false}).limit(200);
+    const {data} = await sb.from('appointments').select('*, patients(full_name,phone,status,gdpr_signed,medical_history,allergies,critical_note,arrives_late)').eq('clinic_id',cid).order('start_time',{ascending:false}).limit(200);
     S.appointments = data||[];
+    await loadFrequentCancelIds(cid);
   }
   if (S.page==='calendar') {
     // Φόρτωση ραντεβού σε παράθυρο ±60 ημερών γύρω από την ημερομηνία του ημερολογίου.
@@ -1011,7 +1012,7 @@ async function loadPageData() {
     const calBase = S.calDate ? new Date(S.calDate) : new Date();
     const calFrom = new Date(calBase); calFrom.setDate(calFrom.getDate()-60); calFrom.setHours(0,0,0,0);
     const calTo = new Date(calBase); calTo.setDate(calTo.getDate()+60); calTo.setHours(23,59,59,999);
-    const {data, error} = await sb.from('appointments').select('*, patients(full_name,phone,status,gdpr_signed,medical_history,allergies)').eq('clinic_id',cid)
+    const {data, error} = await sb.from('appointments').select('*, patients(full_name,phone,status,gdpr_signed,medical_history,allergies,critical_note,arrives_late)').eq('clinic_id',cid)
       .gte('start_time', calFrom.toISOString()).lte('start_time', calTo.toISOString())
       .order('start_time',{ascending:true}).limit(3000);
     if (error) console.error('Πρόγραμμα — σφάλμα φόρτωσης ραντεβού:', error);
@@ -1028,6 +1029,8 @@ async function loadPageData() {
     S.cleansingConsentIds = new Set((scIds||[]).filter(r=>r.consent_group==='cleansing_poreover').map(r=>r.patient_id));
     S.peelingsConsentIds = new Set((scIds||[]).filter(r=>r.consent_group==='peelings_microneedling').map(r=>r.patient_id));
     S.oxygenConsentIds = new Set((scIds||[]).filter(r=>r.consent_group==='oxygen_facetreatments').map(r=>r.patient_id));
+    // ‼ «Ακυρώνει συχνά»: αυτόματη σήμανση από το ιστορικό 12 μηνών (βλ. FREQUENT_CANCEL_RULE)
+    await loadFrequentCancelIds(cid);
   }
   if (S.page==='calendar') {
     const {data:staff} = await sb.from('profiles').select('*').eq('clinic_id',cid).in('role',['therapist','clinic_admin','super_admin']);
@@ -1457,6 +1460,7 @@ async function loadPatientDetail(id, tab) {
     consultData.sort((a,b) => new Date(b.signed_at||0) - new Date(a.signed_at||0));
     S.patConsultations = consultData;
     render();
+    maybeShowCriticalPopup(S.patientDetail, a||[]);
   } catch(e) {
     console.error('loadPatientDetail error:', e);
     S.patientLoadError = e.message || String(e);
@@ -1515,6 +1519,82 @@ function calColorMode() {
 }
 function setCalColorMode(v) { S.calColor = v; try { localStorage.setItem('calColor', v); } catch(e) {} render(); }
 function roomName(id) { const r = (S.clinicRooms||[]).find(x=>x.id===id); return r ? r.name : ''; }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ‼ ΚΡΙΣΙΜΗ ΠΛΗΡΟΦΟΡΙΑ ΠΕΛΑΤΗ — φαίνεται παντού (καρτέλα, popup ραντεβού,
+// κάρτα Προγράμματος, tooltip) και μία φορά ως pop-up όταν ανοίγει η καρτέλα.
+// Πηγές: patients.critical_note (ελεύθερο κείμενο), patients.arrives_late
+// (χειροκίνητο), «ακυρώνει συχνά» (αυτόματο από τα ραντεβού), VIP.
+// ═══════════════════════════════════════════════════════════════════════════
+// Κανόνας «ακυρώνει συχνά»: τουλάχιστον 3 ακυρώσεις/no-show τους τελευταίους 12
+// μήνες ΚΑΙ τουλάχιστον 20% των ραντεβού του στο ίδιο διάστημα (ώστε ένας τακτικός
+// πελάτης με 40 επισκέψεις και 3 ακυρώσεις να μη σημαίνεται).
+const FREQUENT_CANCEL_RULE = { minCount: 3, minRate: 0.20, months: 12 };
+function frequentCancelStats(appts) {
+  const since = Date.now() - FREQUENT_CANCEL_RULE.months*30.44*86400000;
+  let c = 0, total = 0;
+  (appts||[]).forEach(a => {
+    if (new Date(a.start_time).getTime() < since) return;
+    total++; if (a.status==='cancelled' || a.status==='no_show') c++;
+  });
+  return { c, total, flagged: c >= FREQUENT_CANCEL_RULE.minCount && total > 0 && c/total >= FREQUENT_CANCEL_RULE.minRate };
+}
+async function loadFrequentCancelIds(cid) {
+  S.frequentCancelIds = new Set();
+  try {
+    const since = new Date(Date.now() - FREQUENT_CANCEL_RULE.months*30.44*86400000).toISOString();
+    const rows = await sbAll(()=>sb.from('appointments').select('patient_id,status,start_time').eq('clinic_id',cid).gte('start_time', since).not('patient_id','is',null));
+    const by = {};
+    (rows||[]).forEach(r => { (by[r.patient_id] = by[r.patient_id] || []).push(r); });
+    Object.entries(by).forEach(([pid, list]) => { if (frequentCancelStats(list).flagged) S.frequentCancelIds.add(pid); });
+  } catch(e) { console.warn('frequent-cancel flags', e); }
+}
+// Σημαίες ενός πελάτη. `appts` = τα ραντεβού του (καρτέλα) — αλλιώς χρησιμοποιεί
+// το προϋπολογισμένο S.frequentCancelIds (Πρόγραμμα/popup).
+function patientFlags(p, appts) {
+  if (!p) return [];
+  const out = [];
+  if (p.critical_note && p.critical_note.trim()) out.push({key:'critical', icon:'‼', label:p.critical_note.trim(), color:'#B91C1C', bg:'#FEE2E2'});
+  if (p.arrives_late) out.push({key:'late', icon:'⏰', label:'Αργεί συστηματικά — κλείσε το ραντεβού με περιθώριο', color:'#92400E', bg:'#FEF3C7'});
+  const fc = appts ? frequentCancelStats(appts) : null;
+  if (fc ? fc.flagged : (S.frequentCancelIds && p.id && S.frequentCancelIds.has(p.id))) {
+    out.push({key:'cancels', icon:'🚫', label:'Ακυρώνει συχνά' + (fc?` — ${fc.c} από ${fc.total} ραντεβού τους τελευταίους 12 μήνες`:' (3+ ακυρώσεις/no-show σε 12 μήνες)') + '. Επιβεβαίωση τηλεφωνικά.', color:'#9A3412', bg:'#FFEDD5'});
+  }
+  return out;
+}
+function criticalBannerHtml(p, appts, opts) {
+  opts = opts || {};
+  const flags = patientFlags(p, appts);
+  if (!flags.length) return '';
+  return `<div class="critical-banner" style="display:flex;flex-direction:column;gap:6px;margin:${opts.compact?'0 0 10px':'0 0 12px'}">
+    ${flags.map(f=>`<div style="display:flex;align-items:flex-start;gap:8px;background:${f.bg};border-left:4px solid ${f.color};border-radius:8px;padding:${opts.compact?'7px 10px':'9px 12px'};font-size:${opts.compact?'12px':'12.5px'};color:${f.color};font-weight:600;line-height:1.4">
+      <span style="font-size:${opts.compact?'14px':'16px'};line-height:1">${f.icon}</span><span style="flex:1">${esc(f.label)}</span>
+    </div>`).join('')}
+  </div>`;
+}
+// Pop-up ΜΙΑ φορά ανά άνοιγμα καρτέλας (ανά συνεδρία χρήστη) — ζητήθηκε ρητά από
+// τον πελάτη. Μετά το κλείσιμο μένουν τα banners.
+const _criticalShown = new Set();
+function maybeShowCriticalPopup(p, appts) {
+  if (!p || _criticalShown.has(p.id)) return;
+  const flags = patientFlags(p, appts);
+  if (!flags.length) return;
+  _criticalShown.add(p.id);
+  const old = document.getElementById('crit-overlay'); if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'crit-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(10,12,24,0.55);backdrop-filter:blur(2px);z-index:9500;display:flex;align-items:center;justify-content:center;padding:16px';
+  ov.innerHTML = `<div style="background:var(--white,#fff);border-radius:16px;max-width:520px;width:100%;padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.3);border-top:6px solid #DC2626">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+        <span style="font-size:26px">‼</span>
+        <div><div style="font-size:16px;font-weight:800;color:#B91C1C">Κρίσιμη πληροφορία</div><div style="font-size:12.5px;color:var(--text-2)">${esc(p.full_name||'')}</div></div>
+      </div>
+      ${criticalBannerHtml(p, appts)}
+      <div style="display:flex;justify-content:flex-end;margin-top:6px"><button class="btn btn-primary" onclick="document.getElementById('crit-overlay').remove()">Το είδα</button></div>
+    </div>`;
+  ov.onclick = e => { if (e.target===ov) ov.remove(); };
+  document.body.appendChild(ov);
+}
 
 function globalApptColor(a) {
   // Ούτε VIP ούτε Lead παίρνουν πια δικό τους χρώμα εδώ (παλιά υπερίσχυαν του
@@ -2689,6 +2769,7 @@ function renderPatientDetail() {
     παραμένουν πάντα ορατά/πατήσιμα, αντί να χάνονται κάτω από το header
     μόλις ο χρήστης κατεβεί λίγο στο περιεχόμενο μιας καρτέλας. -->
     <div style="position:sticky;top:56px;z-index:45;background:var(--surface);margin-left:-24px;margin-right:-24px;margin-top:-24px;padding:16px 24px 0">
+    ${criticalBannerHtml(p, p.appointments)}
     <!-- Header -->
     <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:12px">
       <div style="display:flex;align-items:center;gap:12px">
@@ -3724,6 +3805,7 @@ function renderCalendar() {
               const hasConflict = laserConflictIds.has(a.id);
               const missingGrp = missingConsent(a);
               const hasNoConsent = !!missingGrp;
+              const critFlags = patientFlags(a.patients ? Object.assign({id:a.patient_id}, a.patients) : null);
               const therapistName = apptTherapist(a) || '';
               const metaText = [a.service_name, therapistName].filter(Boolean).join(' · ');
               // Αν επικαλύπτεται χρονικά με άλλο ραντεβού στην ίδια στήλη, μοίρασε το
@@ -3751,10 +3833,11 @@ function renderCalendar() {
                 data-allergies="${esc(a.patients&&a.patients.allergies||'')}"
                 data-notes="${esc(a.notes||'')}"
                 data-status="${a.status||'confirmed'}"
+                data-critical="${esc(critFlags.map(f=>f.icon+' '+f.label).join('\n'))}"
                 data-consent-missing="${missingGrp?CONSENT_GROUP_LABEL[missingGrp]:''}">
                 ${(S.apptPhotoIds&&S.apptPhotoIds.has(a.id))?'<div title="Έχει φωτογραφίες" style="position:absolute;top:2px;right:3px;font-size:10px;line-height:1">📷</div>':''}
                 <div style="font-size:10px;font-weight:500;color:${c.text};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
-                  ${hasNoConsent?'<span style="font-size:13px;font-weight:700;color:#D97706">⚠</span> ':''}${calColor==='service'?calStatusGlyph(a):''}${isVip?'★ ':''}${esc(a.patients&&a.patients.full_name||'—')}${heightPx<=(hasNoConsent?58:30)&&metaText?`<span style="font-weight:400;opacity:0.75"> · ${esc(metaText)}</span>`:''}
+                  ${critFlags.length?'<span style="font-size:12px;font-weight:900;color:#DC2626" title="Κρίσιμη πληροφορία">‼</span> ':''}${hasNoConsent?'<span style="font-size:13px;font-weight:700;color:#D97706">⚠</span> ':''}${calColor==='service'?calStatusGlyph(a):''}${isVip?'★ ':''}${esc(a.patients&&a.patients.full_name||'—')}${heightPx<=(hasNoConsent?58:30)&&metaText?`<span style="font-weight:400;opacity:0.75"> · ${esc(metaText)}</span>`:''}
                 </div>
                 ${hasNoConsent&&heightPx>30?`<div style="font-size:9px;font-weight:700;color:#D97706;white-space:nowrap;overflow:hidden">⚠ ΧΩΡΙΣ ΣΥΝΑΙΝΕΣΗ ${CONSENT_GROUP_LABEL[missingGrp]}</div>`:''}
                 ${heightPx>(hasNoConsent?58:30)?`<div style="font-size:9px;color:${c.text};opacity:0.8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(metaText)}</div>`:''}
@@ -8683,6 +8766,7 @@ function bindEvents() {
           </div>
           <button class="btn btn-primary btn-sm" style="flex-shrink:0;padding:6px 10px;font-size:11px;white-space:nowrap" data-patient="${a.patient_id}">👤 Καρτέλα</button>
         </div>
+        ${criticalBannerHtml(a.patients ? Object.assign({id:a.patient_id}, a.patients) : null, null, {compact:true})}
         ${canSee(['super_admin','clinic_admin','receptionist'])?`
         <div style="display:flex;gap:6px;margin-bottom:10px">
           <button class="btn btn-ghost btn-sm" style="flex:1;justify-content:center;font-size:11px" onclick="resendApptAutomation('${a.id}','resend_confirmation')">📧 Αίτημα επιβεβ.</button>
@@ -10568,6 +10652,7 @@ function showCalTooltip(el, e) {
   var allergies = el.getAttribute('data-allergies')||'';
   var notes = el.getAttribute('data-notes')||'';
   var consentMissing = el.getAttribute('data-consent-missing')||'';
+  var critical = el.getAttribute('data-critical')||'';
   var status = el.getAttribute('data-status')||'confirmed';
   var statusInfo = STATUS_APPT[status]||STATUS_APPT.confirmed;
   // Clean up notes (remove "Προσωπικό: " prefix for display)
@@ -10575,6 +10660,7 @@ function showCalTooltip(el, e) {
 
   tt.innerHTML =
     '<div style="font-weight:600;font-size:13px;margin-bottom:6px;border-bottom:1px solid rgba(255,255,255,0.15);padding-bottom:6px">'+(vip?'★ ':'')+name+'</div>'
+    +(critical?'<div style="background:#DC2626;color:#fff;font-size:11.5px;font-weight:700;padding:6px 8px;border-radius:6px;margin-bottom:6px;white-space:pre-line">'+esc(critical)+'</div>':'')
     +(svc?'<div style="font-size:12px;margin-bottom:2px">📋 '+svc+'</div>':'')
     +'<div style="font-family:monospace;font-size:11px;color:rgba(255,255,255,0.7);margin-bottom:6px">🕐 '+time+'</div>'
     +'<div style="margin-bottom:4px"><span style="display:inline-block;background:'+statusInfo.c+';color:#fff;font-size:11px;font-weight:600;padding:2px 9px;border-radius:10px">'+esc(statusInfo.l)+'</span></div>'
@@ -12372,6 +12458,12 @@ async function openEditPatientModal() {
           </div>
         </div>
         <div class="form-group" style="grid-column:1/-1"><label class="form-label">Σημειώσεις</label><textarea class="form-control" id="ep-notes" rows="3">${esc(p.notes||'')}</textarea></div>
+        <div class="form-group" style="grid-column:1/-1;background:#FEF2F2;border:1px solid #FECACA;border-radius:10px;padding:10px 12px">
+          <label class="form-label" style="color:#B91C1C">‼ Κρίσιμη πληροφορία <span style="font-weight:400;color:var(--text-2)">— εμφανίζεται σε όποιον ανοίγει την καρτέλα ή το ραντεβού (καρτέλα, Πρόγραμμα, popup)</span></label>
+          <textarea class="form-control" id="ep-critical" rows="2" placeholder="π.χ. Πολύ αυστηρή με προσωπικά δεδομένα · Θέλει μόνο τη Δρ. Παπαδάκη · Αλλεργία στη λιδοκαΐνη">${esc(p.critical_note||'')}</textarea>
+          <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;cursor:pointer;margin-top:8px"><input type="checkbox" id="ep-late" ${p.arrives_late?'checked':''}/> ⏰ Αργεί συστηματικά (κλείνε με περιθώριο)</label>
+          <div style="font-size:11px;color:var(--text-2);margin-top:6px">Η ένδειξη «🚫 Ακυρώνει συχνά» μπαίνει αυτόματα: 3+ ακυρώσεις/no-show τους τελευταίους 12 μήνες και τουλάχιστον 20% των ραντεβού.</div>
+        </div>
       </div>
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px">
         <button class="btn btn-ghost" onclick="document.getElementById('lc-overlay').remove()">Ακύρωση</button>
@@ -12409,6 +12501,8 @@ async function openEditPatientModal() {
       status: statusEl ? statusEl.value : p.status,
       notes: document.getElementById('ep-notes').value.trim() || null,
     };
+    patch.critical_note = (document.getElementById('ep-critical')||{value:''}).value.trim() || null;
+    patch.arrives_late = !!(document.getElementById('ep-late')||{}).checked;
     // Σύσταση: ελεύθερο όνομα + αυτόματη σύνδεση με υπάρχουσα καρτέλα (αν ταυτοποιηθεί μονοσήμαντα)
     const refName = (document.getElementById('ep-referred-by')||{value:''}).value.trim();
     patch.referred_by_name = refName || null;

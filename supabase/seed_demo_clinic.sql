@@ -815,3 +815,14 @@ update public.appointments a set room_id = s.default_room_id
 from public.services s
 where a.clinic_id='a787b766-9d23-45b2-9660-7bb480856a1b' and s.clinic_id = a.clinic_id and s.name = a.service_name
   and a.room_id is null and s.default_room_id is not null;
+
+-- ── 15. Κρίσιμες πληροφορίες πελατών (banner/pop-up) ──────────────────────────
+update public.patients set critical_note = case full_name
+  when 'ΚΑΤΕΡΙΝΑ ΟΙΚΟΝΟΜΟΥ' then 'Δικηγόρος, εξειδικευμένη σε GDPR — πολύ αυστηρή με προσωπικά δεδομένα. Καμία αναφορά σε τρίτους, καμία φωτογραφία χωρίς ρητή άδεια.'
+  when 'ΜΑΡΙΑ ΠΑΠΑΔΟΠΟΥΛΟΥ' then 'VIP — θέλει ραντεβού μόνο με Δρ. Παπαδάκη. Δεν περιμένει στην αίθουσα αναμονής, να περνάει κατευθείαν.'
+  when 'ΝΙΚΟΣ ΚΑΡΑΓΙΑΝΝΗΣ' then 'Αργεί συστηματικά 15–20 λεπτά. Να κλείνεται πάντα τελευταίο ραντεβού της ζώνης.'
+  when 'ΔΕΣΠΟΙΝΑ ΧΑΤΖΗ' then 'Σοβαρή αλλεργία στη λιδοκαΐνη — ΟΧΙ τοπική αναισθησία με λιδοκαΐνη. Έχει ενημερωθεί το ιατρικό ιστορικό.'
+  when 'ΕΛΕΥΘΕΡΙΑ ΣΑΜΑΡΑ' then 'Ακυρώνει συχνά την τελευταία στιγμή — επιβεβαίωση τηλεφωνικά την προηγούμενη μέρα, όχι SMS μόνο.'
+  else critical_note end,
+  arrives_late = full_name in ('ΝΙΚΟΣ ΚΑΡΑΓΙΑΝΝΗΣ','ΦΑΙΗ ΚΑΤΣΑΡΟΥ')
+where clinic_id='a787b766-9d23-45b2-9660-7bb480856a1b';
