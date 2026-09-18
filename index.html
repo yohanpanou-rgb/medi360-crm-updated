@@ -2678,7 +2678,7 @@ function renderPatientExamsTab() {
     ${exams.length && groups ? `
     <div style="display:flex;flex-direction:column;gap:12px">
       ${groups.map(g=>`
-      <details open style="border:1px solid var(--border-2);border-radius:12px;background:var(--surface-2)">
+      <details style="border:1px solid var(--border-2);border-radius:12px;background:var(--surface-2)">
         <summary style="cursor:pointer;list-style:none;padding:10px 14px;display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700">
           <span>${g.icon}</span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis">${esc(g.title)}</span>
           <span style="font-size:10.5px;font-weight:700;background:var(--blue);color:#fff;border-radius:10px;padding:1px 8px">${g.items.length}</span>
