@@ -8586,81 +8586,202 @@ function modalNewPatient() {
   </div>`;
 }
 
+// Νέο Ραντεβού ως 4 βήματα (Πελάτης → Υπηρεσία → Διαθεσιμότητα → Επιβεβαίωση)
+// αντί για ένα ενιαίο flat form με 10 πεδία όλα ταυτόχρονα ορατά. Κάθε πεδίο
+// κρατάει ΑΚΡΙΒΩΣ το ίδιο id — καμία από τις υπάρχουσες λειτουργίες (αναζήτηση
+// ασθενή/υπηρεσίας, auto-συμπλήρωση διάρκειας/τιμής/δωματίου, auto-pick πακέτου,
+// φίλτρο υπηρεσιών ανά προσωπικό, save) δεν άλλαξε — μόνο ΠΟΥ εμφανίζεται το
+// κάθε πεδίο. Το «βήμα» είναι απλώς ποια wrapper div είναι ορατή.
 function modalNewAppt() {
   const internal = !!(S.modalData && S.modalData.internal);
+  const steps = [
+    {n:1, l:'Πελάτης'},
+    {n:2, l:'Υπηρεσία'},
+    {n:3, l:'Διαθεσιμότητα'},
+    {n:4, l:'Επιβεβαίωση'},
+  ];
   return `<div class="modal">
     <div class="modal-header"><span class="modal-title">Νέο Ραντεβού</span><button class="modal-close" onclick="closeModal()">×</button></div>
     <div class="modal-body">
-      <div class="form-group" style="background:var(--surface);border-radius:10px;padding:10px 12px;margin-bottom:2px">
-        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
-          <input type="checkbox" id="a-internal" ${internal?'checked':''}/>
-          🔒 Εσωτερικό ραντεβού <span style="color:var(--text-2);font-weight:400">— μπλοκάρισμα ώρας χωρίς ασθενή (συνάντηση προσωπικού, άδεια κ.λπ.)</span>
-        </label>
+      <div style="display:flex;gap:4px;margin-bottom:16px">
+        ${steps.map(s=>`<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px">
+          <div class="appt-step-dot" data-step="${s.n}" style="width:22px;height:22px;border-radius:50%;background:${s.n===1?'var(--blue)':'var(--border)'};color:${s.n===1?'#fff':'var(--text-2)'};font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center">${s.n}</div>
+          <div style="font-size:9.5px;color:var(--text-2);text-align:center">${s.l}</div>
+        </div>`).join('')}
       </div>
-      <div class="form-group" id="a-patient-wrap" style="position:relative;${internal?'display:none':''}">
-        <label class="form-label">Ασθενής *</label>
-        <input class="form-control" id="a-patient-search" placeholder="Αναζήτηση..."/>
-        <div id="a-patient-results" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--white);border:1px solid var(--border);border-radius:8px;z-index:10;box-shadow:var(--shadow);max-height:160px;overflow-y:auto"></div>
-        <input type="hidden" id="a-patient-id"/>
+
+      <!-- ΒΗΜΑ 1 — Πελάτης -->
+      <div id="appt-step-1">
+        <div class="form-group" style="background:var(--surface);border-radius:10px;padding:10px 12px;margin-bottom:2px">
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+            <input type="checkbox" id="a-internal" ${internal?'checked':''}/>
+            🔒 Εσωτερικό ραντεβού <span style="color:var(--text-2);font-weight:400">— μπλοκάρισμα ώρας χωρίς ασθενή (συνάντηση προσωπικού, άδεια κ.λπ.)</span>
+          </label>
+        </div>
+        <div class="form-group" id="a-patient-wrap" style="position:relative;${internal?'display:none':''}">
+          <label class="form-label">Ασθενής *</label>
+          <input class="form-control" id="a-patient-search" placeholder="Αναζήτηση..."/>
+          <div id="a-patient-results" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--white);border:1px solid var(--border);border-radius:8px;z-index:10;box-shadow:var(--shadow);max-height:160px;overflow-y:auto"></div>
+          <input type="hidden" id="a-patient-id"/>
+        </div>
+        <div class="form-group" id="a-internal-title-wrap" style="${internal?'':'display:none'}">
+          <label class="form-label">Τίτλος *</label>
+          <input class="form-control" id="a-internal-title" placeholder="π.χ. Συνάντηση προσωπικού, Άδεια, Προσωπικό θέμα" value="${esc((S.modalData&&S.modalData.internalTitle)||'')}"/>
+        </div>
       </div>
-      <div class="form-group" id="a-internal-title-wrap" style="${internal?'':'display:none'}">
-        <label class="form-label">Τίτλος *</label>
-        <input class="form-control" id="a-internal-title" placeholder="π.χ. Συνάντηση προσωπικού, Άδεια, Προσωπικό θέμα" value="${esc((S.modalData&&S.modalData.internalTitle)||'')}"/>
+
+      <!-- ΒΗΜΑ 2 — Υπηρεσία (προσπερνιέται για εσωτερικά ραντεβού) -->
+      <div id="appt-step-2" style="display:none">
+        <div class="form-group" id="a-service-wrap" style="position:relative">
+          <label class="form-label">Υπηρεσία</label>
+          <input class="form-control" id="a-service-search" placeholder="Αναζήτηση υπηρεσίας..." autocomplete="off"/>
+          <div id="a-service-results" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--white);border:1px solid var(--border);border-radius:8px;z-index:10;box-shadow:var(--shadow);max-height:220px;overflow-y:auto"></div>
+          <!-- Το πραγματικό <select> μένει στο DOM (κρυφό) — όλη η υπάρχουσα λογική
+               (φίλτρο ανά προσωπικό, auto-συμπλήρωση διάρκειας/τιμής, auto-pick πακέτου,
+               αποθήκευση) συνεχίζει να διαβάζει/γράφει σε αυτό αναλλοίωτη· το πεδίο
+               αναζήτησης είναι απλά ένα εναλλακτικό, φιλτραρόμενο UI από πάνω του. -->
+          <select class="form-control" id="a-service" style="display:none">
+            <option value="">Επίλεξε υπηρεσία...</option>
+            ${(S.apptServicesCatalog||[]).map(s=>`<option value="${esc(s.name)}" data-duration="${s.duration_minutes}" data-price="${s.price!=null?s.price:''}" data-staff="${(S.apptStaffServices||[]).filter(x=>x.service_id===s.id).map(x=>x.staff_id).join(',')}">${esc(s.name)}</option>`).join('')}
+            <option value="__custom__">✎ Άλλη (πληκτρολόγηση)...</option>
+          </select>
+          <input class="form-control" id="a-service-custom" placeholder="Όνομα υπηρεσίας" style="display:none;margin-top:6px"/>
+        </div>
+        <div class="form-group" id="a-package-wrap" style="display:none">
+          <label class="form-label">📦 Πακέτο Συνεδριών</label>
+          <select class="form-control" id="a-package"><option value="">Χωρίς πακέτο (κανονική χρέωση)</option></select>
+          <div id="a-package-hint" style="font-size:11px;color:var(--text-2);margin-top:4px"></div>
+        </div>
       </div>
-      ${(S.clinicBranches||[]).length>1?`<div class="form-group"><label class="form-label">Υποκατάστημα</label>
-        <select class="form-control" id="a-branch">
-          <option value="">—</option>
-          ${(S.clinicBranches||[]).map(b=>`<option value="${b.id}" ${S.calBranchFilter&&S.calBranchFilter===b.id?'selected':''}>${esc(b.name)}</option>`).join('')}
-        </select>
-      </div>`:''}
-      <div class="form-row">
-        ${(S.clinicRooms||[]).length?`<div class="form-group"><label class="form-label">Δωμάτιο</label>
-          <select class="form-control" id="a-room">
-            <option value="">Αυτόματα (προεπιλογή υπηρεσίας)</option>
-            ${(S.clinicRooms||[]).filter(r=>r.active!==false).map(r=>`<option value="${r.id}" ${S.modalData&&S.modalData.roomId===r.id?'selected':''}>${esc(r.name)}</option>`).join('')}
+
+      <!-- ΒΗΜΑ 3 — Διαθεσιμότητα -->
+      <div id="appt-step-3" style="display:none">
+        ${(S.clinicBranches||[]).length>1?`<div class="form-group"><label class="form-label">Υποκατάστημα</label>
+          <select class="form-control" id="a-branch">
+            <option value="">—</option>
+            ${(S.clinicBranches||[]).map(b=>`<option value="${b.id}" ${S.calBranchFilter&&S.calBranchFilter===b.id?'selected':''}>${esc(b.name)}</option>`).join('')}
           </select>
         </div>`:''}
-        <div class="form-group"><label class="form-label">Προσωπικό</label>
-          <select class="form-control" id="a-therapist">
-            <option value="">Χωρίς ανάθεση</option>
-            ${(S.apptStaffList||[]).map(p=>`<option value="${p.id}">${esc(p.full_name)}</option>`).join('')}
-          </select>
+        <div class="form-row">
+          ${(S.clinicRooms||[]).length?`<div class="form-group"><label class="form-label">Δωμάτιο</label>
+            <select class="form-control" id="a-room">
+              <option value="">Αυτόματα (προεπιλογή υπηρεσίας)</option>
+              ${(S.clinicRooms||[]).filter(r=>r.active!==false).map(r=>`<option value="${r.id}" ${S.modalData&&S.modalData.roomId===r.id?'selected':''}>${esc(r.name)}</option>`).join('')}
+            </select>
+          </div>`:''}
+          <div class="form-group"><label class="form-label">Προσωπικό</label>
+            <select class="form-control" id="a-therapist">
+              <option value="">Χωρίς ανάθεση</option>
+              ${(S.apptStaffList||[]).map(p=>`<option value="${p.id}">${esc(p.full_name)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group"><label class="form-label">Ημ/νία & Ώρα *</label><input class="form-control" id="a-time" type="datetime-local"/></div>
         </div>
-        <div class="form-group"><label class="form-label">Ημ/νία & Ώρα *</label><input class="form-control" id="a-time" type="datetime-local"/></div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">Διάρκεια (λεπτά)</label><input class="form-control" id="a-duration" type="number" value="60"/></div>
+          <!-- Τιμή: ορατή ΜΟΝΟ σε clinic manager/admin. Το input μένει στο DOM
+               (κρυφό) ώστε η τιμή καταλόγου να αποθηκεύεται κανονικά στο ταμείο. -->
+          <div class="form-group" id="a-price-wrap" style="${(canSee(['super_admin','clinic_admin'])&&!internal)?'':'display:none'}"><label class="form-label">Τιμή (€)</label><input class="form-control" id="a-price" type="number" placeholder="0"/></div>
+        </div>
       </div>
-      <div class="form-group" id="a-service-wrap" style="position:relative;${internal?'display:none':''}">
-        <label class="form-label">Υπηρεσία</label>
-        <input class="form-control" id="a-service-search" placeholder="Αναζήτηση υπηρεσίας..." autocomplete="off"/>
-        <div id="a-service-results" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--white);border:1px solid var(--border);border-radius:8px;z-index:10;box-shadow:var(--shadow);max-height:220px;overflow-y:auto"></div>
-        <!-- Το πραγματικό <select> μένει στο DOM (κρυφό) — όλη η υπάρχουσα λογική
-             (φίλτρο ανά προσωπικό, auto-συμπλήρωση διάρκειας/τιμής, auto-pick πακέτου,
-             αποθήκευση) συνεχίζει να διαβάζει/γράφει σε αυτό αναλλοίωτη· το πεδίο
-             αναζήτησης είναι απλά ένα εναλλακτικό, φιλτραρόμενο UI από πάνω του. -->
-        <select class="form-control" id="a-service" style="display:none">
-          <option value="">Επίλεξε υπηρεσία...</option>
-          ${(S.apptServicesCatalog||[]).map(s=>`<option value="${esc(s.name)}" data-duration="${s.duration_minutes}" data-price="${s.price!=null?s.price:''}" data-staff="${(S.apptStaffServices||[]).filter(x=>x.service_id===s.id).map(x=>x.staff_id).join(',')}">${esc(s.name)}</option>`).join('')}
-          <option value="__custom__">✎ Άλλη (πληκτρολόγηση)...</option>
-        </select>
-        <input class="form-control" id="a-service-custom" placeholder="Όνομα υπηρεσίας" style="display:none;margin-top:6px"/>
+
+      <!-- ΒΗΜΑ 4 — Επιβεβαίωση -->
+      <div id="appt-step-4" style="display:none">
+        <div id="appt-summary" style="background:var(--surface);border-radius:10px;padding:10px 12px;margin-bottom:10px;display:flex;flex-direction:column;gap:2px"></div>
+        <div class="form-group"><label class="form-label">Σημειώσεις</label><textarea class="form-control" id="a-notes" rows="2"></textarea></div>
       </div>
-      <div class="form-group" id="a-package-wrap" style="display:none">
-        <label class="form-label">📦 Πακέτο Συνεδριών</label>
-        <select class="form-control" id="a-package"><option value="">Χωρίς πακέτο (κανονική χρέωση)</option></select>
-        <div id="a-package-hint" style="font-size:11px;color:var(--text-2);margin-top:4px"></div>
-      </div>
-      <div class="form-row">
-        <div class="form-group"><label class="form-label">Διάρκεια (λεπτά)</label><input class="form-control" id="a-duration" type="number" value="60"/></div>
-        <!-- Τιμή: ορατή ΜΟΝΟ σε clinic manager/admin. Το input μένει στο DOM
-             (κρυφό) ώστε η τιμή καταλόγου να αποθηκεύεται κανονικά στο ταμείο. -->
-        <div class="form-group" id="a-price-wrap" style="${(canSee(['super_admin','clinic_admin'])&&!internal)?'':'display:none'}"><label class="form-label">Τιμή (€)</label><input class="form-control" id="a-price" type="number" placeholder="0"/></div>
-      </div>
-      <div class="form-group"><label class="form-label">Σημειώσεις</label><textarea class="form-control" id="a-notes" rows="2"></textarea></div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Ακύρωση</button>
-      <button class="btn btn-primary" id="save-appt">Αποθήκευση</button>
+      <button class="btn btn-ghost" id="appt-step-back" style="display:none" onclick="apptStepBack()">← Πίσω</button>
+      <button class="btn btn-primary" id="appt-step-next" onclick="apptStepNext()">Επόμενο →</button>
+      <button class="btn btn-primary" id="save-appt" style="display:none">Αποθήκευση</button>
     </div>
   </div>`;
+}
+
+// Βήμα 2 (Υπηρεσία) δεν υπάρχει για εσωτερικά ραντεβού — δεν έχουν υπηρεσία.
+function apptVisibleSteps() {
+  const internal = !!(document.getElementById('a-internal')||{}).checked;
+  return internal ? [1,3,4] : [1,2,3,4];
+}
+let _apptStep = 1;
+function apptShowStep(n) {
+  _apptStep = n;
+  for (let i=1;i<=4;i++) { const el=document.getElementById('appt-step-'+i); if (el) el.style.display = i===n?'':'none'; }
+  const steps = apptVisibleSteps();
+  const pos = steps.indexOf(n);
+  document.querySelectorAll('.appt-step-dot').forEach(d=>{
+    const i = parseInt(d.dataset.step,10);
+    const reached = steps.includes(i) && steps.indexOf(i) <= pos;
+    d.style.background = reached ? 'var(--blue)' : 'var(--border)';
+    d.style.color = reached ? '#fff' : 'var(--text-2)';
+  });
+  const back=document.getElementById('appt-step-back'); if (back) back.style.display = pos>0 ? '' : 'none';
+  const next=document.getElementById('appt-step-next'); if (next) next.style.display = pos<steps.length-1 ? '' : 'none';
+  const save=document.getElementById('save-appt'); if (save) save.style.display = pos===steps.length-1 ? '' : 'none';
+  if (pos===steps.length-1) apptRenderSummary();
+}
+function apptValidateStep(n) {
+  if (n===1) {
+    const internal = !!(document.getElementById('a-internal')||{}).checked;
+    if (internal) {
+      const t = document.getElementById('a-internal-title');
+      if (!t || !t.value.trim()) { alert('Συμπλήρωσε τίτλο για το εσωτερικό ραντεβού'); return false; }
+    } else {
+      const pid = document.getElementById('a-patient-id');
+      if (!pid || !pid.value) { alert('Επίλεξε ασθενή από τη λίστα (ή δημιούργησε νέο)'); return false; }
+    }
+    return true;
+  }
+  if (n===2) {
+    const svcSel = document.getElementById('a-service');
+    const custom = document.getElementById('a-service-custom');
+    const val = svcSel && svcSel.value==='__custom__' ? (custom&&custom.value.trim()) : (svcSel&&svcSel.value);
+    if (!val) { alert('Επίλεξε υπηρεσία από τη λίστα (ή «✎ Άλλη» για ελεύθερο κείμενο)'); return false; }
+    return true;
+  }
+  if (n===3) {
+    const time = document.getElementById('a-time');
+    if (!time || !time.value) { alert('Συμπλήρωσε ημερομηνία και ώρα'); return false; }
+    return true;
+  }
+  return true;
+}
+function apptStepNext() {
+  if (!apptValidateStep(_apptStep)) return;
+  const steps = apptVisibleSteps();
+  const pos = steps.indexOf(_apptStep);
+  if (pos < steps.length-1) apptShowStep(steps[pos+1]);
+}
+function apptStepBack() {
+  const steps = apptVisibleSteps();
+  const pos = steps.indexOf(_apptStep);
+  if (pos > 0) apptShowStep(steps[pos-1]);
+}
+// Σύνοψη στο βήμα 4 — απλή ανάγνωση των ίδιων πεδίων, καμία δική της κατάσταση.
+function apptRenderSummary() {
+  const el = document.getElementById('appt-summary'); if (!el) return;
+  const internal = !!(document.getElementById('a-internal')||{}).checked;
+  const row = (k,v) => `<div style="display:flex;justify-content:space-between;gap:10px;font-size:12px;padding:3px 0"><span style="color:var(--text-2)">${k}</span><span style="font-weight:600;text-align:right">${esc(v||'—')}</span></div>`;
+  let html = '';
+  if (internal) {
+    html += row('Τίτλος', (document.getElementById('a-internal-title')||{}).value);
+  } else {
+    html += row('Ασθενής', (document.getElementById('a-patient-search')||{}).value);
+    const svcSel = document.getElementById('a-service');
+    const custom = document.getElementById('a-service-custom');
+    const svcName = svcSel && svcSel.value==='__custom__' ? (custom&&custom.value) : (svcSel && svcSel.selectedOptions[0] ? svcSel.selectedOptions[0].textContent : '');
+    html += row('Υπηρεσία', svcName);
+  }
+  const timeEl = document.getElementById('a-time');
+  const timeStr = timeEl && timeEl.value ? new Date(timeEl.value).toLocaleString('el-GR',{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '';
+  html += row('Πότε', timeStr);
+  const therSel = document.getElementById('a-therapist');
+  html += row('Προσωπικό', therSel && therSel.value && therSel.selectedOptions[0] ? therSel.selectedOptions[0].textContent : 'Χωρίς ανάθεση');
+  const durEl = document.getElementById('a-duration');
+  html += row('Διάρκεια', (durEl?durEl.value:'60')+' λεπτά');
+  el.innerHTML = html;
 }
 
 function modalNewLead() {
@@ -8996,6 +9117,7 @@ function bindEvents() {
           if (window._apptLoadPatientPackages) window._apptLoadPatientPackages(S.patientDetail.id);
         }
       }
+      if (modal==='new-appt' && window.apptShowStep) apptShowStep(1);
     };
   });
 
