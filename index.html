@@ -299,6 +299,7 @@ summary::-webkit-details-marker{display:none}
   .stat-value{font-size:22px}
   .hide-mobile{display:none}
   .mobile-pt-indicators{display:flex;gap:6px;flex-wrap:wrap;margin-top:3px}
+  .cal-date-label{min-width:0!important;font-size:12px!important}
   .form-row{grid-template-columns:1fr}
   .dash-grid{grid-template-columns:1fr!important}
   .dash-grid>*{min-width:0}
@@ -4319,14 +4320,21 @@ function renderCalendar() {
 
     <!-- Toolbar -->
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex-shrink:0">
-      <!-- Date nav -->
-      <button class="btn btn-ghost btn-sm" data-cal-nav="-1">‹</button>
-      <span style="font-size:13px;font-weight:500;min-width:200px;text-align:center">${calView==='day'?dateStr:
-        `${weekStart.toLocaleDateString('el-GR',{day:'numeric',month:'short'})} – ${new Date(weekStart.getTime()+6*86400000).toLocaleDateString('el-GR',{day:'numeric',month:'short',year:'numeric'})}`
-      }</span>
-      <button class="btn btn-ghost btn-sm" data-cal-nav="1">›</button>
-      <button class="btn btn-ghost btn-sm" data-cal-today>Σήμερα</button>
-      ${calView==='day'?`<button class="btn btn-ghost btn-sm" onclick="printDaySchedule()" title="Εκτύπωση ημερήσιου προγράμματος">🖨</button>`:''}
+      <!-- Date nav: μαζεμένα σε μία μονάδα ώστε να μη σπάνε το ένα από το άλλο
+      σε στενές οθόνες (πριν, κάθε κουμπί/span ήταν ξεχωριστό flex child και
+      κατέληγε σε δική του γραμμή σε κινητό, «τρώγοντας» πολύ κατακόρυφο χώρο
+      πριν καν φανεί το ίδιο το πρόγραμμα). -->
+      <div style="display:flex;align-items:center;gap:6px">
+        <button class="btn btn-ghost btn-sm" data-cal-nav="-1">‹</button>
+        <span class="cal-date-label" style="font-size:13px;font-weight:500;min-width:200px;text-align:center">${calView==='day'?dateStr:
+          `${weekStart.toLocaleDateString('el-GR',{day:'numeric',month:'short'})} – ${new Date(weekStart.getTime()+6*86400000).toLocaleDateString('el-GR',{day:'numeric',month:'short',year:'numeric'})}`
+        }</span>
+        <button class="btn btn-ghost btn-sm" data-cal-nav="1">›</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <button class="btn btn-ghost btn-sm" data-cal-today>Σήμερα</button>
+        ${calView==='day'?`<button class="btn btn-ghost btn-sm" onclick="printDaySchedule()" title="Εκτύπωση ημερήσιου προγράμματος">🖨</button>`:''}
+      </div>
 
       <div style="flex:1"></div>
 
