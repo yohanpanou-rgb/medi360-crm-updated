@@ -2824,43 +2824,61 @@ function renderPatientDetail() {
     μόλις ο χρήστης κατεβεί λίγο στο περιεχόμενο μιας καρτέλας. -->
     <div style="position:sticky;top:56px;z-index:45;background:var(--surface);margin-left:-24px;margin-right:-24px;margin-top:-24px;padding:16px 24px 0">
     ${criticalBannerHtml(p, p.appointments)}
-    <!-- Header -->
-    <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:12px">
-      <div style="display:flex;align-items:center;gap:12px">
-        <button class="btn btn-ghost btn-sm" data-page="patients">← Πίσω</button>
-        <div style="width:44px;height:44px;border-radius:50%;background:#E6F1FB;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:600;color:#185FA5">${initials(p.full_name)}</div>
-        <div>
-          <h1 class="page-title" style="font-size:18px">${esc(p.full_name)}</h1>
-          <div style="display:flex;gap:8px;align-items:center;margin-top:4px;flex-wrap:wrap">
-            ${patBadge(p.status)}
-            <span style="font-size:12px;color:var(--text-2)">${esc(p.phone||'')}</span>
-            ${phoneActionsHtml(p.phone, 13)}
-            ${p.amka?`<span style="font-size:11px;color:var(--text-2);background:var(--surface-2);padding:2px 9px;border-radius:9px;font-variant-numeric:tabular-nums" title="ΑΜΚΑ">ΑΜΚΑ ${esc(p.amka)}</span>`:''}
-            ${p.gdpr_signed?'<span style="font-size:11px;color:#0F6E56">✓ GDPR</span>':'<span style="font-size:11px;color:var(--red)">⚠ Χωρίς GDPR</span>'}
-            ${p.source?`<span style="font-size:11px;color:var(--text-2);background:var(--surface-2);padding:2px 9px;border-radius:9px">📍 ${esc(p.source)}</span>`:''}
-            ${S.serviceConsentCleansing
-              ? `<span style="font-size:11px;color:#0F6E56;cursor:pointer" onclick="viewGroupConsent('cleansing')">✓ Καθαρισμοί</span>`
-              : patientNeedsServiceConsent(p,'cleansing') ? `<span style="font-size:11px;color:var(--red);cursor:pointer" onclick="openGroupConsentModal('cleansing')">⚠ Χωρίς Συν. Καθαρισμού</span>` : ''}
-            ${S.serviceConsentPeelings
-              ? `<span style="font-size:11px;color:#0F6E56;cursor:pointer" onclick="viewGroupConsent('peelings')">✓ Peeling/Microneedling</span>`
-              : patientNeedsServiceConsent(p,'peelings') ? `<span style="font-size:11px;color:var(--red);cursor:pointer" onclick="openGroupConsentModal('peelings')">⚠ Χωρίς Συν. Peelings</span>` : ''}
-            ${S.serviceConsentOxygen
-              ? `<span style="font-size:11px;color:#0F6E56;cursor:pointer" onclick="viewGroupConsent('oxygen')">✓ Ενυδάτωση/Λάμψη</span>`
-              : patientNeedsServiceConsent(p,'oxygen') ? `<span style="font-size:11px;color:var(--red);cursor:pointer" onclick="openGroupConsentModal('oxygen')">⚠ Χωρίς Συν. Οξυγόνου</span>` : ''}
-            <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-2);cursor:pointer;user-select:none;margin-left:4px">
-              <input type="checkbox" id="pat-student-toggle" ${p.is_student?'checked':''} style="width:14px;height:14px;accent-color:var(--blue);cursor:pointer"/> Φοιτητής
-            </label>
-          </div>
-        </div>
-      </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn btn-ghost btn-sm" data-modal="new-appt">+ Ραντεβού</button>
-        <button class="btn btn-ghost btn-sm" onclick="openPackageModal()">📦 + Πακέτο</button>
-        <button class="btn btn-primary btn-sm" data-modal="new-laser">+ Laser Form</button>
-        <button class="btn btn-primary btn-sm" data-modal="new-injectable" style="background:${INJ_ACCENT};border-color:${INJ_ACCENT}">💉 + Ενέσιμα</button>
-        ${canSee(['super_admin','clinic_admin']) ? `<button class="btn btn-ghost btn-sm" style="color:var(--red);border-color:var(--red)" onclick="deletePatientPermanently()">🗑 Διαγραφή</button>` : ''}
+    <!-- Header: «Ζώνες» — ταυτότητα / κάρτα κατάστασης+συναινέσεων / ενέργειες,
+    αντί για μία γραμμή με 8+ badges και 5 κουμπιά όλα μαζί. Τίποτα δεν κρύβεται,
+    απλά ομαδοποιείται οπτικά ώστε να διαβάζεται με μια ματιά. -->
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+      <button class="btn btn-ghost btn-sm" data-page="patients">← Πίσω</button>
+      <div style="width:40px;height:40px;border-radius:50%;background:#E6F1FB;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#185FA5;flex-shrink:0">${initials(p.full_name)}</div>
+      <div style="min-width:0">
+        <h1 class="page-title" style="font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(p.full_name)}</h1>
+        <div style="font-size:12px;color:var(--text-2);margin-top:1px;display:flex;align-items:center;gap:6px">${esc(p.phone||'')} ${phoneActionsHtml(p.phone, 12)}</div>
       </div>
     </div>
+
+    <div style="background:var(--surface-2);border-radius:11px;padding:11px 14px;margin-bottom:12px;display:flex;flex-direction:column;gap:9px">
+      <div style="display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center">
+        ${patBadge(p.status)}
+        ${p.gdpr_signed?'<span style="font-size:11px;font-weight:700;color:#0F6E56">✓ GDPR</span>':'<span style="font-size:11px;font-weight:700;color:var(--red)">⚠ Χωρίς GDPR</span>'}
+        ${p.amka?`<span style="font-size:11px;color:var(--text-2);font-variant-numeric:tabular-nums" title="ΑΜΚΑ">ΑΜΚΑ ${esc(p.amka)}</span>`:''}
+        ${p.source?`<span style="font-size:11px;color:var(--text-2)">📍 ${esc(p.source)}</span>`:''}
+        <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-2);cursor:pointer;user-select:none;margin-left:auto">
+          <input type="checkbox" id="pat-student-toggle" ${p.is_student?'checked':''} style="width:14px;height:14px;accent-color:var(--blue);cursor:pointer"/> Φοιτητής
+        </label>
+      </div>
+      ${(()=>{
+        const items = [];
+        if (S.serviceConsentCleansing) items.push({ok:true,label:'Καθαρισμοί',act:"viewGroupConsent('cleansing')"});
+        else if (patientNeedsServiceConsent(p,'cleansing')) items.push({ok:false,label:'Καθαρισμός',act:"openGroupConsentModal('cleansing')"});
+        if (S.serviceConsentPeelings) items.push({ok:true,label:'Peeling/Microneedling',act:"viewGroupConsent('peelings')"});
+        else if (patientNeedsServiceConsent(p,'peelings')) items.push({ok:false,label:'Peelings',act:"openGroupConsentModal('peelings')"});
+        if (S.serviceConsentOxygen) items.push({ok:true,label:'Ενυδάτωση/Λάμψη',act:"viewGroupConsent('oxygen')"});
+        else if (patientNeedsServiceConsent(p,'oxygen')) items.push({ok:false,label:'Οξυγόνο',act:"openGroupConsentModal('oxygen')"});
+        if (!items.length) return '';
+        return `<div style="border-top:1px solid var(--border-2);padding-top:9px;display:flex;flex-direction:column;gap:7px">
+          <div style="font-size:9.5px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--text-3)">Συναινέσεις</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">
+            ${items.map(it=>`<span onclick="${it.act}" style="font-size:11px;font-weight:700;padding:3px 9px;border-radius:9px;cursor:pointer;background:${it.ok?'#E1F5EE':'#FCEBEB'};color:${it.ok?'#0F6E56':'var(--red)'}">${it.ok?'✓':'⚠'} ${esc(it.label)}</span>`).join('')}
+          </div>
+        </div>`;
+      })()}
+    </div>
+
+    ${(()=>{
+      // Ενέργειες ως εικονίδια σε γραμμή που κυλάει οριζόντια — ίδιες 5
+      // ενέργειες με πριν, καμία κρυμμένη σε μενού, απλά πιο συμπαγείς.
+      const chip = (icon,bg,label,attrs,labelColor) => `<button class="btn" ${attrs} style="flex-shrink:0;width:64px;display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 4px;border-radius:10px;background:var(--surface-2);border:none;cursor:pointer">
+        <span style="width:28px;height:28px;border-radius:50%;background:${bg};display:flex;align-items:center;justify-content:center;font-size:13px">${icon}</span>
+        <span style="font-size:9px;font-weight:700;color:${labelColor||'var(--text)'};text-align:center;line-height:1.15">${label}</span>
+      </button>`;
+      return `<div style="display:flex;gap:9px;overflow-x:auto;padding-bottom:4px;margin-bottom:12px">
+        ${chip('📅','var(--blue)','Ραντεβού','data-modal="new-appt"')}
+        ${chip('📦','#6B7280','Πακέτο','onclick="openPackageModal()"')}
+        ${chip('⚡','var(--blue)','Laser Form','data-modal="new-laser"')}
+        ${chip('💉',INJ_ACCENT,'Ενέσιμα','data-modal="new-injectable"')}
+        ${canSee(['super_admin','clinic_admin']) ? chip('🗑','var(--red)','Διαγραφή','onclick="deletePatientPermanently()"','var(--red)') : ''}
+      </div>`;
+    })()}
     ${(()=>{
       // 🎁 Banner δώρου γενεθλίων: ενεργό (με κουμπί εξαργύρωσης) ή πρόσφατα εξαργυρωμένο
       const g = S.patientBirthdayGift;
@@ -2880,22 +2898,25 @@ function renderPatientDetail() {
       return '';
     })()}
 
-    <!-- Tabs: τυλίγονται σε 2–3 σειρές στο κινητό (flex-wrap) αντί για οριζόντιο
-    scroll, ώστε όλες οι επιλογές να είναι ορατές με μια ματιά. Σειρά κατά
-    συχνότητα χρήσης· το Timeline τελευταίο. -->
-    <div style="display:flex;flex-wrap:wrap;gap:2px 0;border-bottom:1px solid var(--border-2)">
-      ${[
-        {id:'overview',l:'Στοιχεία'},
-        {id:'appointments',l:`Ραντεβού (${(p.appointments&&p.appointments.length)||0})`},
-        {id:'medical',l:`Ιατρικό Ιστορικό${hasMedicalHistoryData(p)?' ✓':''}`},
-        {id:'patconsents',l:'Συναινέσεις'},
-        {id:'consultation',l:`Consultation (${consultations.length})`},
-        {id:'laser',l:`Laser Forms (${laserForms.length})`},
-        {id:'injectables',l:`Ενέσιμα (${injectableForms.length})`},
-        {id:'photos',l:`Φωτογραφίες (${(S.patientPhotos||[]).length})`},
-        {id:'exams',l:`Εξετάσεις (${(S.patientExams||[]).length})`},
-        {id:'timeline',l:'Timeline'},
-      ].map(t=>`<button class="btn" style="border-radius:0;border-bottom:2px solid ${patTab===t.id?'var(--blue)':'transparent'};color:${patTab===t.id?'var(--blue)':'var(--text-2)'};background:transparent;padding:7px 11px;font-size:12px;white-space:nowrap;font-weight:${patTab===t.id?'700':'500'}" data-pat-tab="${t.id}">${t.l}</button>`).join('')}
+    <!-- Tabs: μία γραμμή που κυλάει οριζόντια (αντί να σπάνε σε 2-3 σειρές) —
+    όλα τα tabs παραμένουν, απλά δεν καταλαμβάνουν μόνιμα ύψος στην οθόνη.
+    Σειρά κατά συχνότητα χρήσης· το Timeline τελευταίο. -->
+    <div style="position:relative">
+      <div style="display:flex;gap:16px;overflow-x:auto;padding-bottom:8px;border-bottom:1px solid var(--border-2)">
+        ${[
+          {id:'overview',l:'Στοιχεία'},
+          {id:'appointments',l:`Ραντεβού (${(p.appointments&&p.appointments.length)||0})`},
+          {id:'medical',l:`Ιατρικό Ιστορικό${hasMedicalHistoryData(p)?' ✓':''}`},
+          {id:'patconsents',l:'Συναινέσεις'},
+          {id:'consultation',l:`Consultation (${consultations.length})`},
+          {id:'laser',l:`Laser Forms (${laserForms.length})`},
+          {id:'injectables',l:`Ενέσιμα (${injectableForms.length})`},
+          {id:'photos',l:`Φωτογραφίες (${(S.patientPhotos||[]).length})`},
+          {id:'exams',l:`Εξετάσεις (${(S.patientExams||[]).length})`},
+          {id:'timeline',l:'Timeline'},
+        ].map(t=>`<button class="btn" style="flex-shrink:0;border-radius:0;border-bottom:2px solid ${patTab===t.id?'var(--blue)':'transparent'};color:${patTab===t.id?'var(--blue)':'var(--text-2)'};background:transparent;padding:0 1px 8px;font-size:12px;white-space:nowrap;font-weight:${patTab===t.id?'700':'500'}" data-pat-tab="${t.id}">${t.l}</button>`).join('')}
+      </div>
+      <div style="position:absolute;right:0;top:0;bottom:8px;width:24px;background:linear-gradient(to right, transparent, var(--surface));pointer-events:none"></div>
     </div>
     </div>
     <div style="margin-top:20px">
