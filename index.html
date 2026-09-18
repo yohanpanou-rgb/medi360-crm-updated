@@ -9627,16 +9627,29 @@ function bindEvents() {
       const consentIdSets = {laser:S.laserConsentIds, cleansing:S.cleansingConsentIds, peelings:S.peelingsConsentIds, oxygen:S.oxygenConsentIds};
       const consentLabels = {laser:'Laser Αποτρίχωσης', cleansing:'Καθαρισμού', peelings:'Peelings', oxygen:'Οξυγόνου/Ενυδάτωσης'};
       const missingThisConsent = consentGrp && a.patient_id && consentIdSets[consentGrp] && !consentIdSets[consentGrp].has(a.patient_id);
+      // Συνδυαστική κατεύθυνση εδώ: status ως συμπαγές pill δίπλα στο όνομα
+      // (όχι πλήρους πλάτους select χωμένο στο τέλος)· Υπηρεσία/Θεραπευτής ως
+      // μία γραμμή ετικέτα+select (όχι ξεχωριστό block με label από πάνω το
+      // καθένα)· Υποκατάστημα/Δωμάτιο/απόδειξη/αναλώσιμα/φωτογραφίες/Διαγραφή
+      // πάνε σε ένα κλειστό-by-default «⚙ Περισσότερα» — καμία λειτουργία δεν
+      // χάνεται, όλα τα ids/selectors παραμένουν ίδια ώστε το binding από κάτω
+      // να συνεχίσει να δουλεύει αναλλοίωτο.
+      const st = STATUS_APPT[a.status]||STATUS_APPT.confirmed;
       content.innerHTML = `
         ${a.is_internal ? `
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
           <div style="width:36px;height:36px;border-radius:50%;background:${c.bg};display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">🔒</div>
           <div style="flex:1;min-width:0">
             <div style="font-size:14px;font-weight:500">${esc(a.internal_title||'Εσωτερικό ραντεβού')}</div>
             <div style="font-size:12px;color:var(--text-2)">Μπλοκάρισμα ώρας — χωρίς ασθενή</div>
           </div>
+        </div>
+        <div style="margin-bottom:10px">
+          <select data-appt-status="${a.id}" style="font-size:10.5px;font-weight:700;padding:4px 11px;border-radius:99px;border:none;background:${st.bg};color:${st.c};font-family:var(--font);cursor:pointer">
+            ${Object.entries(STATUS_APPT).map(([k,v])=>`<option value="${k}" ${a.status===k?'selected':''}>${v.l}</option>`).join('')}
+          </select>
         </div>` : `
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
           <div style="width:36px;height:36px;border-radius:50%;background:${c.bg};display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:${c.text};flex-shrink:0">${initials(a.patients&&a.patients.full_name)}</div>
           <div style="flex:1;min-width:0">
             <div style="font-size:14px;font-weight:500">${esc(a.patients&&a.patients.full_name||'—')}</div>
@@ -9644,49 +9657,39 @@ function bindEvents() {
           </div>
           <button class="btn btn-primary btn-sm" style="flex-shrink:0;padding:6px 10px;font-size:11px;white-space:nowrap" data-patient="${a.patient_id}">👤 Καρτέλα</button>
         </div>
+        <div style="margin-bottom:10px">
+          <select data-appt-status="${a.id}" style="font-size:10.5px;font-weight:700;padding:4px 11px;border-radius:99px;border:none;background:${st.bg};color:${st.c};font-family:var(--font);cursor:pointer">
+            ${Object.entries(STATUS_APPT).map(([k,v])=>`<option value="${k}" ${a.status===k?'selected':''}>${v.l}</option>`).join('')}
+          </select>
+        </div>
         ${criticalBannerHtml(a.patients ? Object.assign({id:a.patient_id}, a.patients) : null, null, {compact:true})}
         ${canSee(['super_admin','clinic_admin','receptionist'])?`
         <div style="display:flex;gap:6px;margin-bottom:10px">
-          <button class="btn btn-ghost btn-sm" style="flex:1;justify-content:center;font-size:11px" onclick="resendApptAutomation('${a.id}','resend_confirmation')">📧 Αίτημα επιβεβ.</button>
-          <button class="btn btn-ghost btn-sm" style="flex:1;justify-content:center;font-size:11px" onclick="resendApptAutomation('${a.id}','resend_instructions')">📋 Αποστολή οδηγιών</button>
-        </div>
-        ${a.status==='completed' && S.clinic && S.clinic.settings && S.clinic.settings.review_request_enabled?`
-        <button class="btn btn-ghost btn-sm" style="width:100%;justify-content:center;font-size:11px;margin-bottom:10px" onclick="resendApptAutomation('${a.id}','resend_review_request')">⭐ Ζήτηση αξιολόγησης</button>`:''}`:''}`}
+          <button class="btn btn-ghost btn-sm" style="flex:1;justify-content:center;font-size:11px;padding:6px 4px" onclick="resendApptAutomation('${a.id}','resend_confirmation')">📧 Επιβεβ.</button>
+          <button class="btn btn-ghost btn-sm" style="flex:1;justify-content:center;font-size:11px;padding:6px 4px" onclick="resendApptAutomation('${a.id}','resend_instructions')">📋 Οδηγίες</button>
+          ${a.status==='completed' && S.clinic && S.clinic.settings && S.clinic.settings.review_request_enabled?`
+          <button class="btn btn-ghost btn-sm" style="flex:1;justify-content:center;font-size:11px;padding:6px 4px" onclick="resendApptAutomation('${a.id}','resend_review_request')">⭐ Αξιολ.</button>`:''}
+        </div>`:''}`}
         ${(a.is_internal ? [
           ['Ημερομηνία', start.toLocaleDateString('el-GR',{weekday:'long',day:'numeric',month:'long',year:'numeric'})],
           ['Ώρα', start.toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'})+' – '+end.toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'})],
           ['Διάρκεια', (a.duration_minutes||60)+' λεπτά'],
-          ...((S.clinicBranches||[]).length && a.branch_id ? [['Υποκατάστημα', ((S.clinicBranches||[]).find(b=>b.id===a.branch_id)||{}).name]] : []),
-          ...((S.clinicRooms||[]).length ? [['Δωμάτιο', roomName(a.room_id) || '—']] : []),
         ] : [
-          ['Υπηρεσία', a.service_name],
           ['Ημερομηνία', start.toLocaleDateString('el-GR',{weekday:'long',day:'numeric',month:'long',year:'numeric'})],
           ['Ώρα', start.toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'})+' – '+end.toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'})],
           ['Διάρκεια', (a.duration_minutes||60)+' λεπτά'],
-          ['Κατάσταση', (STATUS_APPT[a.status]||STATUS_APPT.confirmed).l],
-          ...((S.clinicBranches||[]).length && a.branch_id ? [['Υποκατάστημα', ((S.clinicBranches||[]).find(b=>b.id===a.branch_id)||{}).name]] : []),
-          ...((S.clinicRooms||[]).length ? [['Δωμάτιο', roomName(a.room_id) || (serviceDefaultRoomId(a.service_name) ? roomName(serviceDefaultRoomId(a.service_name))+' (προεπιλογή)' : '—')]] : []),
           ['GDPR', a.patients&&a.patients.gdpr_signed ? '✅ Υπογεγραμμένο' : '❌ Χωρίς GDPR'],
           ...(canFin && a.price ? [['Τιμή', euro(a.price)]] : []),
         ]).map(([k,v])=>`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border-2);font-size:12px"><span style="color:var(--text-2)">${k}</span><span style="font-weight:500;text-align:right;max-width:180px">${esc(v||'—')}</span></div>`).join('')}
-        ${a.is_internal ? '' : `
-        <div id="appt-receipt-area">${apptReceiptAreaHtml(a, canReceipt)}</div>
-        ${apptConsumablesAreaHtml(a)}
-        ${a.patient_id?`<div style="margin-top:8px;display:flex;gap:6px">
-          <label class="btn btn-ghost btn-sm" style="cursor:pointer;flex:1;justify-content:center;margin:0">
-            📷 Λήψη Φωτογραφιών Ραντεβού
-            <input type="file" id="appt-photo-input" accept="image/*" capture="environment" multiple style="display:none"/>
-          </label>
-        </div>
-        <div id="appt-photo-status" style="display:none;font-size:11px;color:var(--blue);margin-top:4px;text-align:center">Μεταφόρτωση...</div>`:''}`}
         ${a.is_internal ? '' : (()=>{
           // Αλλαγή υπηρεσίας εκ των υστέρων — π.χ. ο πελάτης τελικά έκανε άλλη
-          // θεραπεία από αυτήν με την οποία είχε κλειστεί το ραντεβού.
+          // θεραπεία από αυτήν με την οποία είχε κλειστεί το ραντεβού. Καθημερινή
+          // ενέργεια, μένει πάντα ορατή — μία συμπαγής γραμμή ετικέτα+select.
           const cats = [...new Set((S.clinicServicesLite||[]).map(s=>(s.category||'Άλλο').trim()))];
           const curKnown = (S.clinicServicesLite||[]).some(s=>s.name===a.service_name);
-          return `<div style="margin-top:8px">
-            <div style="font-size:11px;color:var(--text-2);margin-bottom:3px">Υπηρεσία</div>
-            <select id="appt-service-edit" style="width:100%;font-size:12px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-family:var(--font)">
+          return `<div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+            <div style="font-size:11px;color:var(--text-2);flex-shrink:0;width:72px">Υπηρεσία</div>
+            <select id="appt-service-edit" style="flex:1;min-width:0;font-size:12px;padding:5px 7px;border:1px solid var(--border);border-radius:6px;font-family:var(--font)">
               ${!curKnown && a.service_name ? `<option value="${esc(a.service_name)}" selected>${esc(a.service_name)} (τρέχουσα)</option>` : ''}
               ${cats.map(c=>`<optgroup label="${esc(c)}">${(S.clinicServicesLite||[]).filter(s=>(s.category||'Άλλο').trim()===c).map(s=>`<option value="${esc(s.name)}" ${s.name===a.service_name?'selected':''}>${esc(s.name)}</option>`).join('')}</optgroup>`).join('')}
             </select>
@@ -9702,28 +9705,14 @@ function bindEvents() {
             .filter(s=>s.active!==false || sameStaffName(s.full_name, curName))
             .map(s=>s.full_name);
           const opts = [...FIXED, ...extras];
-          return `<div style="margin-top:8px">
-            <div style="font-size:11px;color:var(--text-2);margin-bottom:3px">Θεραπευτής</div>
-            <select id="appt-therapist-edit" style="width:100%;font-size:12px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-family:var(--font)">
+          return `<div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+            <div style="font-size:11px;color:var(--text-2);flex-shrink:0;width:72px">Θεραπευτής</div>
+            <select id="appt-therapist-edit" style="flex:1;min-width:0;font-size:12px;padding:5px 7px;border:1px solid var(--border);border-radius:6px;font-family:var(--font)">
               <option value="">— Χωρίς ανάθεση —</option>
               ${opts.map(n=>`<option value="${esc(n)}" ${curName && sameStaffName(n,curName)?'selected':''}>${esc(n)}</option>`).join('')}
             </select>
           </div>`;
         })()}
-        ${(S.clinicBranches||[]).length>1?`<div style="margin-top:8px">
-          <div style="font-size:11px;color:var(--text-2);margin-bottom:3px">Υποκατάστημα</div>
-          <select id="appt-branch-edit" style="width:100%;font-size:12px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-family:var(--font)">
-            <option value="">— Χωρίς υποκατάστημα —</option>
-            ${(S.clinicBranches||[]).map(b=>`<option value="${b.id}" ${a.branch_id===b.id?'selected':''}>${esc(b.name)}</option>`).join('')}
-          </select>
-        </div>`:''}
-        ${(S.clinicRooms||[]).length?`<div style="margin-top:8px">
-          <div style="font-size:11px;color:var(--text-2);margin-bottom:3px">Δωμάτιο</div>
-          <select id="appt-room-edit" style="width:100%;font-size:12px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-family:var(--font)">
-            <option value="">— Προεπιλογή υπηρεσίας${serviceDefaultRoomId(a.service_name)?' ('+esc(roomName(serviceDefaultRoomId(a.service_name)))+')':''} —</option>
-            ${(S.clinicRooms||[]).filter(r=>r.active!==false||r.id===a.room_id).map(r=>`<option value="${r.id}" ${a.room_id===r.id?'selected':''}>${esc(r.name)}</option>`).join('')}
-          </select>
-        </div>`:''}
         <div style="margin-top:8px">
           <div style="font-size:11px;color:var(--text-2);margin-bottom:3px">Σημειώσεις</div>
           <textarea id="appt-notes-edit" rows="2" style="width:100%;font-size:12px;resize:vertical" placeholder="π.χ. προτιμήσεις, ευαισθησίες, παρατηρήσεις...">${esc((a.notes||'').replace(/Προσωπικό:\s*[^\n·|]+\n?/i,'').trim())}</textarea>
@@ -9731,14 +9720,38 @@ function bindEvents() {
         </div>
         ${missingThisConsent?`
         <button class="btn btn-sm" style="width:100%;margin-top:8px;justify-content:center;background:#D97706;color:#fff;font-weight:700" onclick="openConsentFromAppointment('${a.patient_id}','${esc(a.patients&&a.patients.full_name||'')}','${consentGrp}')">📝 Συμπλήρωση Συναίνεσης ${consentLabels[consentGrp]}</button>`:''}
-        <div style="margin-top:${missingThisConsent?'8':'10'}px">
-          <select data-appt-status="${a.id}" style="width:100%;font-size:11px;padding:5px;border:1px solid var(--border);border-radius:6px;font-family:var(--font)">
-            ${Object.entries(STATUS_APPT).map(([k,v])=>`<option value="${k}" ${a.status===k?'selected':''}>${v.l}</option>`).join('')}
-          </select>
-        </div>
         <div id="appt-autom-info" style="margin-top:8px;font-size:11px;color:var(--text-2)"></div>
-        ${canSee(['super_admin','clinic_admin'])?`
-        <button class="btn btn-sm" id="appt-delete-btn" style="width:100%;margin-top:10px;justify-content:center;background:#FCEBEB;color:#A32D2D;font-weight:700">🗑 Διαγραφή Ραντεβού</button>`:''}`;
+        <details style="margin-top:10px;border:1px solid var(--border-2);border-radius:8px">
+          <summary style="cursor:pointer;padding:8px 10px;font-size:11.5px;font-weight:600;color:var(--text-2)">⚙ Περισσότερα</summary>
+          <div style="padding:2px 10px 10px;display:flex;flex-direction:column;gap:8px">
+            ${(S.clinicBranches||[]).length>1?`<div>
+              <div style="font-size:11px;color:var(--text-2);margin-bottom:3px">Υποκατάστημα</div>
+              <select id="appt-branch-edit" style="width:100%;font-size:12px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-family:var(--font)">
+                <option value="">— Χωρίς υποκατάστημα —</option>
+                ${(S.clinicBranches||[]).map(b=>`<option value="${b.id}" ${a.branch_id===b.id?'selected':''}>${esc(b.name)}</option>`).join('')}
+              </select>
+            </div>`:''}
+            ${(S.clinicRooms||[]).length?`<div>
+              <div style="font-size:11px;color:var(--text-2);margin-bottom:3px">Δωμάτιο</div>
+              <select id="appt-room-edit" style="width:100%;font-size:12px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-family:var(--font)">
+                <option value="">— Προεπιλογή υπηρεσίας${serviceDefaultRoomId(a.service_name)?' ('+esc(roomName(serviceDefaultRoomId(a.service_name)))+')':''} —</option>
+                ${(S.clinicRooms||[]).filter(r=>r.active!==false||r.id===a.room_id).map(r=>`<option value="${r.id}" ${a.room_id===r.id?'selected':''}>${esc(r.name)}</option>`).join('')}
+              </select>
+            </div>`:''}
+            ${a.is_internal ? '' : `
+            <div id="appt-receipt-area">${apptReceiptAreaHtml(a, canReceipt)}</div>
+            ${apptConsumablesAreaHtml(a)}
+            ${a.patient_id?`<div style="display:flex;gap:6px">
+              <label class="btn btn-ghost btn-sm" style="cursor:pointer;flex:1;justify-content:center;margin:0">
+                📷 Λήψη Φωτογραφιών Ραντεβού
+                <input type="file" id="appt-photo-input" accept="image/*" capture="environment" multiple style="display:none"/>
+              </label>
+            </div>
+            <div id="appt-photo-status" style="display:none;font-size:11px;color:var(--blue);text-align:center">Μεταφόρτωση...</div>`:''}`}
+            ${canSee(['super_admin','clinic_admin'])?`
+            <button class="btn btn-sm" id="appt-delete-btn" style="width:100%;justify-content:center;background:#FCEBEB;color:#A32D2D;font-weight:700">🗑 Διαγραφή Ραντεβού</button>`:''}
+          </div>
+        </details>`;
       panel.style.display = 'block';
       loadApptAutomationInfo(a.id);
       // Rebind patient link
