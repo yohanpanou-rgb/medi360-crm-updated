@@ -3612,7 +3612,7 @@ function renderPipeline() {
           <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.7px;margin-bottom:10px;display:flex;justify-content:space-between">
             <span>${STAGE_LABELS[stage]}</span><span style="background:var(--surface-2);padding:1px 7px;border-radius:99px">${leads.length}</span>
           </div>
-          ${leads.map(l=>`<div class="pipeline-card">
+          ${leads.map(l=>`<div class="pipeline-card" data-modal="new-lead" data-lead-id="${l.id}">
             <div style="font-size:13px;font-weight:500;margin-bottom:4px">${esc(l.name)}</div>
             ${l.phone?`<div style="font-size:11px;color:var(--text-2);margin-bottom:6px">${esc(l.phone)}</div>`:''}
             ${l.service?`<span style="font-size:10px;background:#E6F1FB;color:#185FA5;padding:2px 7px;border-radius:99px">${esc(l.service)}</span>`:''}
@@ -8821,23 +8821,25 @@ function apptRenderSummary() {
 }
 
 function modalNewLead() {
+  const editId = S.modalData && S.modalData.leadId;
+  const l = editId ? (S.pipeline||[]).find(x=>x.id===editId) : null;
   return `<div class="modal">
-    <div class="modal-header"><span class="modal-title">Νέο Lead</span><button class="modal-close" onclick="closeModal()">×</button></div>
+    <div class="modal-header"><span class="modal-title">${l?'Επεξεργασία Lead':'Νέο Lead'}</span><button class="modal-close" onclick="closeModal()">×</button></div>
     <div class="modal-body">
       <div class="form-row">
-        <div class="form-group"><label class="form-label">Όνομα *</label><input class="form-control" id="l-name" placeholder="Ονοματεπώνυμο"/></div>
-        <div class="form-group"><label class="form-label">Τηλέφωνο</label><input class="form-control" id="l-phone" placeholder="69XXXXXXXX"/></div>
+        <div class="form-group"><label class="form-label">Όνομα *</label><input class="form-control" id="l-name" placeholder="Ονοματεπώνυμο" value="${esc((l&&l.name)||'')}"/></div>
+        <div class="form-group"><label class="form-label">Τηλέφωνο</label><input class="form-control" id="l-phone" placeholder="69XXXXXXXX" value="${esc((l&&l.phone)||'')}"/></div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label class="form-label">Υπηρεσία</label><input class="form-control" id="l-service" placeholder="π.χ. Laser"/></div>
-        <div class="form-group"><label class="form-label">Εκτ. Αξία (€)</label><input class="form-control" id="l-value" type="number" placeholder="0"/></div>
+        <div class="form-group"><label class="form-label">Υπηρεσία</label><input class="form-control" id="l-service" placeholder="π.χ. Laser" value="${esc((l&&l.service)||'')}"/></div>
+        <div class="form-group"><label class="form-label">Εκτ. Αξία (€)</label><input class="form-control" id="l-value" type="number" placeholder="0" value="${l&&l.estimated_value!=null?l.estimated_value:''}"/></div>
       </div>
       <div class="form-group"><label class="form-label">Στάδιο</label>
-        <select class="form-control" id="l-stage">${PIPELINE_STAGES.map(s=>`<option value="${s}">${STAGE_LABELS[s]}</option>`).join('')}</select></div>
+        <select class="form-control" id="l-stage">${PIPELINE_STAGES.map(s=>`<option value="${s}" ${l&&l.stage===s?'selected':''}>${STAGE_LABELS[s]}</option>`).join('')}</select></div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Ακύρωση</button>
-      <button class="btn btn-primary" id="save-lead">Αποθήκευση</button>
+      <button class="btn btn-primary" id="save-lead" data-lead-id="${editId||''}">Αποθήκευση</button>
     </div>
   </div>`;
 }
@@ -9141,7 +9143,7 @@ function bindEvents() {
         S.apptStaffSchedules = schedRows||[]; S.apptScheduleOverrides = ovrRows||[];
         S._apptRefsLoaded = true;
       }
-      S.modal=modal; S.modalData = el.dataset.clinicId ? {clinicId: el.dataset.clinicId} : {}; render();
+      S.modal=modal; S.modalData = el.dataset.clinicId ? {clinicId: el.dataset.clinicId} : el.dataset.leadId ? {leadId: el.dataset.leadId} : {}; render();
       // Άνοιγμα "Νέο Ραντεβού" μέσα από καρτέλα ασθενή: ο ασθενής έρχεται
       // προσυμπληρωμένος — όχι δεύτερη αναζήτηση του ίδιου ονόματος.
       if (modal==='new-appt' && S.page==='patient-detail' && S.patientDetail && S.patientDetail.id) {
@@ -11661,19 +11663,26 @@ function bindModalEvents() {
     closeModal(); await loadPageData();
   });
 
-  // Save lead
+  // Save lead (νέο ή επεξεργασία υπάρχοντος — ίδιο μοτίβο με save-clinic)
   const _sl2=document.getElementById('save-lead');if(_sl2)_sl2.addEventListener('click', async () => {
     const name = document.getElementById('l-name').value.trim();
     if (!name) return alert('Συμπλήρωσε όνομα');
     const btn = document.getElementById('save-lead');
+    const editId = btn.dataset.leadId;
     btn.textContent='Αποθήκευση...'; btn.disabled=true;
-    const {error} = await sb.from('pipeline_deals').insert({
-      clinic_id:clinicId(), name,
+    const payload = {
+      name,
       phone:document.getElementById('l-phone').value,
       service:document.getElementById('l-service').value,
       estimated_value:parseFloat(document.getElementById('l-value').value)||null,
       stage:document.getElementById('l-stage').value
-    });
+    };
+    let error;
+    if (editId) {
+      ({error} = await sb.from('pipeline_deals').update(payload).eq('id', editId));
+    } else {
+      ({error} = await sb.from('pipeline_deals').insert(Object.assign({clinic_id:clinicId()}, payload)));
+    }
     if (error) { alert(error.message); btn.textContent='Αποθήκευση'; btn.disabled=false; return; }
     closeModal(); await loadPageData();
   });
