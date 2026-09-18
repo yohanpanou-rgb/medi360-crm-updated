@@ -13882,6 +13882,7 @@ async function openHistoryFormModal(opts) {
         <div id="hf-patient-mode" style="margin-top:8px;font-size:12px;color:${selectedPatientId?'var(--green)':'var(--text-2)'}">${selectedPatientId?'✓ Βρέθηκε η καρτέλα σου':'✏️ Πληκτρολόγησε ολόκληρο το τηλέφωνό σου, ή συμπλήρωσε τα στοιχεία παρακάτω αν είναι η πρώτη σου φορά'}</div>
       </div>` : ''}
 
+      <div style="background:var(--surface);border-radius:12px;padding:16px;margin-bottom:14px">
       <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px">📌 Προσωπικά Στοιχεία</div>
       <div class="form-group"><label class="form-label">Ονοματεπώνυμο *</label><input class="form-control" id="hf-name" value="${esc(p.full_name || '')}"/></div>
       <div class="form-row">
@@ -13889,13 +13890,15 @@ async function openHistoryFormModal(opts) {
         <div class="form-group"><label class="form-label">Τηλέφωνο *</label><input class="form-control" id="hf-phone" value="${esc(p.phone || '')}"/></div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label class="form-label">Email</label><input class="form-control" id="hf-email" type="email" value="${esc(p.email || '')}"/></div>
-        <div class="form-group"><label class="form-label">Περιοχή Κατοικίας</label>
+        <div class="form-group" style="margin-bottom:0"><label class="form-label">Email</label><input class="form-control" id="hf-email" type="email" value="${esc(p.email || '')}"/></div>
+        <div class="form-group" style="margin-bottom:0"><label class="form-label">Περιοχή Κατοικίας</label>
           ${cityFieldHtml('hf', p.city, canonicalCities)}
         </div>
       </div>
+      </div>
 
-      <div style="margin-top:18px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px">Από πού μας γνωρίσατε</div>
+      <div style="background:var(--surface);border-radius:12px;padding:16px;margin-bottom:14px">
+      <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px">Από πού μας γνωρίσατε</div>
       <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px">
         ${HISTORY_FORM_SOURCES.map(s => `<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
           <input type="radio" name="hf-source" value="${esc(s)}" ${srcKnown === s ? 'checked' : ''} style="accent-color:var(--blue)"/> ${esc(s)}
@@ -13905,12 +13908,14 @@ async function openHistoryFormModal(opts) {
           <input class="form-control" id="hf-source-other" value="${esc(srcOther)}" style="max-width:220px"/>
         </label>
       </div>
-      <div id="hf-referrer-wrap" style="display:${(srcKnown==='Σύσταση'||p.referred_by_name)?'block':'none'};margin:4px 0 6px 24px">
+      <div id="hf-referrer-wrap" style="display:${(srcKnown==='Σύσταση'||p.referred_by_name)?'block':'none'};margin:4px 0 0 24px">
         <label class="form-label">Ποιος σας σύστησε; (ονοματεπώνυμο)</label>
         <input class="form-control" id="hf-referred-by" placeholder="π.χ. Μαρία Παπαδοπούλου" value="${esc(p.referred_by_name || '')}" style="max-width:340px"/>
       </div>
+      </div>
 
-      <div style="margin-top:18px;font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px">🩺 Ιατρικό Ιστορικό</div>
+      <div style="background:var(--surface);border-radius:12px;padding:16px;margin-bottom:14px">
+      <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px">🩺 Ιατρικό Ιστορικό</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px">
         ${HISTORY_FORM_CONDITIONS.map(c => `<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
           <input type="checkbox" class="hf-condition" value="${esc(c)}" ${med.checked.has(c) ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--blue)"/> ${esc(c)}
@@ -13921,9 +13926,10 @@ async function openHistoryFormModal(opts) {
       <div class="form-group"><label class="form-label">Αλλεργίες (αναφέρατε)</label><input class="form-control" id="hf-allergies" value="${esc(p.allergies || '')}"/></div>
       <div class="form-group"><label class="form-label">Άλλες παθήσεις ή φαρμακευτική αγωγή</label><input class="form-control" id="hf-medications" value="${esc(p.medications || '')}"/></div>
       <div class="form-group"><label class="form-label">Προηγούμενες αισθητικές θεραπείες (ποιες)</label><input class="form-control" id="hf-previous-treatments" value="${esc(p.previous_treatments || '')}"/></div>
-      <div class="form-group"><label class="form-label">Περιοχές του σώματος προς αποφυγή</label><input class="form-control" id="hf-avoid-areas" value="${esc(p.avoid_body_areas || '')}"/></div>
+      <div class="form-group" style="margin-bottom:0"><label class="form-label">Περιοχές του σώματος προς αποφυγή</label><input class="form-control" id="hf-avoid-areas" value="${esc(p.avoid_body_areas || '')}"/></div>
+      </div>
 
-      <div style="margin-top:18px;padding:14px 16px;background:var(--surface);border-radius:10px">
+      <div style="background:var(--surface);border-radius:12px;padding:14px 16px;margin-bottom:14px">
         <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;font-size:13px;line-height:1.5">
           <input type="checkbox" id="hf-gdpr" ${p.gdpr_signed ? 'checked' : ''} style="width:16px;height:16px;margin-top:2px;accent-color:var(--blue)"/>
           <span>Συναινώ στην επεξεργασία των προσωπικών δεδομένων μου για σκοπούς παροχής και παρακολούθησης θεραπειών, σύμφωνα με τον GDPR και δηλώνω ότι οι παραπάνω πληροφορίες είναι αληθείς. *
@@ -13931,7 +13937,7 @@ async function openHistoryFormModal(opts) {
         </label>
       </div>
 
-      <div style="margin-top:14px">
+      <div style="background:var(--surface);border-radius:12px;padding:14px 16px;margin-bottom:14px">
         <div style="font-size:13px;margin-bottom:8px">Θέλω να λαμβάνω email από το Beauty Line με επιστημονικά νέα, οδηγίες και tips για την φροντίδα της επιδερμίδας μου.</div>
         <div style="display:flex;gap:16px">
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px"><input type="radio" name="hf-marketing" value="yes" ${p.marketing_opt_in === true ? 'checked' : ''} style="accent-color:var(--blue)"/> Ναι</label>
@@ -13939,7 +13945,7 @@ async function openHistoryFormModal(opts) {
         </div>
       </div>
 
-      <div style="margin-top:18px;padding-top:14px;border-top:1px dashed var(--border-2)">
+      <div style="padding-top:4px;border-top:1px dashed var(--border-2)">
         <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">✍️ Υπογραφή ασθενούς</div>
         <div style="font-size:11px;color:var(--text-2);margin-bottom:8px">Αν υπογραφεί, αποθηκεύεται πλήρες αντίγραφο της φόρμας όπως συμπληρώθηκε, με ισχύ 1 έτους. Χωρίς υπογραφή, η φόρμα αποθηκεύεται κανονικά όπως πριν.</div>
         <canvas id="hf-canvas" width="620" height="140" style="width:100%;height:140px;border:2px dashed var(--border);border-radius:10px;background:#fff;touch-action:none"></canvas>
