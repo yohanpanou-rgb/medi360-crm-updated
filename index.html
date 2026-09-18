@@ -3001,8 +3001,30 @@ function renderPatientDetail() {
         });
         // Sort by date desc
         events.sort((a,b)=>new Date(b.date)-new Date(a.date));
-        if (!events.length) return '<div class="empty-state"><div class="empty-icon">📅</div><div>Δεν υπάρχουν γεγονότα</div></div>';
-        return events.map(e=>`
+
+        // Grouped timeline: filter chips (Όλα/Ραντεβού/Επικοινωνία/Έγγραφα) πάνω-πάνω,
+        // γεγονότα μαζεμένα ανά μήνα — ο τρέχων μήνας ανοιχτός, οι παλιότεροι
+        // κλειστοί by default (<details>) αντί για ατελείωτη επίπεδη λίστα.
+        const catOf = t => t==='appt' ? 'appt' : t==='comm' ? 'comm' : 'doc';
+        const TIMELINE_FILTERS = [{key:'all',l:'Όλα'},{key:'appt',l:'Ραντεβού'},{key:'comm',l:'Επικοινωνία'},{key:'doc',l:'Έγγραφα'}];
+        const filter = S.patTimelineFilter||'all';
+        const chipsHtml = `<div style="display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap">
+          ${TIMELINE_FILTERS.map(f=>`<button class="btn btn-sm" onclick="S.patTimelineFilter='${f.key}';render()" style="background:${filter===f.key?'var(--navy)':'transparent'};color:${filter===f.key?'#fff':'var(--text-2)'};border:1px solid ${filter===f.key?'var(--navy)':'var(--border-2)'}">${esc(f.l)}</button>`).join('')}
+        </div>`;
+
+        const filtered = filter==='all' ? events : events.filter(e=>catOf(e.type)===filter);
+        if (!filtered.length) return chipsHtml+'<div class="empty-state"><div class="empty-icon">📅</div><div>Δεν υπάρχουν γεγονότα</div></div>';
+
+        const groups = [];
+        filtered.forEach(e=>{
+          const d = new Date(e.date);
+          const key = d.getFullYear()+'-'+d.getMonth();
+          let g = groups.find(g=>g.key===key);
+          if (!g) { g = {key, label: d.toLocaleDateString('el-GR',{month:'long',year:'numeric'}), events:[]}; groups.push(g); }
+          g.events.push(e);
+        });
+
+        const eventCard = e => `
           <div style="position:relative;margin-bottom:20px;display:flex;gap:14px;align-items:flex-start">
             <!-- Dot -->
             <div style="position:absolute;left:-36px;width:20px;height:20px;border-radius:50%;background:${e.bg};border:2px solid ${e.color};display:flex;align-items:center;justify-content:center;font-size:9px;flex-shrink:0;z-index:1">${e.icon}</div>
@@ -3015,7 +3037,12 @@ function renderPatientDetail() {
               ${e.desc?`<div style="font-size:12px;color:var(--text-2);margin-top:3px">${esc(e.desc)}</div>`:''}
               ${e.badge?`<div style="margin-top:6px">${e.badge}</div>`:''}
             </div>
-          </div>`).join('');
+          </div>`;
+
+        return chipsHtml + groups.map((g,i)=> i===0
+          ? `<div style="font-size:11px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--text-3);margin-bottom:10px">${esc(g.label)} · ${g.events.length}</div>${g.events.map(eventCard).join('')}`
+          : `<details style="margin-bottom:4px"><summary style="cursor:pointer;font-size:11px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--text-3);margin-bottom:10px;list-style:none">${esc(g.label)} · ${g.events.length} ▾</summary>${g.events.map(eventCard).join('')}</details>`
+        ).join('');
       })()}
     </div>`:''}
 
