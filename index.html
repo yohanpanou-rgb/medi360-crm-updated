@@ -2810,9 +2810,10 @@ function renderPatientDetail() {
     </div></div>`;
   }
   if (!p) return '<div class="page"><div class="empty-state"><div>Φόρτωση...</div></div></div>';
-  const patTab = S.patTab||'overview';
+  const patTab = (S.patTab==='injectables' && !isModuleEnabled('injectables')) ? 'overview' : (S.patTab||'overview');
   const laserForms = (S.laserForms||[]).filter(f=>f.patient_id===p.id);
   const injectableForms = (S.injectableForms||[]).filter(f=>f.patient_id===p.id);
+  const injModuleOn = isModuleEnabled('injectables');
   const consultations = (S.patConsultations||[]);
   const canSeeFinancials = canSee(['super_admin','clinic_admin']);
   const medicalFormLink = ((S.clinic&&S.clinic.integrations)||{}).gdpr_form_link || 'https://docs.google.com/forms/d/e/1FAIpQLSe5XiCNxnDOYMxgUbzlOP8G8ZDe-R3VBaJPlZeM1gthPElHiA/viewform?usp=header';
@@ -2851,7 +2852,7 @@ function renderPatientDetail() {
           ${chip('📅','var(--blue)','Ραντεβού','data-modal="new-appt"')}
           ${chip('📦','#6B7280','Πακέτο','onclick="openPackageModal()"')}
           ${chip('⚡','var(--blue)','Laser Form','data-modal="new-laser"')}
-          ${chip('💉',INJ_ACCENT,'Ενέσιμα','data-modal="new-injectable"')}
+          ${injModuleOn?chip('💉',INJ_ACCENT,'Ενέσιμα','data-modal="new-injectable"'):''}
           ${chip('⋯','var(--surface-2)','Περισσότερα','onclick="openPatientMoreMenu()"','var(--text-2)','var(--text-2)')}
         </div>
       </div>`;
@@ -2916,7 +2917,7 @@ function renderPatientDetail() {
           {id:'patconsents',l:'Συναινέσεις'},
           {id:'consultation',l:`Consultation (${consultations.length})`},
           {id:'laser',l:`Laser Forms (${laserForms.length})`},
-          {id:'injectables',l:`Ενέσιμα (${injectableForms.length})`},
+          ...(injModuleOn?[{id:'injectables',l:`Ενέσιμα (${injectableForms.length})`}]:[]),
           {id:'photos',l:`Φωτογραφίες (${(S.patientPhotos||[]).length})`},
           {id:'exams',l:`Εξετάσεις (${(S.patientExams||[]).length})`},
           {id:'timeline',l:'Timeline'},
