@@ -2824,17 +2824,38 @@ function renderPatientDetail() {
     μόλις ο χρήστης κατεβεί λίγο στο περιεχόμενο μιας καρτέλας. -->
     <div style="position:sticky;top:56px;z-index:45;background:var(--surface);margin-left:-24px;margin-right:-24px;margin-top:-24px;padding:16px 24px 0">
     ${criticalBannerHtml(p, p.appointments)}
-    <!-- Header: «Ζώνες» — ταυτότητα / κάρτα κατάστασης+συναινέσεων / ενέργειες,
-    αντί για μία γραμμή με 8+ badges και 5 κουμπιά όλα μαζί. Τίποτα δεν κρύβεται,
-    απλά ομαδοποιείται οπτικά ώστε να διαβάζεται με μια ματιά. -->
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
-      <button class="btn btn-ghost btn-sm" data-page="patients">← Πίσω</button>
-      <div style="width:40px;height:40px;border-radius:50%;background:#E6F1FB;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#185FA5;flex-shrink:0">${initials(p.full_name)}</div>
-      <div style="min-width:0">
-        <h1 class="page-title" style="font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(p.full_name)}</h1>
-        <div style="font-size:12px;color:var(--text-2);margin-top:1px;display:flex;align-items:center;gap:6px">${esc(p.phone||'')} ${phoneActionsHtml(p.phone, 12)}</div>
+    <!-- Header: συνδυαστική κατεύθυνση — gradient ταυτότητα (όπως ήδη έχουν τα Laser/
+    Ενέσιμα Forms, εδώ γενικευμένη σε navy→blue ως ταυτότητα όλου του CRM) + «επιπλέουσα»
+    κάρτα quick actions πάνω στην άκρη της + κάρτα κατάστασης/συναινέσεων από κάτω.
+    Τίποτα δεν κρύβεται — η Διαγραφή μετακόμισε σε «⋯ Περισσότερα» μαζί με την
+    Επεξεργασία, ώστε οι 4 καθημερινές ενέργειες να μην ανταγωνίζονται μια σπάνια. -->
+    <div style="background:linear-gradient(135deg,#1a1f3a,#2B3BF0 78%);border-radius:14px;padding:16px 16px 30px">
+      <div style="display:flex;align-items:center;gap:12px">
+        <button class="btn btn-sm" data-page="patients" style="background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25)">← Πίσω</button>
+        <div style="width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#fff;flex-shrink:0">${initials(p.full_name)}</div>
+        <div style="min-width:0">
+          <h1 class="page-title" style="font-size:17px;color:#fff;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(p.full_name)}</h1>
+          <div style="font-size:12px;color:rgba(255,255,255,.82);margin-top:1px;display:flex;align-items:center;gap:6px">${esc(p.phone||'')} ${phoneActionsHtml(p.phone, 12)}</div>
+        </div>
       </div>
     </div>
+    ${(()=>{
+      // Quick actions: οι 4 καθημερινές ενέργειες μπροστά, «⋯ Περισσότερα» για
+      // Επεξεργασία/Διαγραφή — η κάρτα «επιπλέει» πάνω στην άκρη του gradient.
+      const chip = (icon,bg,label,attrs,labelColor,iconColor) => `<button class="btn" ${attrs} style="flex-shrink:0;width:60px;display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 2px;border-radius:10px;background:transparent;border:none;cursor:pointer">
+        <span style="width:30px;height:30px;border-radius:50%;background:${bg};display:flex;align-items:center;justify-content:center;font-size:13px;color:${iconColor||'#fff'}">${icon}</span>
+        <span style="font-size:9px;font-weight:700;color:${labelColor||'var(--text)'};text-align:center;line-height:1.15">${label}</span>
+      </button>`;
+      return `<div style="position:relative;margin:-18px 4px 12px;z-index:2">
+        <div style="background:var(--white);border-radius:12px;box-shadow:var(--shadow);padding:9px 8px;display:flex;gap:6px;overflow-x:auto">
+          ${chip('📅','var(--blue)','Ραντεβού','data-modal="new-appt"')}
+          ${chip('📦','#6B7280','Πακέτο','onclick="openPackageModal()"')}
+          ${chip('⚡','var(--blue)','Laser Form','data-modal="new-laser"')}
+          ${chip('💉',INJ_ACCENT,'Ενέσιμα','data-modal="new-injectable"')}
+          ${chip('⋯','var(--surface-2)','Περισσότερα','onclick="openPatientMoreMenu()"','var(--text-2)','var(--text-2)')}
+        </div>
+      </div>`;
+    })()}
 
     <div style="background:var(--surface-2);border-radius:11px;padding:11px 14px;margin-bottom:12px;display:flex;flex-direction:column;gap:9px">
       <div style="display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center">
@@ -2864,21 +2885,6 @@ function renderPatientDetail() {
       })()}
     </div>
 
-    ${(()=>{
-      // Ενέργειες ως εικονίδια σε γραμμή που κυλάει οριζόντια — ίδιες 5
-      // ενέργειες με πριν, καμία κρυμμένη σε μενού, απλά πιο συμπαγείς.
-      const chip = (icon,bg,label,attrs,labelColor) => `<button class="btn" ${attrs} style="flex-shrink:0;width:64px;display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 4px;border-radius:10px;background:var(--surface-2);border:none;cursor:pointer">
-        <span style="width:28px;height:28px;border-radius:50%;background:${bg};display:flex;align-items:center;justify-content:center;font-size:13px">${icon}</span>
-        <span style="font-size:9px;font-weight:700;color:${labelColor||'var(--text)'};text-align:center;line-height:1.15">${label}</span>
-      </button>`;
-      return `<div style="display:flex;gap:9px;overflow-x:auto;padding-bottom:4px;margin-bottom:12px">
-        ${chip('📅','var(--blue)','Ραντεβού','data-modal="new-appt"')}
-        ${chip('📦','#6B7280','Πακέτο','onclick="openPackageModal()"')}
-        ${chip('⚡','var(--blue)','Laser Form','data-modal="new-laser"')}
-        ${chip('💉',INJ_ACCENT,'Ενέσιμα','data-modal="new-injectable"')}
-        ${canSee(['super_admin','clinic_admin']) ? chip('🗑','var(--red)','Διαγραφή','onclick="deletePatientPermanently()"','var(--red)') : ''}
-      </div>`;
-    })()}
     ${(()=>{
       // 🎁 Banner δώρου γενεθλίων: ενεργό (με κουμπί εξαργύρωσης) ή πρόσφατα εξαργυρωμένο
       const g = S.patientBirthdayGift;
@@ -11945,6 +11951,29 @@ async function mergePatients(primaryId, dupIds) {
   } catch (e) {
     return e.message || String(e);
   }
+}
+
+// Custom overlay (ίδιο pattern με τα σημεία ένεσης στα Injectable Forms) για τις
+// σπάνιες ενέργειες της καρτέλας ασθενή — Επεξεργασία + Διαγραφή — που δεν πρέπει
+// να ανταγωνίζονται οπτικά τις 4 καθημερινές quick actions στο header.
+function openPatientMoreMenu() {
+  const canDelete = canSee(['super_admin','clinic_admin']);
+  const div = document.createElement('div');
+  div.className = 'modal-overlay';
+  div.innerHTML = `<div class="modal" style="max-width:320px">
+    <div class="modal-header"><span class="modal-title">Περισσότερα</span><button class="modal-close" id="pmm-close">×</button></div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:2px;padding-top:4px;padding-bottom:12px">
+      <button class="btn btn-ghost" style="justify-content:flex-start" id="pmm-edit">✏ Επεξεργασία στοιχείων</button>
+      ${canDelete?`<button class="btn btn-ghost" style="justify-content:flex-start;color:var(--red)" id="pmm-delete">🗑 Διαγραφή ασθενή</button>`:''}
+    </div>
+  </div>`;
+  document.body.appendChild(div);
+  const close = () => div.remove();
+  div.onclick = e => { if (e.target===div) close(); };
+  div.querySelector('#pmm-close').onclick = close;
+  div.querySelector('#pmm-edit').onclick = () => { close(); openEditPatientModal(); };
+  const delBtn = div.querySelector('#pmm-delete');
+  if (delBtn) delBtn.onclick = () => { close(); deletePatientPermanently(); };
 }
 
 // ── ΟΡΙΣΤΙΚΗ ΔΙΑΓΡΑΦΗ ΑΣΘΕΝΗ (μόνο admin) ──
