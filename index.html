@@ -11655,8 +11655,11 @@ function bindModalEvents() {
     if (error) { alert(error.message); btn.textContent='Αποθήκευση'; btn.disabled=false; return; }
     // Στιγμή 1 (κλείσιμο ραντεβού): email + SMS ενημέρωσης, αμέσως — fire-and-
     // forget, δεν μπλοκάρει το κλείσιμο του modal αν αργήσει/αποτύχει. Ποτέ για
-    // εσωτερικά ραντεβού — δεν υπάρχει ασθενής/email να ενημερωθεί.
-    if (newAppt && newAppt.id && !isInternal) {
+    // εσωτερικά ραντεβού — δεν υπάρχει ασθενής/email να ενημερωθεί. Ούτε όταν
+    // το ραντεβού κλείνεται την ΙΔΙΑ μέρα που θα εκτελεστεί — μπαίνει ήδη
+    // κατευθείαν «Επιβεβαιωμένο» και δεν έχει νόημα SMS λίγο πριν έρθει ο
+    // ασθενής· μένει μόνο η ζήτηση αξιολόγησης μετά το τέλος.
+    if (newAppt && newAppt.id && !isInternal && athensDay(timeWithTz) !== athensDay(Date.now())) {
       sb.functions.invoke('appointment-automations', { body: { action: 'send_booking_confirmation', appointment_id: newAppt.id } }).catch(() => {});
     }
     closeModal(); await loadPageData();
