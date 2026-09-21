@@ -8666,7 +8666,7 @@ function renderSettings() {
     <div>
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
         <div><h2 style="font-size:16px;font-weight:600">Διαχείριση Χρηστών</h2>
-          <p style="font-size:12px;color:var(--text-2);margin-top:3px">${isSuperAdmin()?'Όλες οι κλινικές':'Χρήστες κλινικής '+esc(S.clinic&&S.clinic.name||'')}</p>
+          <p style="font-size:12px;color:var(--text-2);margin-top:3px">Χρήστες κλινικής ${esc(S.clinic&&S.clinic.name||'')}</p>
         </div>
         <button class="btn btn-primary" data-modal="new-user">+ Νέος Χρήστης</button>
       </div>
@@ -10248,9 +10248,9 @@ function bindEvents() {
   const _lub = document.getElementById('load-users-btn');
   if (_lub) _lub.addEventListener('click', async () => {
     _lub.textContent='Φόρτωση...'; _lub.disabled=true;
-    const {data:users, error} = isSuperAdmin()
-      ? await sb.from('profiles').select('*, clinics(name)').order('full_name')
-      : await sb.from('profiles').select('*, clinics(name)').eq('clinic_id', clinicId()).order('full_name');
+    // Πάντα φιλτραρισμένο στην επιλεγμένη κλινική (clinic-picker πάνω αριστερά) —
+    // ακόμα και για Super Admin, ώστε να ταιριάζει με όλες τις άλλες σελίδες.
+    const {data:users, error} = await sb.from('profiles').select('*, clinics(name)').eq('clinic_id', clinicId()).order('full_name');
     const tbody = document.getElementById('users-tbody');
     if (!tbody) return;
     if (error||!users||!users.length) {
