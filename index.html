@@ -8857,6 +8857,10 @@ function modalNewAppt() {
       <div id="appt-step-4" style="display:none">
         <div id="appt-summary" style="background:var(--surface);border-radius:10px;padding:10px 12px;margin-bottom:10px;display:flex;flex-direction:column;gap:2px"></div>
         <div class="form-group"><label class="form-label">Σημειώσεις</label><textarea class="form-control" id="a-notes" rows="2"></textarea></div>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:10px;padding:10px 12px;background:var(--surface);border-radius:10px;cursor:pointer">
+          <input type="checkbox" id="a-no-notify" style="width:16px;height:16px;flex-shrink:0">
+          <span style="font-size:0.9rem">Να μην σταλεί SMS/email στον πελάτη γι' αυτό το ραντεβού</span>
+        </label>
       </div>
     </div>
     <div class="modal-footer">
@@ -11793,8 +11797,11 @@ function bindModalEvents() {
     // (καταχώρηση με ώρα/ημέρα πίσω στον χρόνο) — μπαίνει ήδη κατευθείαν
     // «Επιβεβαιωμένο» και δεν έχει νόημα SMS για κάτι που ήδη έγινε ή θα γίνει
     // σε λίγο· μένει μόνο η ζήτηση αξιολόγησης μετά το τέλος. athensDay
-    // επιστρέφει 'YYYY-MM-DD', συγκρίσιμο ως string.
-    if (newAppt && newAppt.id && !isInternal && athensDay(timeWithTz) > athensDay(Date.now())) {
+    // επιστρέφει 'YYYY-MM-DD', συγκρίσιμο ως string. Ο χρήστης μπορεί επίσης να
+    // το αποτρέψει χειροκίνητα μέσω του checkbox «Να μην σταλεί SMS/email».
+    const skipNotifyEl = document.getElementById('a-no-notify');
+    const skipNotify = !!(skipNotifyEl && skipNotifyEl.checked);
+    if (newAppt && newAppt.id && !isInternal && !skipNotify && athensDay(timeWithTz) > athensDay(Date.now())) {
       sb.functions.invoke('appointment-automations', { body: { action: 'send_booking_confirmation', appointment_id: newAppt.id } }).catch(() => {});
     }
     closeModal(); await loadPageData();
