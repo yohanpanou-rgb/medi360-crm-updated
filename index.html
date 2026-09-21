@@ -7204,6 +7204,74 @@ function roleCellHtml(p) {
   if (!canEditRoleOf(p)) return `<span style="color:var(--text-2)">${esc(ROLES[p.role]||p.role||'—')}</span>`;
   return `<select class="form-control" style="font-size:12px;padding:4px 6px;max-width:160px" onchange="changeStaffRole('${p.id}', this.value)">${roleOptionsHtml(p.role)}</select>`;
 }
+// Φορτώνει/ξαναφορτώνει τον πίνακα στο Ρυθμίσεις → Διαχείριση Χρηστών.
+// Ξεχωριστή συνάρτηση (όχι inline μέσα στο κλικ του load-users-btn) ώστε να
+// μπορεί να καλεστεί και από το modal επεξεργασίας χρήστη μετά από αποθήκευση.
+async function reloadUsersTable() {
+  const btn = document.getElementById('load-users-btn');
+  if (btn) { btn.textContent='Φόρτωση...'; btn.disabled=true; }
+  // Πάντα φιλτραρισμένο στην επιλεγμένη κλινική (clinic-picker πάνω αριστερά) —
+  // ακόμα και για Super Admin, ώστε να ταιριάζει με όλες τις άλλες σελίδες.
+  const {data:users, error} = await sb.from('profiles').select('*, clinics(name)').eq('clinic_id', clinicId()).order('full_name');
+  const tbody = document.getElementById('users-tbody');
+  if (!tbody) return;
+  if (error||!users||!users.length) {
+    tbody.innerHTML=`<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--text-2)">Δεν βρέθηκαν χρήστες</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = users.map(u=>`<tr>
+    <td><div style="display:flex;align-items:center;gap:8px">
+      <div style="width:28px;height:28px;border-radius:50%;background:var(--blue-soft);color:var(--blue);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600">${initials(u.full_name)}</div>
+      <span style="font-weight:500;font-size:13px">${esc(u.full_name||'—')}</span>
+    </div></td>
+    <td style="font-size:12px;color:var(--text-2)">${esc(u.email||'—')}</td>
+    <td>${canEditRoleOf(u)
+      ? `<select class="form-control" data-role-user="${u.id}" data-role-user-name="${esc(u.full_name||'')}" style="font-size:12px;padding:4px 6px;max-width:160px">${roleOptionsHtml(u.role)}</select>`
+      : badge(ROLES[u.role]||u.role,'#eef0fe','#2B3BF0')}</td>
+    <td style="font-size:12px;color:var(--text-2)">${esc(u.clinics&&u.clinics.name||'—')}</td>
+    <td style="white-space:nowrap">
+      <label class="tglsw" title="${u.active!==false?'Απενεργοποίηση':'Ενεργοποίηση'}"><input type="checkbox" data-toggle-user="${u.id}" ${u.active!==false?'checked':''}/><span class="tglsw-track"></span></label>
+      <span style="margin-left:8px;font-size:12px;color:${u.active!==false?'#0F6E56':'var(--text-3)'}">${u.active!==false?'Ενεργός':'Ανενεργός'}</span>
+    </td>
+    <td style="white-space:nowrap">
+      <button class="btn btn-ghost btn-xs" data-edit-user="${u.id}">✏</button>
+    </td>
+  </tr>`).join('');
+  // Rebind edit buttons
+  document.querySelectorAll('[data-edit-user]').forEach(el => {
+    el.onclick = () => {
+      const u = users.find(x => x.id === el.dataset.editUser);
+      if (!u) return;
+      S.modal = 'edit-user'; S.modalData = { editUser: u };
+      renderModal();
+    };
+  });
+  // Ενεργοποίηση/Απενεργοποίηση χρήστη — ίδιο πεδίο profiles.active με τη
+  // σελίδα Προσωπικό & Υπηρεσίες (toggleStaffActive), εδώ απλά ξαναφορτώνει
+  // αυτόν τον πίνακα αντί να καλεί το render() της σελίδας staff-services.
+  document.querySelectorAll('[data-toggle-user]').forEach(el => {
+    el.onchange = async () => {
+      const id = el.dataset.toggleUser;
+      const makeActive = el.checked;
+      el.disabled = true;
+      const {error} = await sb.rpc('set_staff_active', {p_staff_id: id, p_active: makeActive});
+      // Σε σφάλμα γυρίζουμε τον διακόπτη πίσω — ο browser τον έχει ήδη αλλάξει.
+      if (error) { alert('Σφάλμα: '+error.message); el.checked = !makeActive; el.disabled=false; return; }
+      reloadUsersTable();
+    };
+  });
+  // Αλλαγή ρόλου — ίδιοι κανόνες με τη σελίδα Προσωπικό & Υπηρεσίες, αλλά
+  // εδώ ξαναφορτώνουμε αυτόν τον πίνακα αντί για render().
+  document.querySelectorAll('[data-role-user]').forEach(el => {
+    el.onchange = async () => {
+      el.disabled = true;
+      await applyRoleChange(el.dataset.roleUser, el.value, el.dataset.roleUserName);
+      // Ξαναφόρτωση σε κάθε περίπτωση: επαναφέρει το dropdown στον πραγματικό
+      // ρόλο αν η αλλαγή ακυρώθηκε ή απορρίφθηκε.
+      reloadUsersTable();
+    };
+  });
+}
 // Επιστρέφει true αν η αλλαγή έγινε. Η αλλαγή ρόλου δίνει/αφαιρεί δικαιώματα,
 // οπότε ζητάμε επιβεβαίωση πριν σταλεί.
 async function applyRoleChange(staffId, newRole, staffName) {
@@ -8713,6 +8781,7 @@ function renderModal() {
     'new-injectable': modalNewInjectable,
     'new-consent-tmpl': modalNewConsentTmpl,
     'new-user': modalNewUser,
+    'edit-user': modalEditUser,
   }[S.modal];
   if (!content) return;
   div.innerHTML = content();
@@ -9017,6 +9086,23 @@ function modalNewUser() {
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Ακύρωση</button>
       <button class="btn btn-primary" id="save-new-user">Δημιουργία Χρήστη</button>
+    </div>
+  </div>`;
+}
+
+function modalEditUser() {
+  const u = S.modalData && S.modalData.editUser;
+  if (!u) return '';
+  return `<div class="modal">
+    <div class="modal-header"><span class="modal-title">Επεξεργασία Χρήστη</span><button class="modal-close" onclick="closeModal()">×</button></div>
+    <div class="modal-body">
+      <div class="form-group"><label class="form-label">Ονοματεπώνυμο *</label><input class="form-control" id="eu-name" value="${esc(u.full_name||'')}"/></div>
+      <div class="form-group"><label class="form-label">Τηλέφωνο</label><input class="form-control" id="eu-phone" placeholder="69XXXXXXXX" value="${esc(u.phone||'')}"/></div>
+      <div style="font-size:11px;color:var(--text-2)">Ρόλος, κατάσταση και κλινική αλλάζουν απευθείας από τον πίνακα «Διαχείριση Χρηστών».</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Ακύρωση</button>
+      <button class="btn btn-primary" id="save-edit-user" data-user-id="${u.id}">Αποθήκευση</button>
     </div>
   </div>`;
 }
@@ -10246,65 +10332,7 @@ function bindEvents() {
 
   // Load users
   const _lub = document.getElementById('load-users-btn');
-  if (_lub) _lub.addEventListener('click', async () => {
-    _lub.textContent='Φόρτωση...'; _lub.disabled=true;
-    // Πάντα φιλτραρισμένο στην επιλεγμένη κλινική (clinic-picker πάνω αριστερά) —
-    // ακόμα και για Super Admin, ώστε να ταιριάζει με όλες τις άλλες σελίδες.
-    const {data:users, error} = await sb.from('profiles').select('*, clinics(name)').eq('clinic_id', clinicId()).order('full_name');
-    const tbody = document.getElementById('users-tbody');
-    if (!tbody) return;
-    if (error||!users||!users.length) {
-      tbody.innerHTML=`<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--text-2)">Δεν βρέθηκαν χρήστες</td></tr>`;
-      return;
-    }
-    tbody.innerHTML = users.map(u=>`<tr>
-      <td><div style="display:flex;align-items:center;gap:8px">
-        <div style="width:28px;height:28px;border-radius:50%;background:var(--blue-soft);color:var(--blue);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600">${initials(u.full_name)}</div>
-        <span style="font-weight:500;font-size:13px">${esc(u.full_name||'—')}</span>
-      </div></td>
-      <td style="font-size:12px;color:var(--text-2)">${esc(u.email||'—')}</td>
-      <td>${canEditRoleOf(u)
-        ? `<select class="form-control" data-role-user="${u.id}" data-role-user-name="${esc(u.full_name||'')}" style="font-size:12px;padding:4px 6px;max-width:160px">${roleOptionsHtml(u.role)}</select>`
-        : badge(ROLES[u.role]||u.role,'#eef0fe','#2B3BF0')}</td>
-      <td style="font-size:12px;color:var(--text-2)">${esc(u.clinics&&u.clinics.name||'—')}</td>
-      <td style="white-space:nowrap">
-        <label class="tglsw" title="${u.active!==false?'Απενεργοποίηση':'Ενεργοποίηση'}"><input type="checkbox" data-toggle-user="${u.id}" ${u.active!==false?'checked':''}/><span class="tglsw-track"></span></label>
-        <span style="margin-left:8px;font-size:12px;color:${u.active!==false?'#0F6E56':'var(--text-3)'}">${u.active!==false?'Ενεργός':'Ανενεργός'}</span>
-      </td>
-      <td style="white-space:nowrap">
-        <button class="btn btn-ghost btn-xs" data-edit-user="${u.id}">✏</button>
-      </td>
-    </tr>`).join('');
-    // Rebind edit buttons
-    document.querySelectorAll('[data-edit-user]').forEach(el => {
-      el.onclick = () => alert('Επεξεργασία χρήστη — σύντομα διαθέσιμο');
-    });
-    // Ενεργοποίηση/Απενεργοποίηση χρήστη — ίδιο πεδίο profiles.active με τη
-    // σελίδα Προσωπικό & Υπηρεσίες (toggleStaffActive), εδώ απλά ξαναφορτώνει
-    // αυτόν τον πίνακα αντί να καλεί το render() της σελίδας staff-services.
-    document.querySelectorAll('[data-toggle-user]').forEach(el => {
-      el.onchange = async () => {
-        const id = el.dataset.toggleUser;
-        const makeActive = el.checked;
-        el.disabled = true;
-        const {error} = await sb.rpc('set_staff_active', {p_staff_id: id, p_active: makeActive});
-        // Σε σφάλμα γυρίζουμε τον διακόπτη πίσω — ο browser τον έχει ήδη αλλάξει.
-        if (error) { alert('Σφάλμα: '+error.message); el.checked = !makeActive; el.disabled=false; return; }
-        _lub.click();
-      };
-    });
-    // Αλλαγή ρόλου — ίδιοι κανόνες με τη σελίδα Προσωπικό & Υπηρεσίες, αλλά
-    // εδώ ξαναφορτώνουμε αυτόν τον πίνακα αντί για render().
-    document.querySelectorAll('[data-role-user]').forEach(el => {
-      el.onchange = async () => {
-        el.disabled = true;
-        await applyRoleChange(el.dataset.roleUser, el.value, el.dataset.roleUserName);
-        // Ξαναφόρτωση σε κάθε περίπτωση: επαναφέρει το dropdown στον πραγματικό
-        // ρόλο αν η αλλαγή ακυρώθηκε ή απορρίφθηκε.
-        _lub.click();
-      };
-    });
-  });
+  if (_lub) _lub.addEventListener('click', reloadUsersTable);
 
   // Save new user
   const _snu = document.getElementById('save-new-user');
@@ -10326,10 +10354,7 @@ function bindEvents() {
       _snu.textContent='✓ Δημιουργήθηκε!';
       setTimeout(()=>{ _snu.textContent='Δημιουργία Χρήστη'; _snu.disabled=false; }, 2000);
       // Reload users list
-      setTimeout(()=>{
-        const lb = document.getElementById('load-users-btn');
-        if (lb) lb.click();
-      }, 500);
+      setTimeout(reloadUsersTable, 500);
     } catch(err) {
       alert('Σφάλμα: ' + err.message);
       _snu.textContent='Δημιουργία Χρήστη';
@@ -11504,6 +11529,19 @@ function bindModalEvents() {
     if (error) { alert(error.message); btn.textContent='Αποθήκευση'; btn.disabled=false; return; }
     for (const l of links) await sb.from('patient_relationships').insert({clinic_id:clinicId(), patient_a_id:newPt.id, patient_b_id:l.id, relationship_type:l.relationship_type});
     closeModal(); await loadPageData();
+  });
+
+  // Save edit user (Ρυθμίσεις → Διαχείριση Χρηστών → ✏)
+  const _seu = document.getElementById('save-edit-user');
+  if (_seu) _seu.addEventListener('click', async () => {
+    const name = document.getElementById('eu-name').value.trim();
+    const phone = document.getElementById('eu-phone').value.trim();
+    if (!name) return alert('Το ονοματεπώνυμο είναι υποχρεωτικό');
+    _seu.textContent='Αποθήκευση...'; _seu.disabled=true;
+    const {error} = await sb.rpc('update_staff_profile', {p_staff_id: _seu.dataset.userId, p_full_name: name, p_phone: phone||null});
+    if (error) { alert('Σφάλμα: '+error.message); _seu.textContent='Αποθήκευση'; _seu.disabled=false; return; }
+    closeModal();
+    reloadUsersTable();
   });
 
   // 🔒 Εσωτερικό ραντεβού: κρύβει/δείχνει τα πεδία ασθενή/υπηρεσίας/τιμής χωρίς
