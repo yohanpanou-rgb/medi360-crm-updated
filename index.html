@@ -1166,6 +1166,8 @@ async function loadPageData() {
     S._examDiagnosesDraft = [...((S.clinic&&S.clinic.settings&&S.clinic.settings.exam_diagnoses)||[])];
     S._examDiagnosisIcd10Draft = JSON.parse(JSON.stringify((S.clinic&&S.clinic.settings&&S.clinic.settings.exam_diagnosis_icd10)||{}));
     S._examMedicationsDraftList = [...((S.clinic&&S.clinic.settings&&S.clinic.settings.exam_medications)||[])];
+    S._examMedicinesDraft = [...((S.clinic&&S.clinic.settings&&S.clinic.settings.exam_medicines)||[])];
+    S._examMedicineCodesDraft = JSON.parse(JSON.stringify((S.clinic&&S.clinic.settings&&S.clinic.settings.exam_medicine_codes)||{}));
   }
   if (S.page==='product-sale') {
     const {data} = await sb.from('product_sales').select('*, patients(full_name)').eq('clinic_id',cid).order('created_at',{ascending:false}).limit(20);
@@ -2675,7 +2677,7 @@ function renderPatientDiagnosesTab() {
       <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">${(e.diagnosis||[]).map(d=>`<span style="display:inline-flex;align-items:center;gap:6px;background:var(--surface-2);border-radius:20px;padding:4px 12px;font-size:12px">${esc(d)}${e.diagnosis_icd10&&e.diagnosis_icd10[d]?`<span style="color:var(--text-2);font-size:10.5px">${esc(e.diagnosis_icd10[d])}</span>`:''}</span>`).join('')}</div>
       ${(e.medications||[]).length?`
       <div style="font-size:12px;color:var(--text-2);margin-bottom:4px">Φάρμακα / Καλλυντικά</div>
-      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">${e.medications.map(m=>`<span style="background:var(--surface-2);border-radius:20px;padding:4px 12px;font-size:12px">${esc(m)}</span>`).join('')}</div>`:''}
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">${e.medications.map(m=>`<span style="display:inline-flex;align-items:center;gap:6px;background:var(--surface-2);border-radius:20px;padding:4px 12px;font-size:12px">${esc(m)}${e.medication_codes&&e.medication_codes[m]?`<span style="color:var(--text-2);font-size:10.5px">${esc(e.medication_codes[m])}</span>`:''}</span>`).join('')}</div>`:''}
       ${e.followup_interval?`<div style="font-size:12px;color:var(--blue);font-weight:600">📅 Σύσταση επανεξέτασης: ${esc(FOLLOWUP_LABELS[e.followup_interval]||e.followup_interval)}</div>`:''}
       ${e.notes?`<div style="font-size:12px;color:var(--text-2);margin-top:6px">${esc(e.notes)}</div>`:''}
     </div>`).join('')}
@@ -5461,12 +5463,12 @@ function renderConsents() {
       // ΔΕΝ έχει ζωντανή σύνδεση με το ΗΔΙΚΑ, είναι απλή αναφορά/σημείωση για
       // ευκολότερη αντιστοίχιση όταν συνταγογραφείς· επαλήθευσέ τον κωδικό πριν
       // τον χρησιμοποιήσεις σε πραγματική συνταγή.
-      const chipListIcd = (items, codes) => (items&&items.length)
+      const chipListIcd = (items, codes, codeClass, removeAttr, codePlaceholder) => (items&&items.length)
         ? `<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">${items.map((v,i)=>`
           <div style="display:flex;align-items:center;gap:8px;background:var(--surface-2);border-radius:10px;padding:6px 6px 6px 12px;font-size:12px">
             <span style="flex:1">${esc(v)}</span>
-            <input class="form-control exam-diagnosis-icd10" data-idx="${i}" value="${esc(codes&&codes[v]||'')}" placeholder="κωδ. ICD-10" style="width:110px;font-size:12px;padding:3px 6px"/>
-            <span style="cursor:pointer;color:var(--red);font-weight:700;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%" data-remove-exam-diagnosis-list="${i}">×</span>
+            <input class="form-control ${codeClass}" data-idx="${i}" value="${esc(codes&&codes[v]||'')}" placeholder="${esc(codePlaceholder)}" style="width:110px;font-size:12px;padding:3px 6px"/>
+            <span style="cursor:pointer;color:var(--red);font-weight:700;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%" ${removeAttr}="${i}">×</span>
           </div>`).join('')}</div>`
         : `<div style="font-size:12px;color:var(--text-2);margin-bottom:12px">Δεν έχει προστεθεί τίποτα ακόμα — χωρίς λίστα, η φόρμα Ιατρικής Εξέτασης θα δείχνει αυτόματα ό,τι έχει χρησιμοποιηθεί ξανά.</div>`;
       const chipListPlain = (items, removeAttr) => (items&&items.length)
@@ -5479,7 +5481,7 @@ function renderConsents() {
           <div style="font-size:12px;color:var(--text-2);margin-top:4px">Λίστα επιλογής (autocomplete) στη φόρμα Ιατρικής Εξέτασης. Ο κωδικός ICD-10 είναι προαιρετικός, μόνο για δική σου αναφορά κατά τη συνταγογράφηση — το CRM δεν συνδέεται με το Σύστημα Ηλεκτρονικής Συνταγογράφησης.</div>
         </div>
         <div style="padding:16px 20px">
-          ${chipListIcd(S._examDiagnosesDraft, S._examDiagnosisIcd10Draft)}
+          ${chipListIcd(S._examDiagnosesDraft, S._examDiagnosisIcd10Draft, 'exam-diagnosis-icd10', 'data-remove-exam-diagnosis-list', 'κωδ. ICD-10')}
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             <input class="form-control" id="new-exam-diagnosis" placeholder="π.χ. Σμηγματορροϊκή Δερματίτιδα" style="max-width:260px"/>
             <input class="form-control" id="new-exam-diagnosis-icd10" placeholder="κωδ. ICD-10 (προαιρετικό)" style="max-width:150px"/>
@@ -5489,13 +5491,27 @@ function renderConsents() {
       </div>
       <div class="card" style="margin-bottom:16px">
         <div style="padding:16px 20px;border-bottom:1px solid var(--border-2)">
-          <div style="font-size:13px;font-weight:600;color:var(--navy)">Φάρμακα / Καλλυντικά</div>
-          <div style="font-size:12px;color:var(--text-2);margin-top:4px">Λίστα επιλογής (autocomplete) για τα σκευάσματα που συστήνονται στη φόρμα Ιατρικής Εξέτασης.</div>
+          <div style="font-size:13px;font-weight:600;color:var(--navy)">Φάρμακα</div>
+          <div style="font-size:12px;color:var(--text-2);margin-top:4px">Λίστα επιλογής (autocomplete) για συνταγογραφούμενα σκευάσματα. Ο κωδικός (ΕΟΦ/barcode) είναι προαιρετικός — προετοιμασία για μελλοντική σύνδεση με το Σύστημα Ηλεκτρονικής Συνταγογράφησης (ΗΔΙΚΑ), το CRM δεν έχει ζωντανή σύνδεση σήμερα.</div>
+        </div>
+        <div style="padding:16px 20px">
+          ${chipListIcd(S._examMedicinesDraft, S._examMedicineCodesDraft, 'exam-medicine-code', 'data-remove-exam-medicine', 'κωδ. ΕΟΦ')}
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <input class="form-control" id="new-exam-medicine" placeholder="π.χ. Betnovate (betamethasone) κρέμα" style="max-width:280px"/>
+            <input class="form-control" id="new-exam-medicine-code" placeholder="κωδ. ΕΟΦ/barcode (προαιρετικό)" style="max-width:170px"/>
+            <button class="btn btn-ghost btn-sm" id="add-exam-medicine">+ Προσθήκη</button>
+          </div>
+        </div>
+      </div>
+      <div class="card" style="margin-bottom:16px">
+        <div style="padding:16px 20px;border-bottom:1px solid var(--border-2)">
+          <div style="font-size:13px;font-weight:600;color:var(--navy)">Καλλυντικά / Προτάσεις</div>
+          <div style="font-size:12px;color:var(--text-2);margin-top:4px">Προτεινόμενα καλλυντικά/προϊόντα φροντίδας — ΔΕΝ συνταγογραφούνται, δεν έχουν ποτέ κωδικό ΗΔΙΚΑ.</div>
         </div>
         <div style="padding:16px 20px">
           ${chipListPlain(S._examMedicationsDraftList, 'data-remove-exam-medication-list')}
           <div style="display:flex;gap:8px">
-            <input class="form-control" id="new-exam-medication-list" placeholder="π.χ. Κορτιζονούχα κρέμα" style="max-width:320px"/>
+            <input class="form-control" id="new-exam-medication-list" placeholder="π.χ. Ενυδατική κρέμα προσώπου" style="max-width:320px"/>
             <button class="btn btn-ghost btn-sm" id="add-exam-medication-list">+ Προσθήκη</button>
           </div>
         </div>
@@ -9225,6 +9241,14 @@ function modalEditUser() {
         <input type="checkbox" id="eu-can-view-diagnosis" ${u.can_view_diagnosis?'checked':''}/>
         <span style="font-size:13px">Μπορεί να βλέπει διαγνώσεις Ιατρικών Εξετάσεων <span style="color:var(--text-2);font-weight:400">— ενεργοποίησε μόνο για γιατρούς, όχι αισθητικούς</span></span>
       </label>`:''}
+      <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border-2)">
+        <div style="font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Στοιχεία Συνταγογράφου (ΗΔΙΚΑ)</div>
+        <div style="font-size:11px;color:var(--text-2);margin-bottom:8px">Προετοιμασία για μελλοντική σύνδεση με το Σύστημα Ηλεκτρονικής Συνταγογράφησης — δεν χρησιμοποιούνται πουθενά ακόμα. Συμπλήρωσε μόνο αν πρόκειται για γιατρό.</div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">ΑΜΚΑ Ιατρού</label><input class="form-control" id="eu-doctor-amka" placeholder="11 ψηφία" value="${esc(u.doctor_amka||'')}"/></div>
+          <div class="form-group"><label class="form-label">Κωδικός Συνταγογράφου</label><input class="form-control" id="eu-prescriber-code" value="${esc(u.prescriber_code||'')}"/></div>
+        </div>
+      </div>
       <div style="font-size:11px;color:var(--text-2);margin-top:8px">Ρόλος, κατάσταση και κλινική αλλάζουν απευθείας από τον πίνακα «Διαχείριση Χρηστών».</div>
     </div>
     <div class="modal-footer">
@@ -9238,19 +9262,22 @@ function openMedicalExamModal(apptId, patientId, patientName) {
   S.modal = 'medical-exam';
   S.modalData = { examApptId: apptId, examPatientId: patientId, examPatientName: patientName };
   S._examDiagnosisDraft = [];
+  S._examMedicinesSelectedDraft = [];
   S._examMedicationsDraft = [];
   renderModal();
 }
 
 function modalMedicalExam() {
   const diagOptions = (S.clinic&&S.clinic.settings&&S.clinic.settings.exam_diagnoses)||[];
+  const medicineOptions = (S.clinic&&S.clinic.settings&&S.clinic.settings.exam_medicines)||[];
   const medOptions = (S.clinic&&S.clinic.settings&&S.clinic.settings.exam_medications)||[];
   const icd10Map = (S.clinic&&S.clinic.settings&&S.clinic.settings.exam_diagnosis_icd10)||{};
+  const medicineCodeMap = (S.clinic&&S.clinic.settings&&S.clinic.settings.exam_medicine_codes)||{};
   const chip = (items, removeAttr) => (items&&items.length)
     ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">${items.map((v,i)=>`<span style="display:inline-flex;align-items:center;gap:6px;background:var(--surface-2);border-radius:20px;padding:5px 6px 5px 12px;font-size:12px">${esc(v)}<span style="cursor:pointer;color:var(--red);font-weight:700;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%" ${removeAttr}="${i}">×</span></span>`).join('')}</div>`
     : '';
-  const chipWithIcd = (items, removeAttr) => (items&&items.length)
-    ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">${items.map((v,i)=>`<span style="display:inline-flex;align-items:center;gap:6px;background:var(--surface-2);border-radius:20px;padding:5px 6px 5px 12px;font-size:12px">${esc(v)}${icd10Map[v]?`<span style="color:var(--text-2);font-size:10.5px">${esc(icd10Map[v])}</span>`:''}<span style="cursor:pointer;color:var(--red);font-weight:700;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%" ${removeAttr}="${i}">×</span></span>`).join('')}</div>`
+  const chipWithCode = (items, removeAttr, codeMap) => (items&&items.length)
+    ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">${items.map((v,i)=>`<span style="display:inline-flex;align-items:center;gap:6px;background:var(--surface-2);border-radius:20px;padding:5px 6px 5px 12px;font-size:12px">${esc(v)}${codeMap[v]?`<span style="color:var(--text-2);font-size:10.5px">${esc(codeMap[v])}</span>`:''}<span style="cursor:pointer;color:var(--red);font-weight:700;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%" ${removeAttr}="${i}">×</span></span>`).join('')}</div>`
     : '';
   const FOLLOWUP_OPTIONS = [['','Καμία επανεξέταση'], ...Object.entries(FOLLOWUP_LABELS)];
   return `<div class="modal">
@@ -9258,7 +9285,7 @@ function modalMedicalExam() {
     <div class="modal-body">
       <div class="form-group">
         <label class="form-label">Διάγνωση *</label>
-        ${chipWithIcd(S._examDiagnosisDraft, 'data-remove-exam-diagnosis')}
+        ${chipWithCode(S._examDiagnosisDraft, 'data-remove-exam-diagnosis', icd10Map)}
         <div style="display:flex;gap:8px">
           <input class="form-control" id="exam-diagnosis-input" list="exam-diagnosis-list" placeholder="π.χ. Έγκζεμα"/>
           <datalist id="exam-diagnosis-list">${diagOptions.map(o=>`<option value="${esc(o)}">`).join('')}</datalist>
@@ -9266,10 +9293,19 @@ function modalMedicalExam() {
         </div>
       </div>
       <div class="form-group">
-        <label class="form-label">Φάρμακα / Καλλυντικά</label>
+        <label class="form-label">Φάρμακα</label>
+        ${chipWithCode(S._examMedicinesSelectedDraft, 'data-remove-exam-medicine-selected', medicineCodeMap)}
+        <div style="display:flex;gap:8px">
+          <input class="form-control" id="exam-medicine-input" list="exam-medicine-list" placeholder="π.χ. Betnovate (betamethasone) κρέμα"/>
+          <datalist id="exam-medicine-list">${medicineOptions.map(o=>`<option value="${esc(o)}">`).join('')}</datalist>
+          <button type="button" class="btn btn-ghost btn-sm" id="add-exam-medicine-selected" style="flex-shrink:0">+ Προσθήκη</button>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Καλλυντικά / Προτάσεις</label>
         ${chip(S._examMedicationsDraft, 'data-remove-exam-medication')}
         <div style="display:flex;gap:8px">
-          <input class="form-control" id="exam-medication-input" list="exam-medication-list" placeholder="π.χ. Κορτιζονούχα κρέμα"/>
+          <input class="form-control" id="exam-medication-input" list="exam-medication-list" placeholder="π.χ. Ενυδατική κρέμα προσώπου"/>
           <datalist id="exam-medication-list">${medOptions.map(o=>`<option value="${esc(o)}">`).join('')}</datalist>
           <button type="button" class="btn btn-ghost btn-sm" id="add-exam-medication" style="flex-shrink:0">+ Προσθήκη</button>
         </div>
@@ -11486,6 +11522,28 @@ function bindEvents() {
       render();
     });
   });
+  const _addExamMed = document.getElementById('add-exam-medicine');
+  if (_addExamMed) _addExamMed.addEventListener('click', () => {
+    const nameInp = document.getElementById('new-exam-medicine');
+    const codeInp = document.getElementById('new-exam-medicine-code');
+    const v = (nameInp&&nameInp.value||'').trim();
+    if (!v) return;
+    S._examMedicinesDraft = S._examMedicinesDraft||[];
+    if (!S._examMedicinesDraft.includes(v)) S._examMedicinesDraft.push(v);
+    const code = (codeInp&&codeInp.value||'').trim();
+    S._examMedicineCodesDraft = S._examMedicineCodesDraft||{};
+    if (code) S._examMedicineCodesDraft[v] = code;
+    render();
+  });
+  document.querySelectorAll('[data-remove-exam-medicine]').forEach(el => {
+    el.addEventListener('click', () => {
+      const i = Number(el.dataset.removeExamMedicine);
+      const removedName = S._examMedicinesDraft[i];
+      S._examMedicinesDraft.splice(i,1);
+      if (S._examMedicineCodesDraft && removedName) delete S._examMedicineCodesDraft[removedName];
+      render();
+    });
+  });
   const _addExamMedList = document.getElementById('add-exam-medication-list');
   if (_addExamMedList) _addExamMedList.addEventListener('click', () => {
     const inp = document.getElementById('new-exam-medication-list');
@@ -11513,9 +11571,21 @@ function bindEvents() {
       if (v) S._examDiagnosisIcd10Draft[name] = v;
       else delete S._examDiagnosisIcd10Draft[name];
     });
+    // Ίδιο για τους κωδικούς ΕΟΦ/barcode ανά φάρμακο.
+    S._examMedicineCodesDraft = S._examMedicineCodesDraft||{};
+    document.querySelectorAll('.exam-medicine-code').forEach(inp => {
+      const idx = Number(inp.dataset.idx);
+      const name = S._examMedicinesDraft && S._examMedicinesDraft[idx];
+      if (!name) return;
+      const v = inp.value.trim();
+      if (v) S._examMedicineCodesDraft[name] = v;
+      else delete S._examMedicineCodesDraft[name];
+    });
     const settings = Object.assign({}, (S.clinic&&S.clinic.settings)||{}, {
       exam_diagnoses: S._examDiagnosesDraft||[],
       exam_diagnosis_icd10: S._examDiagnosisIcd10Draft||{},
+      exam_medicines: S._examMedicinesDraft||[],
+      exam_medicine_codes: S._examMedicineCodesDraft||{},
       exam_medications: S._examMedicationsDraftList||[],
     });
     const {error} = await sb.from('clinics').update({settings}).eq('id', clinicId());
@@ -11787,9 +11857,11 @@ function bindModalEvents() {
   if (_seu) _seu.addEventListener('click', async () => {
     const name = document.getElementById('eu-name').value.trim();
     const phone = document.getElementById('eu-phone').value.trim();
+    const doctorAmka = (document.getElementById('eu-doctor-amka')||{value:''}).value.trim();
+    const prescriberCode = (document.getElementById('eu-prescriber-code')||{value:''}).value.trim();
     if (!name) return alert('Το ονοματεπώνυμο είναι υποχρεωτικό');
     _seu.textContent='Αποθήκευση...'; _seu.disabled=true;
-    const {error} = await sb.rpc('update_staff_profile', {p_staff_id: _seu.dataset.userId, p_full_name: name, p_phone: phone||null});
+    const {error} = await sb.rpc('update_staff_profile', {p_staff_id: _seu.dataset.userId, p_full_name: name, p_phone: phone||null, p_doctor_amka: doctorAmka||null, p_prescriber_code: prescriberCode||null});
     if (error) { alert('Σφάλμα: '+error.message); _seu.textContent='Αποθήκευση'; _seu.disabled=false; return; }
     const cvdEl = document.getElementById('eu-can-view-diagnosis');
     if (cvdEl) {
@@ -11813,6 +11885,10 @@ function bindModalEvents() {
   if (_addDiag) _addDiag.addEventListener('click', () => _addExamChip('exam-diagnosis-input', '_examDiagnosisDraft'));
   const _diagInput = document.getElementById('exam-diagnosis-input');
   if (_diagInput) _diagInput.addEventListener('keydown', e => { if (e.key==='Enter') { e.preventDefault(); _addExamChip('exam-diagnosis-input', '_examDiagnosisDraft'); } });
+  const _addMedicineSel = document.getElementById('add-exam-medicine-selected');
+  if (_addMedicineSel) _addMedicineSel.addEventListener('click', () => _addExamChip('exam-medicine-input', '_examMedicinesSelectedDraft'));
+  const _medicineInput = document.getElementById('exam-medicine-input');
+  if (_medicineInput) _medicineInput.addEventListener('keydown', e => { if (e.key==='Enter') { e.preventDefault(); _addExamChip('exam-medicine-input', '_examMedicinesSelectedDraft'); } });
   const _addMed = document.getElementById('add-exam-medication');
   if (_addMed) _addMed.addEventListener('click', () => _addExamChip('exam-medication-input', '_examMedicationsDraft'));
   const _medInput = document.getElementById('exam-medication-input');
@@ -11820,22 +11896,31 @@ function bindModalEvents() {
   document.querySelectorAll('[data-remove-exam-diagnosis]').forEach(el => {
     el.addEventListener('click', () => { S._examDiagnosisDraft.splice(Number(el.dataset.removeExamDiagnosis),1); renderModal(); });
   });
+  document.querySelectorAll('[data-remove-exam-medicine-selected]').forEach(el => {
+    el.addEventListener('click', () => { S._examMedicinesSelectedDraft.splice(Number(el.dataset.removeExamMedicineSelected),1); renderModal(); });
+  });
   document.querySelectorAll('[data-remove-exam-medication]').forEach(el => {
     el.addEventListener('click', () => { S._examMedicationsDraft.splice(Number(el.dataset.removeExamMedication),1); renderModal(); });
   });
   const _sme = document.getElementById('save-medical-exam');
   if (_sme) _sme.addEventListener('click', async () => {
     const diagnosis = S._examDiagnosisDraft||[];
-    const medications = S._examMedicationsDraft||[];
+    const medicines = S._examMedicinesSelectedDraft||[];
+    const cosmetics = S._examMedicationsDraft||[];
+    const medications = [...medicines, ...cosmetics];
     const followup = document.getElementById('exam-followup').value || null;
     const notes = document.getElementById('exam-notes').value.trim() || null;
     if (!diagnosis.length) return alert('Πρόσθεσε τουλάχιστον μία διάγνωση.');
     _sme.textContent='Αποθήκευση...'; _sme.disabled=true;
-    // Στιγμιότυπο των κωδικών ICD-10 (από τις Ρυθμίσεις) όπως ήταν ΤΗ ΣΤΙΓΜΗ
-    // της εξέτασης — μόνο για τις διαγνώσεις που πράγματι επιλέχθηκαν εδώ.
+    // Στιγμιότυπο των κωδικών ICD-10 / ΕΟΦ (από τις Ρυθμίσεις) όπως ήταν ΤΗ
+    // ΣΤΙΓΜΗ της εξέτασης — μόνο για ό,τι πράγματι επιλέχθηκε εδώ. Μόνο τα
+    // Φάρμακα παίρνουν κωδικό — τα Καλλυντικά/Προτάσεις ποτέ (δεν συνταγογραφούνται).
     const icd10Map = (S.clinic&&S.clinic.settings&&S.clinic.settings.exam_diagnosis_icd10)||{};
     const diagnosisIcd10 = {};
     diagnosis.forEach(d=>{ if (icd10Map[d]) diagnosisIcd10[d] = icd10Map[d]; });
+    const medicineCodeMap = (S.clinic&&S.clinic.settings&&S.clinic.settings.exam_medicine_codes)||{};
+    const medicationCodes = {};
+    medicines.forEach(m=>{ if (medicineCodeMap[m]) medicationCodes[m] = medicineCodeMap[m]; });
     const {error} = await sb.from('medical_exams').insert({
       clinic_id: clinicId(),
       patient_id: S.modalData.examPatientId,
@@ -11843,6 +11928,7 @@ function bindModalEvents() {
       doctor_id: S.user && S.user.id,
       diagnosis, medications,
       diagnosis_icd10: diagnosisIcd10,
+      medication_codes: medicationCodes,
       followup_interval: followup,
       notes,
     });
@@ -11850,12 +11936,14 @@ function bindModalEvents() {
     // Μεγάλωσε τις λίστες της κλινικής με τυχόν νέες τιμές — best effort, δεν
     // μπλοκάρει την αποθήκευση της εξέτασης αν αποτύχει.
     const clinicDiag = new Set((S.clinic&&S.clinic.settings&&S.clinic.settings.exam_diagnoses)||[]);
+    const clinicMedicines = new Set((S.clinic&&S.clinic.settings&&S.clinic.settings.exam_medicines)||[]);
     const clinicMeds = new Set((S.clinic&&S.clinic.settings&&S.clinic.settings.exam_medications)||[]);
     let listsChanged = false;
     diagnosis.forEach(d=>{ if(!clinicDiag.has(d)){clinicDiag.add(d);listsChanged=true;} });
-    medications.forEach(m=>{ if(!clinicMeds.has(m)){clinicMeds.add(m);listsChanged=true;} });
+    medicines.forEach(m=>{ if(!clinicMedicines.has(m)){clinicMedicines.add(m);listsChanged=true;} });
+    cosmetics.forEach(m=>{ if(!clinicMeds.has(m)){clinicMeds.add(m);listsChanged=true;} });
     if (listsChanged) {
-      const settings = Object.assign({}, (S.clinic&&S.clinic.settings)||{}, {exam_diagnoses:[...clinicDiag], exam_medications:[...clinicMeds]});
+      const settings = Object.assign({}, (S.clinic&&S.clinic.settings)||{}, {exam_diagnoses:[...clinicDiag], exam_medicines:[...clinicMedicines], exam_medications:[...clinicMeds]});
       const {error:sErr} = await sb.from('clinics').update({settings}).eq('id', clinicId());
       if (!sErr && S.clinic) S.clinic.settings = settings;
     }
