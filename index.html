@@ -239,7 +239,7 @@ summary::-webkit-details-marker{display:none}
 .filter-tab.active{background:var(--blue);color:#fff;border-color:var(--blue)}
 
 /* MODAL */
-.modal-overlay{position:fixed;inset:0;background:rgba(10,12,24,0.5);backdrop-filter:blur(3px);z-index:300;display:flex;align-items:center;justify-content:center;padding:16px;animation:fadeIn .15s}
+.modal-overlay{position:fixed;inset:0;background:rgba(10,12,24,0.5);backdrop-filter:blur(3px);z-index:600;display:flex;align-items:center;justify-content:center;padding:16px;animation:fadeIn .15s}
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
 .modal{background:var(--white);border-radius:16px;box-shadow:var(--shadow-lg);width:100%;max-width:460px;animation:slideUp .2s cubic-bezier(.34,1.56,.64,1);max-height:90vh;overflow-y:auto}
 @keyframes slideUp{from{opacity:0;transform:translateY(20px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
@@ -7158,7 +7158,7 @@ async function openNewApptAt(datetimeLocal, therapistName, roomId, extraModalDat
 // φόρμα Νέου Ραντεβού κατευθείαν στην προτεινόμενη ημερομηνία, με τον ίδιο
 // ασθενή ήδη επιλεγμένο — «πρόταση κλεισίματος ραντεβού».
 const FOLLOWUP_DAYS = {'15d':15,'30d':30,'45d':45,'2m':60,'3m':90,'6m':180,'1y':365};
-async function openFollowupAppointment(patientId, patientName, intervalCode) {
+async function openFollowupAppointment(patientId, patientName, intervalCode, serviceName) {
   const days = FOLLOWUP_DAYS[intervalCode];
   if (!days) return;
   const target = new Date(); target.setDate(target.getDate() + days);
@@ -7172,6 +7172,19 @@ async function openFollowupAppointment(patientId, patientName, intervalCode) {
     ps.value = patientName || '';
     pid.value = patientId;
     if (window._apptLoadPatientPackages) window._apptLoadPatientPackages(patientId);
+  }
+  // Προεπιλογή ίδιας υπηρεσίας με αυτή του ραντεβού που είχε την Ιατρική
+  // Εξέταση (π.χ. «Δερματολογική Εξέταση») — το επανεξέταση συνήθως είναι η
+  // ίδια υπηρεσία, ο γιατρός δεν χρειάζεται να την ξαναδιαλέξει κάθε φορά.
+  if (serviceName) {
+    const svcSel = document.getElementById('a-service');
+    const svcSearch = document.getElementById('a-service-search');
+    const opt = svcSel && Array.from(svcSel.options).find(o=>o.value===serviceName);
+    if (svcSel && svcSearch && opt) {
+      svcSel.value = serviceName;
+      svcSearch.value = opt.textContent;
+      svcSel.dispatchEvent(new Event('change'));
+    }
   }
   if (window.apptShowStep) apptShowStep(1);
 }
@@ -9313,6 +9326,7 @@ function modalMedicalExam() {
           <datalist id="exam-diagnosis-list">${diagOptions.map(o=>`<option value="${esc(o)}">`).join('')}</datalist>
           <button type="button" class="btn btn-ghost btn-sm" id="add-exam-diagnosis" style="flex-shrink:0">+ Προσθήκη</button>
         </div>
+        <button type="button" class="btn btn-ghost btn-sm" id="exam-open-consultation" style="margin-top:8px">📋 Άνοιγμα φόρμας Consultation</button>
       </div>
       <div class="form-group">
         <label class="form-label">Φάρμακα</label>
@@ -11889,6 +11903,14 @@ function bindModalEvents() {
     reloadUsersTable();
   });
 
+  // Ιατρική Εξέταση — άνοιγμα φόρμας Consultation για τον ίδιο ασθενή, χωρίς
+  // να κλείσει η Ιατρική Εξέταση από πίσω (το cf-overlay έχει z-index πάνω
+  // από όλα, οπότε επιστρέφοντας η Ιατρική Εξέταση είναι ακόμα εκεί ανοιχτή).
+  const _openExamConsult = document.getElementById('exam-open-consultation');
+  if (_openExamConsult) _openExamConsult.addEventListener('click', () => {
+    openConsultationFormModal({standalone:true, patient:{id:S.modalData.examPatientId, full_name:S.modalData.examPatientName}});
+  });
+
   // Ιατρική Εξέταση — προσθήκη/αφαίρεση chip διάγνωσης/φαρμάκων + αποθήκευση
   const _addDiag = document.getElementById('add-exam-diagnosis');
   const _addExamChip = (inputId, draftKey) => {
@@ -11979,9 +12001,11 @@ function bindModalEvents() {
       if (!sErr && S.clinic) S.clinic.settings = settings;
     }
     const patientId = S.modalData.examPatientId, patientName = S.modalData.examPatientName;
+    const origAppt = (S.appointments||[]).find(x=>x.id===S.modalData.examApptId);
+    const origServiceName = origAppt && origAppt.service_name;
     closeModal();
     if (followup) {
-      await openFollowupAppointment(patientId, patientName, followup);
+      await openFollowupAppointment(patientId, patientName, followup, origServiceName);
     } else {
       await loadPageData(); render();
     }
