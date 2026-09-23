@@ -239,7 +239,7 @@ summary::-webkit-details-marker{display:none}
 .filter-tab.active{background:var(--blue);color:#fff;border-color:var(--blue)}
 
 /* MODAL */
-.modal-overlay{position:fixed;inset:0;background:rgba(10,12,24,0.5);backdrop-filter:blur(3px);z-index:300;display:flex;align-items:center;justify-content:center;padding:16px;animation:fadeIn .15s}
+.modal-overlay{position:fixed;inset:0;background:rgba(10,12,24,0.5);backdrop-filter:blur(3px);z-index:600;display:flex;align-items:center;justify-content:center;padding:16px;animation:fadeIn .15s}
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
 .modal{background:var(--white);border-radius:16px;box-shadow:var(--shadow-lg);width:100%;max-width:460px;animation:slideUp .2s cubic-bezier(.34,1.56,.64,1);max-height:90vh;overflow-y:auto}
 @keyframes slideUp{from{opacity:0;transform:translateY(20px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
@@ -5794,6 +5794,27 @@ async function loadApptAutomationInfo(aid) {
   } catch(e) { el.textContent = ''; }
 }
 
+// Κουμπί «🩺 Καταγραφή Ιατρικής Εξέτασης» στο popup ραντεβού: ζητάει απευθείας
+// από τη βάση αν η υπηρεσία ΤΟΥ ΣΥΓΚΕΚΡΙΜΕΝΟΥ ραντεβού (a.clinic_id) απαιτεί
+// εξέταση — όχι από το ήδη φορτωμένο S.clinicServicesLite, που είναι πάντα
+// φιλτραρισμένο στην «τρέχουσα επιλεγμένη» κλινική. Για super_admin που βλέπει
+// ραντεβού άλλης κλινικής από αυτή που έχει επιλεγμένη στο πάνω μέρος, το
+// S.clinicServicesLite δεν περιείχε καθόλου τη σωστή υπηρεσία και το κουμπί
+// έλειπε εντελώς χωρίς καμία ένδειξη γιατί.
+async function loadApptExamSlot(a) {
+  const slot = document.getElementById('appt-exam-slot');
+  if (!slot) return;
+  if (a.is_internal || !a.patient_id) return;
+  const {data:svc} = await sb.from('services').select('requires_medical_exam')
+    .eq('clinic_id', a.clinic_id).eq('name', a.service_name).maybeSingle();
+  if (!svc || !svc.requires_medical_exam) { slot.innerHTML = ''; return; }
+  if (!canViewDiagnosis()) {
+    slot.innerHTML = `<div style="margin-top:8px;padding:8px 10px;background:var(--surface);border-radius:8px;font-size:11px;color:var(--text-2);text-align:center">🔒 Ιατρική Εξέταση — περιορισμένη πρόσβαση</div>`;
+    return;
+  }
+  slot.innerHTML = `<button class="btn btn-sm" style="width:100%;margin-top:8px;justify-content:center;background:#0F6E56;color:#fff;font-weight:700" onclick="openMedicalExamModal('${a.id}','${a.patient_id}','${esc(a.patients&&a.patients.full_name||'')}')">🩺 Καταγραφή Ιατρικής Εξέτασης</button>`;
+}
+
 async function resendApptAutomation(aid, action) {
   const label = action==='resend_confirmation' ? 'το αίτημα επιβεβαίωσης' : action==='resend_review_request' ? 'τη ζήτηση αξιολόγησης' : 'τις οδηγίες θεραπείας';
   if (!confirm(`Να σταλεί ξανά ${label} στον πελάτη με email;`)) return;
@@ -7137,7 +7158,7 @@ async function openNewApptAt(datetimeLocal, therapistName, roomId, extraModalDat
 // φόρμα Νέου Ραντεβού κατευθείαν στην προτεινόμενη ημερομηνία, με τον ίδιο
 // ασθενή ήδη επιλεγμένο — «πρόταση κλεισίματος ραντεβού».
 const FOLLOWUP_DAYS = {'15d':15,'30d':30,'45d':45,'2m':60,'3m':90,'6m':180,'1y':365};
-async function openFollowupAppointment(patientId, patientName, intervalCode) {
+async function openFollowupAppointment(patientId, patientName, intervalCode, serviceName) {
   const days = FOLLOWUP_DAYS[intervalCode];
   if (!days) return;
   const target = new Date(); target.setDate(target.getDate() + days);
@@ -7151,6 +7172,19 @@ async function openFollowupAppointment(patientId, patientName, intervalCode) {
     ps.value = patientName || '';
     pid.value = patientId;
     if (window._apptLoadPatientPackages) window._apptLoadPatientPackages(patientId);
+  }
+  // Προεπιλογή ίδιας υπηρεσίας με αυτή του ραντεβού που είχε την Ιατρική
+  // Εξέταση (π.χ. «Δερματολογική Εξέταση») — το επανεξέταση συνήθως είναι η
+  // ίδια υπηρεσία, ο γιατρός δεν χρειάζεται να την ξαναδιαλέξει κάθε φορά.
+  if (serviceName) {
+    const svcSel = document.getElementById('a-service');
+    const svcSearch = document.getElementById('a-service-search');
+    const opt = svcSel && Array.from(svcSel.options).find(o=>o.value===serviceName);
+    if (svcSel && svcSearch && opt) {
+      svcSel.value = serviceName;
+      svcSearch.value = opt.textContent;
+      svcSel.dispatchEvent(new Event('change'));
+    }
   }
   if (window.apptShowStep) apptShowStep(1);
 }
@@ -9292,6 +9326,7 @@ function modalMedicalExam() {
           <datalist id="exam-diagnosis-list">${diagOptions.map(o=>`<option value="${esc(o)}">`).join('')}</datalist>
           <button type="button" class="btn btn-ghost btn-sm" id="add-exam-diagnosis" style="flex-shrink:0">+ Προσθήκη</button>
         </div>
+        <button type="button" class="btn btn-ghost btn-sm" id="exam-open-consultation" style="margin-top:8px">📋 Άνοιγμα φόρμας Consultation</button>
       </div>
       <div class="form-group">
         <label class="form-label">Φάρμακα</label>
@@ -10321,13 +10356,7 @@ function bindEvents() {
         </div>
         ${missingThisConsent?`
         <button class="btn btn-sm" style="width:100%;margin-top:8px;justify-content:center;background:#D97706;color:#fff;font-weight:700" onclick="openConsentFromAppointment('${a.patient_id}','${esc(a.patients&&a.patients.full_name||'')}','${consentGrp}')">📝 Συμπλήρωση Συναίνεσης ${consentLabels[consentGrp]}</button>`:''}
-        ${(()=>{
-          if (a.is_internal || !a.patient_id) return '';
-          const svc = (S.clinicServicesLite||[]).find(s=>s.name===a.service_name);
-          if (!svc || !svc.requires_medical_exam) return '';
-          if (!canViewDiagnosis()) return `<div style="margin-top:8px;padding:8px 10px;background:var(--surface);border-radius:8px;font-size:11px;color:var(--text-2);text-align:center">🔒 Ιατρική Εξέταση — περιορισμένη πρόσβαση</div>`;
-          return `<button class="btn btn-sm" style="width:100%;margin-top:8px;justify-content:center;background:#0F6E56;color:#fff;font-weight:700" onclick="openMedicalExamModal('${a.id}','${a.patient_id}','${esc(a.patients&&a.patients.full_name||'')}')">🩺 Καταγραφή Ιατρικής Εξέτασης</button>`;
-        })()}
+        <div id="appt-exam-slot"></div>
         ${(!a.is_internal && a.patient_id)?`
         <div style="display:flex;gap:6px;margin-top:8px">
           <label class="btn btn-ghost btn-sm" style="cursor:pointer;flex:1;justify-content:center;margin:0">
@@ -10363,6 +10392,7 @@ function bindEvents() {
         </details>`;
       panel.style.display = 'block';
       loadApptAutomationInfo(a.id);
+      loadApptExamSlot(a);
       // Rebind patient link
       const _cp=content.querySelector('[data-patient]');if(_cp)_cp.addEventListener('click', () => {
         panel.style.display='none';
@@ -11873,6 +11903,14 @@ function bindModalEvents() {
     reloadUsersTable();
   });
 
+  // Ιατρική Εξέταση — άνοιγμα φόρμας Consultation για τον ίδιο ασθενή, χωρίς
+  // να κλείσει η Ιατρική Εξέταση από πίσω (το cf-overlay έχει z-index πάνω
+  // από όλα, οπότε επιστρέφοντας η Ιατρική Εξέταση είναι ακόμα εκεί ανοιχτή).
+  const _openExamConsult = document.getElementById('exam-open-consultation');
+  if (_openExamConsult) _openExamConsult.addEventListener('click', () => {
+    openConsultationFormModal({standalone:true, patient:{id:S.modalData.examPatientId, full_name:S.modalData.examPatientName}});
+  });
+
   // Ιατρική Εξέταση — προσθήκη/αφαίρεση chip διάγνωσης/φαρμάκων + αποθήκευση
   const _addDiag = document.getElementById('add-exam-diagnosis');
   const _addExamChip = (inputId, draftKey) => {
@@ -11963,9 +12001,11 @@ function bindModalEvents() {
       if (!sErr && S.clinic) S.clinic.settings = settings;
     }
     const patientId = S.modalData.examPatientId, patientName = S.modalData.examPatientName;
+    const origAppt = (S.appointments||[]).find(x=>x.id===S.modalData.examApptId);
+    const origServiceName = origAppt && origAppt.service_name;
     closeModal();
     if (followup) {
-      await openFollowupAppointment(patientId, patientName, followup);
+      await openFollowupAppointment(patientId, patientName, followup, origServiceName);
     } else {
       await loadPageData(); render();
     }
