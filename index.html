@@ -5794,6 +5794,27 @@ async function loadApptAutomationInfo(aid) {
   } catch(e) { el.textContent = ''; }
 }
 
+// Κουμπί «🩺 Καταγραφή Ιατρικής Εξέτασης» στο popup ραντεβού: ζητάει απευθείας
+// από τη βάση αν η υπηρεσία ΤΟΥ ΣΥΓΚΕΚΡΙΜΕΝΟΥ ραντεβού (a.clinic_id) απαιτεί
+// εξέταση — όχι από το ήδη φορτωμένο S.clinicServicesLite, που είναι πάντα
+// φιλτραρισμένο στην «τρέχουσα επιλεγμένη» κλινική. Για super_admin που βλέπει
+// ραντεβού άλλης κλινικής από αυτή που έχει επιλεγμένη στο πάνω μέρος, το
+// S.clinicServicesLite δεν περιείχε καθόλου τη σωστή υπηρεσία και το κουμπί
+// έλειπε εντελώς χωρίς καμία ένδειξη γιατί.
+async function loadApptExamSlot(a) {
+  const slot = document.getElementById('appt-exam-slot');
+  if (!slot) return;
+  if (a.is_internal || !a.patient_id) return;
+  const {data:svc} = await sb.from('services').select('requires_medical_exam')
+    .eq('clinic_id', a.clinic_id).eq('name', a.service_name).maybeSingle();
+  if (!svc || !svc.requires_medical_exam) { slot.innerHTML = ''; return; }
+  if (!canViewDiagnosis()) {
+    slot.innerHTML = `<div style="margin-top:8px;padding:8px 10px;background:var(--surface);border-radius:8px;font-size:11px;color:var(--text-2);text-align:center">🔒 Ιατρική Εξέταση — περιορισμένη πρόσβαση</div>`;
+    return;
+  }
+  slot.innerHTML = `<button class="btn btn-sm" style="width:100%;margin-top:8px;justify-content:center;background:#0F6E56;color:#fff;font-weight:700" onclick="openMedicalExamModal('${a.id}','${a.patient_id}','${esc(a.patients&&a.patients.full_name||'')}')">🩺 Καταγραφή Ιατρικής Εξέτασης</button>`;
+}
+
 async function resendApptAutomation(aid, action) {
   const label = action==='resend_confirmation' ? 'το αίτημα επιβεβαίωσης' : action==='resend_review_request' ? 'τη ζήτηση αξιολόγησης' : 'τις οδηγίες θεραπείας';
   if (!confirm(`Να σταλεί ξανά ${label} στον πελάτη με email;`)) return;
@@ -10321,13 +10342,7 @@ function bindEvents() {
         </div>
         ${missingThisConsent?`
         <button class="btn btn-sm" style="width:100%;margin-top:8px;justify-content:center;background:#D97706;color:#fff;font-weight:700" onclick="openConsentFromAppointment('${a.patient_id}','${esc(a.patients&&a.patients.full_name||'')}','${consentGrp}')">📝 Συμπλήρωση Συναίνεσης ${consentLabels[consentGrp]}</button>`:''}
-        ${(()=>{
-          if (a.is_internal || !a.patient_id) return '';
-          const svc = (S.clinicServicesLite||[]).find(s=>s.name===a.service_name);
-          if (!svc || !svc.requires_medical_exam) return '';
-          if (!canViewDiagnosis()) return `<div style="margin-top:8px;padding:8px 10px;background:var(--surface);border-radius:8px;font-size:11px;color:var(--text-2);text-align:center">🔒 Ιατρική Εξέταση — περιορισμένη πρόσβαση</div>`;
-          return `<button class="btn btn-sm" style="width:100%;margin-top:8px;justify-content:center;background:#0F6E56;color:#fff;font-weight:700" onclick="openMedicalExamModal('${a.id}','${a.patient_id}','${esc(a.patients&&a.patients.full_name||'')}')">🩺 Καταγραφή Ιατρικής Εξέτασης</button>`;
-        })()}
+        <div id="appt-exam-slot"></div>
         ${(!a.is_internal && a.patient_id)?`
         <div style="display:flex;gap:6px;margin-top:8px">
           <label class="btn btn-ghost btn-sm" style="cursor:pointer;flex:1;justify-content:center;margin:0">
@@ -10363,6 +10378,7 @@ function bindEvents() {
         </details>`;
       panel.style.display = 'block';
       loadApptAutomationInfo(a.id);
+      loadApptExamSlot(a);
       // Rebind patient link
       const _cp=content.querySelector('[data-patient]');if(_cp)_cp.addEventListener('click', () => {
         panel.style.display='none';
