@@ -4581,7 +4581,7 @@ function renderCalendar() {
     </div>
 
     <!-- Appointment detail panel -->
-    <div id="appt-detail-panel" style="display:none;position:fixed;right:20px;top:80px;width:320px;max-height:calc(100vh - 100px);overflow-y:auto;background:var(--white);border-radius:14px;box-shadow:var(--shadow-lg);border:1px solid var(--border-2);z-index:500;padding:20px">
+    <div id="appt-detail-panel" style="display:none;position:fixed;right:20px;top:80px;bottom:20px;width:320px;overflow-y:auto;background:var(--white);border-radius:14px;box-shadow:var(--shadow-lg);border:1px solid var(--border-2);z-index:500;padding:20px">
       <div style="display:flex;justify-content:space-between;margin-bottom:14px">
         <span style="font-size:14px;font-weight:600">Ραντεβού</span>
         <button onclick="document.getElementById('appt-detail-panel').style.display='none'" style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-2)">×</button>
@@ -11905,6 +11905,20 @@ function bindModalEvents() {
   });
   const _sme = document.getElementById('save-medical-exam');
   if (_sme) _sme.addEventListener('click', async () => {
+    // Αν έχει μείνει γραμμένο κείμενο σε κάποιο πεδίο χωρίς να έχει πατηθεί το
+    // "+ Προσθήκη" (π.χ. πληκτρολόγησε τη διάγνωση και πήγε κατευθείαν σε
+    // Αποθήκευση), το προσθέτουμε αυτόματα εδώ — αλλιώς φαινόταν οπτικά η
+    // διάγνωση αλλά η αποθήκευση απέτυχε σαν να μην υπήρχε καθόλου.
+    const _commitPending = (inputId, draftKey) => {
+      const inp = document.getElementById(inputId);
+      const v = (inp && inp.value || '').trim();
+      if (!v) return;
+      S[draftKey] = S[draftKey]||[];
+      if (!S[draftKey].includes(v)) S[draftKey].push(v);
+    };
+    _commitPending('exam-diagnosis-input', '_examDiagnosisDraft');
+    _commitPending('exam-medicine-input', '_examMedicinesSelectedDraft');
+    _commitPending('exam-medication-input', '_examMedicationsDraft');
     const diagnosis = S._examDiagnosisDraft||[];
     const medicines = S._examMedicinesSelectedDraft||[];
     const cosmetics = S._examMedicationsDraft||[];
