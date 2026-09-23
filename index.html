@@ -7123,6 +7123,7 @@ async function openNewApptAt(datetimeLocal, therapistName, roomId, extraModalDat
     S._apptRefsLoaded = true;
   }
   S.modal = 'new-appt'; S.modalData = Object.assign({}, roomId ? {roomId} : {}, extraModalData||{}); render();
+  if (window.apptShowStep) apptShowStep(1);
   const t = document.getElementById('a-time'); if (t && datetimeLocal) t.value = datetimeLocal;
   if (roomId) { const rs = document.getElementById('a-room'); if (rs) { rs.value = roomId; rs.dataset.manual = '1'; } }
   if (therapistName) {
