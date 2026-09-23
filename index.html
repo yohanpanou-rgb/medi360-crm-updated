@@ -1161,6 +1161,11 @@ async function loadPageData() {
     // το consultation_products/consultation flow παραπάνω — καμία τιμή δεν
     // πρέπει ποτέ να εμφανιστεί στο έγγραφο/email που λαμβάνει ο πελάτης.
     S._consultProductPricesDraft = JSON.parse(JSON.stringify((S.clinic&&S.clinic.settings&&S.clinic.settings.consultation_product_prices)||{}));
+    // Λίστες Ιατρικών Εξετάσεων — διαγνώσεις (+ προαιρετικός κωδικός ICD-10) και
+    // φάρμακα/καλλυντικά, ίδιο μοτίβο draft/save με τις λίστες Consultation.
+    S._examDiagnosesDraft = [...((S.clinic&&S.clinic.settings&&S.clinic.settings.exam_diagnoses)||[])];
+    S._examDiagnosisIcd10Draft = JSON.parse(JSON.stringify((S.clinic&&S.clinic.settings&&S.clinic.settings.exam_diagnosis_icd10)||{}));
+    S._examMedicationsDraftList = [...((S.clinic&&S.clinic.settings&&S.clinic.settings.exam_medications)||[])];
   }
   if (S.page==='product-sale') {
     const {data} = await sb.from('product_sales').select('*, patients(full_name)').eq('clinic_id',cid).order('created_at',{ascending:false}).limit(20);
@@ -2667,7 +2672,7 @@ function renderPatientDiagnosesTab() {
         <div style="font-size:11px;color:var(--text-2)">${esc(e.profiles&&e.profiles.full_name||'—')}</div>
       </div>
       <div style="font-size:12px;color:var(--text-2);margin-bottom:4px">Διάγνωση</div>
-      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">${(e.diagnosis||[]).map(d=>`<span style="background:var(--surface-2);border-radius:20px;padding:4px 12px;font-size:12px">${esc(d)}</span>`).join('')}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">${(e.diagnosis||[]).map(d=>`<span style="display:inline-flex;align-items:center;gap:6px;background:var(--surface-2);border-radius:20px;padding:4px 12px;font-size:12px">${esc(d)}${e.diagnosis_icd10&&e.diagnosis_icd10[d]?`<span style="color:var(--text-2);font-size:10.5px">${esc(e.diagnosis_icd10[d])}</span>`:''}</span>`).join('')}</div>
       ${(e.medications||[]).length?`
       <div style="font-size:12px;color:var(--text-2);margin-bottom:4px">Φάρμακα / Καλλυντικά</div>
       <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">${e.medications.map(m=>`<span style="background:var(--surface-2);border-radius:20px;padding:4px 12px;font-size:12px">${esc(m)}</span>`).join('')}</div>`:''}
@@ -5344,7 +5349,7 @@ function renderConsents() {
     </div>
     <!-- Tabs -->
     <div style="display:flex;gap:0;border-bottom:1px solid var(--border-2);margin-bottom:20px;overflow-x:auto">
-      ${[{id:'gdpr',l:`GDPR (${gdpr.length})`},{id:'service',l:`Υπηρεσιών (${svc.length})`},{id:'templates',l:'Templates'},{id:'mapping',l:'Αντιστοίχιση Υπηρεσιών'},{id:'consult-lists',l:'Λίστες Consultation'}].map(t=>`<button class="btn" style="border-radius:0;border-bottom:2px solid ${conTab===t.id?'var(--blue)':'transparent'};color:${conTab===t.id?'var(--blue)':'var(--text-2)'};background:transparent;padding:8px 16px;font-size:12px" data-con-tab="${t.id}">${t.l}</button>`).join('')}
+      ${[{id:'gdpr',l:`GDPR (${gdpr.length})`},{id:'service',l:`Υπηρεσιών (${svc.length})`},{id:'templates',l:'Templates'},{id:'mapping',l:'Αντιστοίχιση Υπηρεσιών'},{id:'consult-lists',l:'Λίστες Consultation'},{id:'exam-lists',l:'Λίστες Ιατρικών Εξετάσεων'}].map(t=>`<button class="btn" style="border-radius:0;border-bottom:2px solid ${conTab===t.id?'var(--blue)':'transparent'};color:${conTab===t.id?'var(--blue)':'var(--text-2)'};background:transparent;padding:8px 16px;font-size:12px" data-con-tab="${t.id}">${t.l}</button>`).join('')}
     </div>
     ${conTab==='gdpr'?`<div class="card"><div class="table-wrap"><table>
       <thead><tr><th>Ασθενής</th><th>Τηλέφωνο</th><th>Υπογραφή</th><th>Ημ/νία</th><th></th></tr></thead>
@@ -5447,6 +5452,57 @@ function renderConsents() {
       <div style="display:flex;align-items:center;gap:12px">
         <button class="btn btn-primary" id="save-consult-lists">Αποθήκευση Λιστών</button>
         <div id="save-consult-lists-result" style="font-size:12px"></div>
+      </div>`;
+    })():''}
+    ${conTab==='exam-lists'?(()=>{
+      // Ίδιο chipListWithPrice της Consultation, αλλά "τιμή" → προαιρετικός κωδικός
+      // ICD-10 ανά διάγνωση. Το ICD-10 είναι το διεθνές πρότυπο πάνω στο οποίο
+      // στηρίζεται και το Σύστημα Ηλεκτρονικής Συνταγογράφησης (ΗΔΙΚΑ) — το CRM
+      // ΔΕΝ έχει ζωντανή σύνδεση με το ΗΔΙΚΑ, είναι απλή αναφορά/σημείωση για
+      // ευκολότερη αντιστοίχιση όταν συνταγογραφείς· επαλήθευσέ τον κωδικό πριν
+      // τον χρησιμοποιήσεις σε πραγματική συνταγή.
+      const chipListIcd = (items, codes) => (items&&items.length)
+        ? `<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">${items.map((v,i)=>`
+          <div style="display:flex;align-items:center;gap:8px;background:var(--surface-2);border-radius:10px;padding:6px 6px 6px 12px;font-size:12px">
+            <span style="flex:1">${esc(v)}</span>
+            <input class="form-control exam-diagnosis-icd10" data-idx="${i}" value="${esc(codes&&codes[v]||'')}" placeholder="κωδ. ICD-10" style="width:110px;font-size:12px;padding:3px 6px"/>
+            <span style="cursor:pointer;color:var(--red);font-weight:700;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%" data-remove-exam-diagnosis-list="${i}">×</span>
+          </div>`).join('')}</div>`
+        : `<div style="font-size:12px;color:var(--text-2);margin-bottom:12px">Δεν έχει προστεθεί τίποτα ακόμα — χωρίς λίστα, η φόρμα Ιατρικής Εξέτασης θα δείχνει αυτόματα ό,τι έχει χρησιμοποιηθεί ξανά.</div>`;
+      const chipListPlain = (items, removeAttr) => (items&&items.length)
+        ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">${items.map((v,i)=>`<span style="display:inline-flex;align-items:center;gap:6px;background:var(--surface-2);border-radius:20px;padding:5px 6px 5px 12px;font-size:12px">${esc(v)}<span style="cursor:pointer;color:var(--red);font-weight:700;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%" ${removeAttr}="${i}">×</span></span>`).join('')}</div>`
+        : `<div style="font-size:12px;color:var(--text-2);margin-bottom:12px">Δεν έχει προστεθεί τίποτα ακόμα — χωρίς λίστα, η φόρμα Ιατρικής Εξέτασης θα δείχνει αυτόματα ό,τι έχει χρησιμοποιηθεί ξανά.</div>`;
+      return `
+      <div class="card" style="margin-bottom:16px">
+        <div style="padding:16px 20px;border-bottom:1px solid var(--border-2)">
+          <div style="font-size:13px;font-weight:600;color:var(--navy)">Διαγνώσεις</div>
+          <div style="font-size:12px;color:var(--text-2);margin-top:4px">Λίστα επιλογής (autocomplete) στη φόρμα Ιατρικής Εξέτασης. Ο κωδικός ICD-10 είναι προαιρετικός, μόνο για δική σου αναφορά κατά τη συνταγογράφηση — το CRM δεν συνδέεται με το Σύστημα Ηλεκτρονικής Συνταγογράφησης.</div>
+        </div>
+        <div style="padding:16px 20px">
+          ${chipListIcd(S._examDiagnosesDraft, S._examDiagnosisIcd10Draft)}
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <input class="form-control" id="new-exam-diagnosis" placeholder="π.χ. Σμηγματορροϊκή Δερματίτιδα" style="max-width:260px"/>
+            <input class="form-control" id="new-exam-diagnosis-icd10" placeholder="κωδ. ICD-10 (προαιρετικό)" style="max-width:150px"/>
+            <button class="btn btn-ghost btn-sm" id="add-exam-diagnosis-list">+ Προσθήκη</button>
+          </div>
+        </div>
+      </div>
+      <div class="card" style="margin-bottom:16px">
+        <div style="padding:16px 20px;border-bottom:1px solid var(--border-2)">
+          <div style="font-size:13px;font-weight:600;color:var(--navy)">Φάρμακα / Καλλυντικά</div>
+          <div style="font-size:12px;color:var(--text-2);margin-top:4px">Λίστα επιλογής (autocomplete) για τα σκευάσματα που συστήνονται στη φόρμα Ιατρικής Εξέτασης.</div>
+        </div>
+        <div style="padding:16px 20px">
+          ${chipListPlain(S._examMedicationsDraftList, 'data-remove-exam-medication-list')}
+          <div style="display:flex;gap:8px">
+            <input class="form-control" id="new-exam-medication-list" placeholder="π.χ. Κορτιζονούχα κρέμα" style="max-width:320px"/>
+            <button class="btn btn-ghost btn-sm" id="add-exam-medication-list">+ Προσθήκη</button>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px">
+        <button class="btn btn-primary" id="save-exam-lists">Αποθήκευση Λιστών</button>
+        <div id="save-exam-lists-result" style="font-size:12px"></div>
       </div>`;
     })():''}
   </div>`;
@@ -9189,8 +9245,12 @@ function openMedicalExamModal(apptId, patientId, patientName) {
 function modalMedicalExam() {
   const diagOptions = (S.clinic&&S.clinic.settings&&S.clinic.settings.exam_diagnoses)||[];
   const medOptions = (S.clinic&&S.clinic.settings&&S.clinic.settings.exam_medications)||[];
+  const icd10Map = (S.clinic&&S.clinic.settings&&S.clinic.settings.exam_diagnosis_icd10)||{};
   const chip = (items, removeAttr) => (items&&items.length)
     ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">${items.map((v,i)=>`<span style="display:inline-flex;align-items:center;gap:6px;background:var(--surface-2);border-radius:20px;padding:5px 6px 5px 12px;font-size:12px">${esc(v)}<span style="cursor:pointer;color:var(--red);font-weight:700;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%" ${removeAttr}="${i}">×</span></span>`).join('')}</div>`
+    : '';
+  const chipWithIcd = (items, removeAttr) => (items&&items.length)
+    ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">${items.map((v,i)=>`<span style="display:inline-flex;align-items:center;gap:6px;background:var(--surface-2);border-radius:20px;padding:5px 6px 5px 12px;font-size:12px">${esc(v)}${icd10Map[v]?`<span style="color:var(--text-2);font-size:10.5px">${esc(icd10Map[v])}</span>`:''}<span style="cursor:pointer;color:var(--red);font-weight:700;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%" ${removeAttr}="${i}">×</span></span>`).join('')}</div>`
     : '';
   const FOLLOWUP_OPTIONS = [['','Καμία επανεξέταση'], ...Object.entries(FOLLOWUP_LABELS)];
   return `<div class="modal">
@@ -9198,7 +9258,7 @@ function modalMedicalExam() {
     <div class="modal-body">
       <div class="form-group">
         <label class="form-label">Διάγνωση *</label>
-        ${chip(S._examDiagnosisDraft, 'data-remove-exam-diagnosis')}
+        ${chipWithIcd(S._examDiagnosisDraft, 'data-remove-exam-diagnosis')}
         <div style="display:flex;gap:8px">
           <input class="form-control" id="exam-diagnosis-input" list="exam-diagnosis-list" placeholder="π.χ. Έγκζεμα"/>
           <datalist id="exam-diagnosis-list">${diagOptions.map(o=>`<option value="${esc(o)}">`).join('')}</datalist>
@@ -11403,6 +11463,68 @@ function bindEvents() {
     if (result) { result.innerHTML = '<span style="color:var(--green)">✓ Αποθηκεύτηκε</span>'; setTimeout(()=>{ if(result) result.innerHTML=''; }, 2500); }
   });
 
+  // Λίστες Ιατρικών Εξετάσεων (διαγνώσεις + ICD-10, φάρμακα/καλλυντικά)
+  const _addExamDiagList = document.getElementById('add-exam-diagnosis-list');
+  if (_addExamDiagList) _addExamDiagList.addEventListener('click', () => {
+    const nameInp = document.getElementById('new-exam-diagnosis');
+    const codeInp = document.getElementById('new-exam-diagnosis-icd10');
+    const v = (nameInp&&nameInp.value||'').trim();
+    if (!v) return;
+    S._examDiagnosesDraft = S._examDiagnosesDraft||[];
+    if (!S._examDiagnosesDraft.includes(v)) S._examDiagnosesDraft.push(v);
+    const code = (codeInp&&codeInp.value||'').trim();
+    S._examDiagnosisIcd10Draft = S._examDiagnosisIcd10Draft||{};
+    if (code) S._examDiagnosisIcd10Draft[v] = code;
+    render();
+  });
+  document.querySelectorAll('[data-remove-exam-diagnosis-list]').forEach(el => {
+    el.addEventListener('click', () => {
+      const i = Number(el.dataset.removeExamDiagnosisList);
+      const removedName = S._examDiagnosesDraft[i];
+      S._examDiagnosesDraft.splice(i,1);
+      if (S._examDiagnosisIcd10Draft && removedName) delete S._examDiagnosisIcd10Draft[removedName];
+      render();
+    });
+  });
+  const _addExamMedList = document.getElementById('add-exam-medication-list');
+  if (_addExamMedList) _addExamMedList.addEventListener('click', () => {
+    const inp = document.getElementById('new-exam-medication-list');
+    const v = (inp&&inp.value||'').trim();
+    if (!v) return;
+    S._examMedicationsDraftList = S._examMedicationsDraftList||[];
+    if (!S._examMedicationsDraftList.includes(v)) S._examMedicationsDraftList.push(v);
+    render();
+  });
+  document.querySelectorAll('[data-remove-exam-medication-list]').forEach(el => {
+    el.addEventListener('click', () => { S._examMedicationsDraftList.splice(Number(el.dataset.removeExamMedicationList),1); render(); });
+  });
+  const _sel = document.getElementById('save-exam-lists');
+  if (_sel) _sel.addEventListener('click', async () => {
+    const result = document.getElementById('save-exam-lists-result');
+    _sel.textContent = 'Αποθήκευση...'; _sel.disabled = true;
+    // Διαβάζει τα πεδία κωδικού ICD-10 (ένα ανά chip διάγνωσης) στο ίδιο draft
+    // map πριν την αποθήκευση — key = όνομα διάγνωσης.
+    S._examDiagnosisIcd10Draft = S._examDiagnosisIcd10Draft||{};
+    document.querySelectorAll('.exam-diagnosis-icd10').forEach(inp => {
+      const idx = Number(inp.dataset.idx);
+      const name = S._examDiagnosesDraft && S._examDiagnosesDraft[idx];
+      if (!name) return;
+      const v = inp.value.trim();
+      if (v) S._examDiagnosisIcd10Draft[name] = v;
+      else delete S._examDiagnosisIcd10Draft[name];
+    });
+    const settings = Object.assign({}, (S.clinic&&S.clinic.settings)||{}, {
+      exam_diagnoses: S._examDiagnosesDraft||[],
+      exam_diagnosis_icd10: S._examDiagnosisIcd10Draft||{},
+      exam_medications: S._examMedicationsDraftList||[],
+    });
+    const {error} = await sb.from('clinics').update({settings}).eq('id', clinicId());
+    _sel.textContent = 'Αποθήκευση Λιστών'; _sel.disabled = false;
+    if (error) { if(result) result.innerHTML = '<span style="color:var(--red)">✗ '+esc(error.message)+'</span>'; return; }
+    if (S.clinic) S.clinic.settings = settings;
+    if (result) { result.innerHTML = '<span style="color:var(--green)">✓ Αποθηκεύτηκε</span>'; setTimeout(()=>{ if(result) result.innerHTML=''; }, 2500); }
+  });
+
   // Laser form click
   document.querySelectorAll('[data-laser]').forEach(el => {
     el.onclick = () => { loadLaserForm(el.dataset.laser); };
@@ -11709,12 +11831,18 @@ function bindModalEvents() {
     const notes = document.getElementById('exam-notes').value.trim() || null;
     if (!diagnosis.length) return alert('Πρόσθεσε τουλάχιστον μία διάγνωση.');
     _sme.textContent='Αποθήκευση...'; _sme.disabled=true;
+    // Στιγμιότυπο των κωδικών ICD-10 (από τις Ρυθμίσεις) όπως ήταν ΤΗ ΣΤΙΓΜΗ
+    // της εξέτασης — μόνο για τις διαγνώσεις που πράγματι επιλέχθηκαν εδώ.
+    const icd10Map = (S.clinic&&S.clinic.settings&&S.clinic.settings.exam_diagnosis_icd10)||{};
+    const diagnosisIcd10 = {};
+    diagnosis.forEach(d=>{ if (icd10Map[d]) diagnosisIcd10[d] = icd10Map[d]; });
     const {error} = await sb.from('medical_exams').insert({
       clinic_id: clinicId(),
       patient_id: S.modalData.examPatientId,
       appointment_id: S.modalData.examApptId,
       doctor_id: S.user && S.user.id,
       diagnosis, medications,
+      diagnosis_icd10: diagnosisIcd10,
       followup_interval: followup,
       notes,
     });
