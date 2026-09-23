@@ -11905,6 +11905,20 @@ function bindModalEvents() {
   });
   const _sme = document.getElementById('save-medical-exam');
   if (_sme) _sme.addEventListener('click', async () => {
+    // Αν έχει μείνει γραμμένο κείμενο σε κάποιο πεδίο χωρίς να έχει πατηθεί το
+    // "+ Προσθήκη" (π.χ. πληκτρολόγησε τη διάγνωση και πήγε κατευθείαν σε
+    // Αποθήκευση), το προσθέτουμε αυτόματα εδώ — αλλιώς φαινόταν οπτικά η
+    // διάγνωση αλλά η αποθήκευση απέτυχε σαν να μην υπήρχε καθόλου.
+    const _commitPending = (inputId, draftKey) => {
+      const inp = document.getElementById(inputId);
+      const v = (inp && inp.value || '').trim();
+      if (!v) return;
+      S[draftKey] = S[draftKey]||[];
+      if (!S[draftKey].includes(v)) S[draftKey].push(v);
+    };
+    _commitPending('exam-diagnosis-input', '_examDiagnosisDraft');
+    _commitPending('exam-medicine-input', '_examMedicinesSelectedDraft');
+    _commitPending('exam-medication-input', '_examMedicationsDraft');
     const diagnosis = S._examDiagnosisDraft||[];
     const medicines = S._examMedicinesSelectedDraft||[];
     const cosmetics = S._examMedicationsDraft||[];
