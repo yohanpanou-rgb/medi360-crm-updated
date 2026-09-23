@@ -819,6 +819,11 @@ const isSuperAdmin = () => (S.profile&&S.profile.role) === 'super_admin';
 const panicActive = () => !!(S.clinic && S.clinic.settings && S.clinic.settings.panic_hidden);
 const clinicId = () => S.selectedClinicId;
 const canSee = (roles) => roles.includes((S.profile&&S.profile.role));
+// Ποιος βλέπει διαγνώσεις/φάρμακα ιατρικών εξετάσεων — Super Admin/Manager πάντα,
+// Θεραπευτής μόνο με ρητή άδεια (profiles.can_view_diagnosis), γιατί ο ρόλος
+// "Θεραπευτής" καλύπτει εξίσου γιατρούς και αισθητικούς. Η ίδια λογική επιβάλλεται
+// και server-side (RLS στο medical_exams) — εδώ είναι μόνο για το UI.
+const canViewDiagnosis = () => !!(S.profile && (S.profile.role==='super_admin' || S.profile.role==='clinic_admin' || (S.profile.role==='therapist' && S.profile.can_view_diagnosis)));
 
 // supabase-js's FunctionsHttpError.message is ALWAYS the generic "Edge Function
 // returned a non-2xx status code", regardless of what the function actually
@@ -895,7 +900,7 @@ async function loadPageData() {
     // δωμάτιο) — για την προβολή «Ανά δωμάτιο» και τα χρώματα ανά κατηγορία.
     const [{data:rooms},{data:svcLite}] = await Promise.all([
       sb.from('clinic_rooms').select('*').eq('clinic_id',cid).order('sort_order').order('name'),
-      sb.from('services').select('id,name,category,default_room_id,price').eq('clinic_id',cid),
+      sb.from('services').select('id,name,category,default_room_id,price,requires_medical_exam').eq('clinic_id',cid),
     ]);
     S.clinicRooms = rooms||[];
     S.clinicServicesLite = svcLite||[];
@@ -1472,6 +1477,16 @@ async function loadPatientDetail(id, tab) {
       const {data:blocked} = await sb.from('activity_log').select('event_data,created_at').eq('patient_id',id).eq('event_type','exam_blocked_no_gdpr').order('created_at',{ascending:false}).limit(20);
       S.patientExamsBlocked = blocked||[];
     } catch(e) {}
+
+    // 🩺 Διαγνώσεις Ιατρικών Εξετάσεων — ΞΕΧΩΡΙΣΤΟ από το patient_exams παραπάνω
+    // (εκείνο είναι αρχεία/PDF εξετάσεων, αυτό είναι διάγνωση+φάρμακα ανά επίσκεψη).
+    // RLS στο medical_exams επιστρέφει άδεια λίστα σε όποιον δεν έχει δικαίωμα —
+    // το φορτώνουμε μόνο αν το UI θα το δείξει έτσι κι αλλιώς.
+    S.patientDiagnoses = [];
+    if (canViewDiagnosis()) {
+      const {data:diag} = await sb.from('medical_exams').select('*, profiles(full_name)').eq('patient_id',id).order('created_at',{ascending:false});
+      S.patientDiagnoses = diag||[];
+    }
 
     // Load consultations from Supabase by patient_id (αξιόπιστο — ο patient έχει ήδη phone)
     const phone = normalizePhone(p&&p.phone||'');
@@ -2640,6 +2655,27 @@ function patExamGroups(exams, mode) {
   else groups.sort((a,b)=> a.key==='none'?1 : b.key==='none'?-1 : (b.items.length-a.items.length) || a.title.localeCompare(b.title,'el'));
   return groups;
 }
+const FOLLOWUP_LABELS = {'15d':'15 ημέρες','30d':'30 ημέρες','45d':'45 ημέρες','2m':'2 μήνες','3m':'3 μήνες','6m':'6 μήνες','1y':'1 έτος'};
+function renderPatientDiagnosesTab() {
+  const items = S.patientDiagnoses||[];
+  if (!items.length) return `<div class="empty-state"><div class="empty-icon">🩺</div><div>Δεν υπάρχουν καταγεγραμμένες διαγνώσεις</div></div>`;
+  return `<div style="display:flex;flex-direction:column;gap:12px">
+    ${items.map(e=>`
+    <div style="border:1px solid var(--border-2);border-radius:12px;padding:14px 16px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:8px">
+        <div style="font-size:13px;font-weight:700">${fmt(e.created_at)}</div>
+        <div style="font-size:11px;color:var(--text-2)">${esc(e.profiles&&e.profiles.full_name||'—')}</div>
+      </div>
+      <div style="font-size:12px;color:var(--text-2);margin-bottom:4px">Διάγνωση</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">${(e.diagnosis||[]).map(d=>`<span style="background:var(--surface-2);border-radius:20px;padding:4px 12px;font-size:12px">${esc(d)}</span>`).join('')}</div>
+      ${(e.medications||[]).length?`
+      <div style="font-size:12px;color:var(--text-2);margin-bottom:4px">Φάρμακα / Καλλυντικά</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">${e.medications.map(m=>`<span style="background:var(--surface-2);border-radius:20px;padding:4px 12px;font-size:12px">${esc(m)}</span>`).join('')}</div>`:''}
+      ${e.followup_interval?`<div style="font-size:12px;color:var(--blue);font-weight:600">📅 Σύσταση επανεξέτασης: ${esc(FOLLOWUP_LABELS[e.followup_interval]||e.followup_interval)}</div>`:''}
+      ${e.notes?`<div style="font-size:12px;color:var(--text-2);margin-top:6px">${esc(e.notes)}</div>`:''}
+    </div>`).join('')}
+  </div>`;
+}
 function renderPatientExamsTab() {
   const exams = S.patientExams||[];
   const view = patExamView();
@@ -2920,6 +2956,7 @@ function renderPatientDetail() {
           ...(injModuleOn?[{id:'injectables',l:`Ενέσιμα (${injectableForms.length})`}]:[]),
           {id:'photos',l:`Φωτογραφίες (${(S.patientPhotos||[]).length})`},
           {id:'exams',l:`Εξετάσεις (${(S.patientExams||[]).length})`},
+          ...(canViewDiagnosis()?[{id:'diagnoses',l:`Διαγνώσεις (${(S.patientDiagnoses||[]).length})`}]:[]),
           {id:'timeline',l:'Timeline'},
         ].map(t=>`<button class="btn" style="flex-shrink:0;border-radius:0;border-bottom:2px solid ${patTab===t.id?'var(--blue)':'transparent'};color:${patTab===t.id?'var(--blue)':'var(--text-2)'};background:transparent;padding:0 1px 8px;font-size:12px;white-space:nowrap;font-weight:${patTab===t.id?'700':'500'}" data-pat-tab="${t.id}">${t.l}</button>`).join('')}
       </div>
@@ -3348,6 +3385,7 @@ function renderPatientDetail() {
     <!-- ΦΩΤΟΓΡΑΦΙΕΣ TAB -->
     ${patTab==='photos'?renderPatientPhotosTab():''}
     ${patTab==='exams'?renderPatientExamsTab():''}
+    ${patTab==='diagnoses'?renderPatientDiagnosesTab():''}
 
     <!-- ΣΥΝΑΙΝΕΣΕΙΣ TAB -->
     ${patTab==='patconsents'?renderPatientConsentsTab():''}
@@ -6998,7 +7036,7 @@ function gotoCalendarDay(startTime) {
 
 // Νέο Ραντεβού με προσυμπληρωμένη ώρα/θεραπευτή — από κλικ σε κενή ώρα του
 // Προγράμματος. Φορτώνει πρώτα κατάλογο υπηρεσιών/προσωπικού αν χρειάζεται.
-async function openNewApptAt(datetimeLocal, therapistName, roomId) {
+async function openNewApptAt(datetimeLocal, therapistName, roomId, extraModalData) {
   if (!S._apptRefsLoaded) {
     const cid = clinicId();
     const [{data:svc},{data:staffRows},{data:ss},{data:schedRows},{data:ovrRows}] = await Promise.all([
@@ -7012,7 +7050,7 @@ async function openNewApptAt(datetimeLocal, therapistName, roomId) {
     S.apptStaffSchedules = schedRows||[]; S.apptScheduleOverrides = ovrRows||[];
     S._apptRefsLoaded = true;
   }
-  S.modal = 'new-appt'; S.modalData = roomId ? {roomId} : {}; render();
+  S.modal = 'new-appt'; S.modalData = Object.assign({}, roomId ? {roomId} : {}, extraModalData||{}); render();
   const t = document.getElementById('a-time'); if (t && datetimeLocal) t.value = datetimeLocal;
   if (roomId) { const rs = document.getElementById('a-room'); if (rs) { rs.value = roomId; rs.dataset.manual = '1'; } }
   if (therapistName) {
@@ -7020,6 +7058,28 @@ async function openNewApptAt(datetimeLocal, therapistName, roomId) {
     const match = (S.apptStaffList||[]).find(s=>sameStaffName(s.full_name, therapistName));
     if (sel && match) { sel.value = match.id; sel.dispatchEvent(new Event('change')); }
   }
+}
+
+// Μετά την καταγραφή Ιατρικής Εξέτασης με σύσταση επανεξέτασης: ανοίγει τη
+// φόρμα Νέου Ραντεβού κατευθείαν στην προτεινόμενη ημερομηνία, με τον ίδιο
+// ασθενή ήδη επιλεγμένο — «πρόταση κλεισίματος ραντεβού».
+const FOLLOWUP_DAYS = {'15d':15,'30d':30,'45d':45,'2m':60,'3m':90,'6m':180,'1y':365};
+async function openFollowupAppointment(patientId, patientName, intervalCode) {
+  const days = FOLLOWUP_DAYS[intervalCode];
+  if (!days) return;
+  const target = new Date(); target.setDate(target.getDate() + days);
+  target.setHours(10, 0, 0, 0);
+  const pad = n => String(n).padStart(2,'0');
+  const datetimeLocal = `${target.getFullYear()}-${pad(target.getMonth()+1)}-${pad(target.getDate())}T${pad(target.getHours())}:${pad(target.getMinutes())}`;
+  await openNewApptAt(datetimeLocal, null, null, {followupSuggestion:true});
+  const ps = document.getElementById('a-patient-search');
+  const pid = document.getElementById('a-patient-id');
+  if (ps && pid) {
+    ps.value = patientName || '';
+    pid.value = patientId;
+    if (window._apptLoadPatientPackages) window._apptLoadPatientPackages(patientId);
+  }
+  if (window.apptShowStep) apptShowStep(1);
 }
 
 // 🖨 Καθαρό τυπώσιμο ημερήσιο πρόγραμμα ανά θεραπεύτρια (για τη ρεσεψιόν)
@@ -7639,6 +7699,9 @@ function openServiceFormModal(id) {
         </div>
       </div>
       <div class="form-group">
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="ssv-svc-exam" ${s&&s.requires_medical_exam?'checked':''}/> Απαιτεί διάγνωση (Ιατρική Εξέταση) <span style="font-weight:400;color:var(--text-2)">— ανοίγει φόρμα διάγνωσης/φαρμάκων/επανεξέτασης στο ραντεβού</span></label>
+      </div>
+      <div class="form-group">
         <label class="form-label">Αναλώσιμα (υλικό + κόστος ανά συνεδρία)</label>
         <div id="ssv-consumables"></div>
         <button type="button" class="btn btn-ghost btn-sm" onclick="addConsumableRow()" style="margin-top:4px">+ Αναλώσιμο</button>
@@ -7681,6 +7744,7 @@ async function saveService(id) {
     duration_minutes: parseInt(document.getElementById('ssv-svc-duration').value)||60,
     price: parseFloat(document.getElementById('ssv-svc-price').value)||null,
     active: document.getElementById('ssv-svc-active').checked,
+    requires_medical_exam: document.getElementById('ssv-svc-exam').checked,
     consumables,
   };
   const roomSel = document.getElementById('ssv-svc-room');
@@ -8782,6 +8846,7 @@ function renderModal() {
     'new-consent-tmpl': modalNewConsentTmpl,
     'new-user': modalNewUser,
     'edit-user': modalEditUser,
+    'medical-exam': modalMedicalExam,
   }[S.modal];
   if (!content) return;
   div.innerHTML = content();
@@ -8838,8 +8903,9 @@ function modalNewAppt() {
     {n:4, l:'Επιβεβαίωση'},
   ];
   return `<div class="modal">
-    <div class="modal-header"><span class="modal-title">Νέο Ραντεβού</span><button class="modal-close" onclick="closeModal()">×</button></div>
+    <div class="modal-header"><span class="modal-title">${S.modalData && S.modalData.followupSuggestion ? '📅 Πρόταση Κλεισίματος Ραντεβού' : 'Νέο Ραντεβού'}</span><button class="modal-close" onclick="closeModal()">×</button></div>
     <div class="modal-body">
+      ${S.modalData && S.modalData.followupSuggestion ? `<div style="background:var(--blue-soft);border-radius:8px;padding:10px 12px;font-size:12px;color:var(--blue);margin-bottom:12px">ℹ️ Προτεινόμενη ημερομηνία επανεξέτασης — άλλαξέ την αν χρειάζεται, ή πάτησε Ακύρωση αν ο ασθενής θα κλείσει αργότερα.</div>`:''}
       <div style="display:flex;gap:4px;margin-bottom:16px">
         ${steps.map(s=>`<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px">
           <div class="appt-step-dot" data-step="${s.n}" style="width:22px;height:22px;border-radius:50%;background:${s.n===1?'var(--blue)':'var(--border)'};color:${s.n===1?'#fff':'var(--text-2)'};font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center">${s.n}</div>
@@ -9098,11 +9164,67 @@ function modalEditUser() {
     <div class="modal-body">
       <div class="form-group"><label class="form-label">Ονοματεπώνυμο *</label><input class="form-control" id="eu-name" value="${esc(u.full_name||'')}"/></div>
       <div class="form-group"><label class="form-label">Τηλέφωνο</label><input class="form-control" id="eu-phone" placeholder="69XXXXXXXX" value="${esc(u.phone||'')}"/></div>
-      <div style="font-size:11px;color:var(--text-2)">Ρόλος, κατάσταση και κλινική αλλάζουν απευθείας από τον πίνακα «Διαχείριση Χρηστών».</div>
+      ${u.role==='therapist'?`
+      <label style="display:flex;align-items:center;gap:8px;margin-top:4px;padding:10px 12px;background:var(--surface);border-radius:10px;cursor:pointer">
+        <input type="checkbox" id="eu-can-view-diagnosis" ${u.can_view_diagnosis?'checked':''}/>
+        <span style="font-size:13px">Μπορεί να βλέπει διαγνώσεις Ιατρικών Εξετάσεων <span style="color:var(--text-2);font-weight:400">— ενεργοποίησε μόνο για γιατρούς, όχι αισθητικούς</span></span>
+      </label>`:''}
+      <div style="font-size:11px;color:var(--text-2);margin-top:8px">Ρόλος, κατάσταση και κλινική αλλάζουν απευθείας από τον πίνακα «Διαχείριση Χρηστών».</div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Ακύρωση</button>
       <button class="btn btn-primary" id="save-edit-user" data-user-id="${u.id}">Αποθήκευση</button>
+    </div>
+  </div>`;
+}
+
+function openMedicalExamModal(apptId, patientId, patientName) {
+  S.modal = 'medical-exam';
+  S.modalData = { examApptId: apptId, examPatientId: patientId, examPatientName: patientName };
+  S._examDiagnosisDraft = [];
+  S._examMedicationsDraft = [];
+  renderModal();
+}
+
+function modalMedicalExam() {
+  const diagOptions = (S.clinic&&S.clinic.settings&&S.clinic.settings.exam_diagnoses)||[];
+  const medOptions = (S.clinic&&S.clinic.settings&&S.clinic.settings.exam_medications)||[];
+  const chip = (items, removeAttr) => (items&&items.length)
+    ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">${items.map((v,i)=>`<span style="display:inline-flex;align-items:center;gap:6px;background:var(--surface-2);border-radius:20px;padding:5px 6px 5px 12px;font-size:12px">${esc(v)}<span style="cursor:pointer;color:var(--red);font-weight:700;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%" ${removeAttr}="${i}">×</span></span>`).join('')}</div>`
+    : '';
+  const FOLLOWUP_OPTIONS = [['','Καμία επανεξέταση'], ...Object.entries(FOLLOWUP_LABELS)];
+  return `<div class="modal">
+    <div class="modal-header"><span class="modal-title">🩺 Ιατρική Εξέταση${S.modalData.examPatientName?' — '+esc(S.modalData.examPatientName):''}</span><button class="modal-close" onclick="closeModal()">×</button></div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Διάγνωση *</label>
+        ${chip(S._examDiagnosisDraft, 'data-remove-exam-diagnosis')}
+        <div style="display:flex;gap:8px">
+          <input class="form-control" id="exam-diagnosis-input" list="exam-diagnosis-list" placeholder="π.χ. Έγκζεμα"/>
+          <datalist id="exam-diagnosis-list">${diagOptions.map(o=>`<option value="${esc(o)}">`).join('')}</datalist>
+          <button type="button" class="btn btn-ghost btn-sm" id="add-exam-diagnosis" style="flex-shrink:0">+ Προσθήκη</button>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Φάρμακα / Καλλυντικά</label>
+        ${chip(S._examMedicationsDraft, 'data-remove-exam-medication')}
+        <div style="display:flex;gap:8px">
+          <input class="form-control" id="exam-medication-input" list="exam-medication-list" placeholder="π.χ. Κορτιζονούχα κρέμα"/>
+          <datalist id="exam-medication-list">${medOptions.map(o=>`<option value="${esc(o)}">`).join('')}</datalist>
+          <button type="button" class="btn btn-ghost btn-sm" id="add-exam-medication" style="flex-shrink:0">+ Προσθήκη</button>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Σύσταση Επανεξέτασης</label>
+        <select class="form-control" id="exam-followup">
+          ${FOLLOWUP_OPTIONS.map(([v,l])=>`<option value="${v}">${esc(l)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group"><label class="form-label">Σημειώσεις</label><textarea class="form-control" id="exam-notes" rows="2"></textarea></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Ακύρωση</button>
+      <button class="btn btn-primary" id="save-medical-exam">Αποθήκευση</button>
     </div>
   </div>`;
 }
@@ -10102,6 +10224,13 @@ function bindEvents() {
         </div>
         ${missingThisConsent?`
         <button class="btn btn-sm" style="width:100%;margin-top:8px;justify-content:center;background:#D97706;color:#fff;font-weight:700" onclick="openConsentFromAppointment('${a.patient_id}','${esc(a.patients&&a.patients.full_name||'')}','${consentGrp}')">📝 Συμπλήρωση Συναίνεσης ${consentLabels[consentGrp]}</button>`:''}
+        ${(()=>{
+          if (a.is_internal || !a.patient_id) return '';
+          const svc = (S.clinicServicesLite||[]).find(s=>s.name===a.service_name);
+          if (!svc || !svc.requires_medical_exam) return '';
+          if (!canViewDiagnosis()) return `<div style="margin-top:8px;padding:8px 10px;background:var(--surface);border-radius:8px;font-size:11px;color:var(--text-2);text-align:center">🔒 Ιατρική Εξέταση — περιορισμένη πρόσβαση</div>`;
+          return `<button class="btn btn-sm" style="width:100%;margin-top:8px;justify-content:center;background:#0F6E56;color:#fff;font-weight:700" onclick="openMedicalExamModal('${a.id}','${a.patient_id}','${esc(a.patients&&a.patients.full_name||'')}')">🩺 Καταγραφή Ιατρικής Εξέτασης</button>`;
+        })()}
         ${(!a.is_internal && a.patient_id)?`
         <div style="display:flex;gap:6px;margin-top:8px">
           <label class="btn btn-ghost btn-sm" style="cursor:pointer;flex:1;justify-content:center;margin:0">
@@ -11540,8 +11669,75 @@ function bindModalEvents() {
     _seu.textContent='Αποθήκευση...'; _seu.disabled=true;
     const {error} = await sb.rpc('update_staff_profile', {p_staff_id: _seu.dataset.userId, p_full_name: name, p_phone: phone||null});
     if (error) { alert('Σφάλμα: '+error.message); _seu.textContent='Αποθήκευση'; _seu.disabled=false; return; }
+    const cvdEl = document.getElementById('eu-can-view-diagnosis');
+    if (cvdEl) {
+      const {error: cvdErr} = await sb.rpc('set_staff_diagnosis_access', {p_staff_id: _seu.dataset.userId, p_can_view: cvdEl.checked});
+      if (cvdErr) { alert('Σφάλμα (δικαίωμα διαγνώσεων): '+cvdErr.message); _seu.textContent='Αποθήκευση'; _seu.disabled=false; return; }
+    }
     closeModal();
     reloadUsersTable();
+  });
+
+  // Ιατρική Εξέταση — προσθήκη/αφαίρεση chip διάγνωσης/φαρμάκων + αποθήκευση
+  const _addDiag = document.getElementById('add-exam-diagnosis');
+  const _addExamChip = (inputId, draftKey) => {
+    const inp = document.getElementById(inputId);
+    const v = (inp&&inp.value||'').trim();
+    if (!v) return;
+    S[draftKey] = S[draftKey]||[];
+    if (!S[draftKey].includes(v)) S[draftKey].push(v);
+    renderModal();
+  };
+  if (_addDiag) _addDiag.addEventListener('click', () => _addExamChip('exam-diagnosis-input', '_examDiagnosisDraft'));
+  const _diagInput = document.getElementById('exam-diagnosis-input');
+  if (_diagInput) _diagInput.addEventListener('keydown', e => { if (e.key==='Enter') { e.preventDefault(); _addExamChip('exam-diagnosis-input', '_examDiagnosisDraft'); } });
+  const _addMed = document.getElementById('add-exam-medication');
+  if (_addMed) _addMed.addEventListener('click', () => _addExamChip('exam-medication-input', '_examMedicationsDraft'));
+  const _medInput = document.getElementById('exam-medication-input');
+  if (_medInput) _medInput.addEventListener('keydown', e => { if (e.key==='Enter') { e.preventDefault(); _addExamChip('exam-medication-input', '_examMedicationsDraft'); } });
+  document.querySelectorAll('[data-remove-exam-diagnosis]').forEach(el => {
+    el.addEventListener('click', () => { S._examDiagnosisDraft.splice(Number(el.dataset.removeExamDiagnosis),1); renderModal(); });
+  });
+  document.querySelectorAll('[data-remove-exam-medication]').forEach(el => {
+    el.addEventListener('click', () => { S._examMedicationsDraft.splice(Number(el.dataset.removeExamMedication),1); renderModal(); });
+  });
+  const _sme = document.getElementById('save-medical-exam');
+  if (_sme) _sme.addEventListener('click', async () => {
+    const diagnosis = S._examDiagnosisDraft||[];
+    const medications = S._examMedicationsDraft||[];
+    const followup = document.getElementById('exam-followup').value || null;
+    const notes = document.getElementById('exam-notes').value.trim() || null;
+    if (!diagnosis.length) return alert('Πρόσθεσε τουλάχιστον μία διάγνωση.');
+    _sme.textContent='Αποθήκευση...'; _sme.disabled=true;
+    const {error} = await sb.from('medical_exams').insert({
+      clinic_id: clinicId(),
+      patient_id: S.modalData.examPatientId,
+      appointment_id: S.modalData.examApptId,
+      doctor_id: S.user && S.user.id,
+      diagnosis, medications,
+      followup_interval: followup,
+      notes,
+    });
+    if (error) { alert('Σφάλμα: '+error.message); _sme.textContent='Αποθήκευση'; _sme.disabled=false; return; }
+    // Μεγάλωσε τις λίστες της κλινικής με τυχόν νέες τιμές — best effort, δεν
+    // μπλοκάρει την αποθήκευση της εξέτασης αν αποτύχει.
+    const clinicDiag = new Set((S.clinic&&S.clinic.settings&&S.clinic.settings.exam_diagnoses)||[]);
+    const clinicMeds = new Set((S.clinic&&S.clinic.settings&&S.clinic.settings.exam_medications)||[]);
+    let listsChanged = false;
+    diagnosis.forEach(d=>{ if(!clinicDiag.has(d)){clinicDiag.add(d);listsChanged=true;} });
+    medications.forEach(m=>{ if(!clinicMeds.has(m)){clinicMeds.add(m);listsChanged=true;} });
+    if (listsChanged) {
+      const settings = Object.assign({}, (S.clinic&&S.clinic.settings)||{}, {exam_diagnoses:[...clinicDiag], exam_medications:[...clinicMeds]});
+      const {error:sErr} = await sb.from('clinics').update({settings}).eq('id', clinicId());
+      if (!sErr && S.clinic) S.clinic.settings = settings;
+    }
+    const patientId = S.modalData.examPatientId, patientName = S.modalData.examPatientName;
+    closeModal();
+    if (followup) {
+      await openFollowupAppointment(patientId, patientName, followup);
+    } else {
+      await loadPageData(); render();
+    }
   });
 
   // 🔒 Εσωτερικό ραντεβού: κρύβει/δείχνει τα πεδία ασθενή/υπηρεσίας/τιμής χωρίς
