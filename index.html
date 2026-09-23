@@ -1432,6 +1432,10 @@ async function loadPatientDetail(id, tab) {
     // (μη ακυρωμένα με package_id), όχι από χειροκίνητο μετρητή.
     const {data:pkgs} = await sb.from('patient_packages').select('*').eq('patient_id',id).order('purchased_at',{ascending:false});
     S.patientPackages = pkgs||[];
+    // Γενικά Πακέτα (πολλαπλών υπηρεσιών) — εντελώς ξεχωριστός πίνακας/μηχανισμός
+    // από τα πακέτα Laser παραπάνω, βλ. general_packages.
+    const {data:genPkgs} = await sb.from('general_packages').select('*').eq('patient_id',id).order('purchased_at',{ascending:false});
+    S.patientGeneralPackages = genPkgs||[];
 
     // 🎁 Δώρο γενεθλίων: το πιο πρόσφατο, για banner στην καρτέλα — και όλα, για το Timeline
     S.patientBirthdayGift = null;
@@ -2896,7 +2900,7 @@ function renderPatientDetail() {
       return `<div style="position:relative;margin:-18px 4px 12px;z-index:2">
         <div style="background:var(--white);border-radius:12px;box-shadow:var(--shadow);padding:9px 8px;display:flex;align-items:center;gap:6px 10px;flex-wrap:wrap">
           ${chip('📅','var(--blue)','Ραντεβού','data-modal="new-appt"')}
-          ${chip('📦','#6B7280','Πακέτο','onclick="openPackageModal()"')}
+          ${chip('📦','#6B7280','Πακέτο','onclick="openGeneralPackageModal()"')}
           ${chip('⚡','var(--blue)','Laser Form','data-modal="new-laser"')}
           ${injModuleOn?chip('💉',INJ_ACCENT,'Ενέσιμα','data-modal="new-injectable"'):''}
           ${chip('⋯','var(--surface-2)','Περισσότερα','onclick="openPatientMoreMenu()"','var(--text-2)','var(--text-2)')}
@@ -3213,6 +3217,44 @@ function renderPatientDetail() {
               })()}
             </div>`;}).join('')}
           </div>` : `<div style="padding:6px 0;color:var(--text-2);font-size:12.5px">Δεν υπάρχουν πακέτα. Τα πακέτα (π.χ. Laser x6) παρακολουθούν αυτόματα πόσες συνεδρίες έχουν γίνει — κάθε ραντεβού που συνδέεται με το πακέτο μετράει μία.</div>`}
+        </div>
+      </div>
+      <div class="card" style="grid-column:1/-1">
+        <div class="card-header"><span class="card-title">📦 Γενικά Πακέτα</span>
+          <button class="btn btn-primary btn-sm" onclick="openGeneralPackageModal()">+ Νέο Γενικό Πακέτο</button>
+        </div>
+        <div style="padding:12px 16px">
+          ${(S.patientGeneralPackages&&S.patientGeneralPackages.length) ? `
+          <div style="display:flex;flex-direction:column;gap:10px">
+            ${S.patientGeneralPackages.map(pkg=>{
+              const used = generalPackageUsedSessions(pkg);
+              const total = pkg.total_sessions||6;
+              const pct = Math.min(100, Math.round(used/total*100));
+              const done = used>=total, lastOne = used===total-1;
+              const barColor = done?'#8A8FA3':lastOne?'#D97706':'#0F6E56';
+              return `
+            <div style="padding:10px 12px;background:var(--surface-2);border-radius:10px;border-left:3px solid ${barColor}">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+                <div style="min-width:0">
+                  <span style="font-weight:600;font-size:13px">${esc(pkg.name)}</span>
+                  ${canSeeFinancials&&pkg.price?`<span style="font-size:11px;color:var(--text-2)"> · ${euro(pkg.price)}</span>`:''}
+                  <span style="font-size:11px;color:var(--text-2)"> · αγορά ${new Date(pkg.purchased_at).toLocaleDateString('el-GR')}</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+                  ${done?`<span style="font-size:10px;font-weight:700;color:#53586B;background:#E4E6ED;padding:2px 8px;border-radius:8px">ΟΛΟΚΛΗΡΩΘΗΚΕ</span>`
+                    :lastOne?`<span style="font-size:10px;font-weight:700;color:#854F0B;background:#FAEEDA;padding:2px 8px;border-radius:8px">⚠ ΤΕΛΕΥΤΑΙΑ ΣΥΝΕΔΡΙΑ</span>`:''}
+                  <span style="font-size:13px;font-weight:700;color:${barColor}">${used} / ${total}</span>
+                  <button class="btn btn-ghost btn-sm" onclick="deleteGeneralPackage('${pkg.id}')" style="color:var(--red)">🗑</button>
+                </div>
+              </div>
+              <div style="height:7px;background:var(--border-2);border-radius:99px;overflow:hidden;margin-top:8px">
+                <div style="height:100%;width:${pct}%;background:${barColor};border-radius:99px"></div>
+              </div>
+              <div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:8px">
+                ${(pkg.service_names||[]).map(s=>`<span style="background:var(--white);border:1px solid var(--border-2);border-radius:16px;padding:2px 9px;font-size:11px;color:var(--text-2)">${esc(s)}</span>`).join('')}
+              </div>
+            </div>`;}).join('')}
+          </div>` : `<div style="padding:6px 0;color:var(--text-2);font-size:12.5px">Δεν υπάρχουν γενικά πακέτα. Ένα γενικό πακέτο μπορεί να καλύπτει πολλές υπηρεσίες μαζί (π.χ. Vacuum + Λεμφικό + Θερμοκουβέρτα) με κοινό αριθμό συνεδριών.</div>`}
         </div>
       </div>
       <div class="card" style="grid-column:1/-1;overflow:visible">
@@ -7097,6 +7139,81 @@ async function deletePackage(id) {
   const {error} = await sb.from('patient_packages').delete().eq('id',id);
   if (error) { alert('Σφάλμα: '+error.message); return; }
   S.patientPackages = (S.patientPackages||[]).filter(p=>p.id!==id);
+  render();
+}
+
+// ── ΓΕΝΙΚΑ ΠΑΚΕΤΑ (General Packages) ──────────────────────────────────────
+// Εντελώς ξεχωριστός μηχανισμός από τα Laser Packages παραπάνω (patient_packages,
+// openPackageModal, savePackage, deletePackage) — δικός του πίνακας
+// (general_packages), δικές του συναρτήσεις, καμία κοινή λογική. Ένα γενικό
+// πακέτο μπορεί να καλύπτει πολλαπλές υπηρεσίες μαζί (service_names), με
+// κοινό αριθμό συνεδριών που καταναλώνονται με οποιονδήποτε συνδυασμό τους.
+function generalPackageUsedSessions(pkg) {
+  const appts = (S.patientDetail&&S.patientDetail.appointments)||[];
+  return appts.filter(a=>a.general_package_id===pkg.id && a.status!=='cancelled').length;
+}
+
+function openGeneralPackageModal(opts) {
+  opts = opts || {};
+  const p = opts.patient || S.patientDetail; if (!p) return;
+  const old = document.getElementById('gpkg-overlay'); if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'gpkg-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9000;display:flex;align-items:flex-start;justify-content:center;padding:12px;overflow-y:auto';
+  ov.innerHTML = `
+    <div style="background:var(--white);border-radius:16px;max-width:440px;width:100%;padding:20px;margin:auto 0">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div style="font-size:15px;font-weight:700">Νέο Γενικό Πακέτο — ${esc(p.full_name)}</div>
+        <button onclick="document.getElementById('gpkg-overlay').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-2)">×</button>
+      </div>
+      <div class="form-group"><label class="form-label">Όνομα πακέτου *</label>
+        <input class="form-control" id="gpkg-name" placeholder="π.χ. Body Package"/></div>
+      <div class="form-group"><label class="form-label">Υπηρεσίες πακέτου * (1 ή περισσότερες)</label>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;max-height:180px;overflow-y:auto;padding:8px;background:var(--surface);border-radius:8px;border:1px solid var(--border)">
+          ${(S.clinicServicesLite||[]).slice().sort((a,b)=>a.name.localeCompare(b.name,'el')).map(s=>`
+          <label style="display:flex;align-items:center;gap:4px;background:var(--white);border:1px solid var(--border-2);border-radius:16px;padding:3px 10px;font-size:11.5px;cursor:pointer;user-select:none">
+            <input type="checkbox" class="gpkg-svc" value="${esc(s.name)}" style="margin:0"/> ${esc(s.name)}
+          </label>`).join('')}
+        </div>
+        <div style="font-size:11px;color:var(--text-2);margin-top:4px">Ο πελάτης θα μπορεί να χρησιμοποιήσει τις συνεδρίες με οποιονδήποτε συνδυασμό από τις επιλεγμένες υπηρεσίες.</div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Συνεδρίες</label><input class="form-control" type="number" id="gpkg-total" value="10" min="1"/></div>
+        <div class="form-group" ${canSee(['super_admin','clinic_admin'])?'':'style="display:none"'}><label class="form-label">Τιμή πακέτου (€)</label><input class="form-control" type="number" id="gpkg-price" placeholder="προαιρετικό"/></div>
+      </div>
+      <div class="form-group"><label class="form-label">Ημ/νία αγοράς</label><input class="form-control" type="date" id="gpkg-date" value="${new Date().toISOString().slice(0,10)}"/></div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
+        <button class="btn btn-ghost" onclick="document.getElementById('gpkg-overlay').remove()">Ακύρωση</button>
+        <button class="btn btn-primary" onclick="saveGeneralPackage('${p.id}')">Αποθήκευση</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+}
+
+async function saveGeneralPackage(patientId) {
+  const name = document.getElementById('gpkg-name').value.trim();
+  if (!name) { alert('Γράψε όνομα πακέτου.'); return; }
+  const serviceNames = Array.from(document.querySelectorAll('.gpkg-svc:checked')).map(cb=>cb.value);
+  if (!serviceNames.length) { alert('Επίλεξε τουλάχιστον μία υπηρεσία.'); return; }
+  const {error} = await sb.from('general_packages').insert({
+    clinic_id: clinicId(), patient_id: patientId,
+    name, service_names: serviceNames,
+    total_sessions: parseInt(document.getElementById('gpkg-total').value)||6,
+    price: parseFloat(document.getElementById('gpkg-price').value)||null,
+    purchased_at: document.getElementById('gpkg-date').value||new Date().toISOString().slice(0,10),
+  });
+  if (error) { alert('Σφάλμα: '+error.message); return; }
+  const ov = document.getElementById('gpkg-overlay'); if (ov) ov.remove();
+  const {data:pkgs} = await sb.from('general_packages').select('*').eq('patient_id',patientId).order('purchased_at',{ascending:false});
+  S.patientGeneralPackages = pkgs||[];
+  render();
+}
+
+async function deleteGeneralPackage(id) {
+  if (!confirm('Διαγραφή αυτού του γενικού πακέτου; Τα ραντεβού που έχουν ήδη γίνει ΔΕΝ διαγράφονται — απλώς αποσυνδέονται από το πακέτο.')) return;
+  const {error} = await sb.from('general_packages').delete().eq('id',id);
+  if (error) { alert('Σφάλμα: '+error.message); return; }
+  S.patientGeneralPackages = (S.patientGeneralPackages||[]).filter(p=>p.id!==id);
   render();
 }
 
@@ -12087,42 +12204,62 @@ function bindModalEvents() {
   // Πακέτα συνεδριών του επιλεγμένου ασθενή: γεμίζει το dropdown με όσα έχουν
   // ακόμα υπόλοιπο, και προεπιλέγει αυτόματα όποιο ταιριάζει με την υπηρεσία.
   window._apptPatientPackages = [];
+  window._apptPatientGeneralPackages = [];
   window._apptLoadPatientPackages = async (pid) => {
     const wrap = document.getElementById('a-package-wrap');
     const sel = document.getElementById('a-package');
     if (!wrap || !sel) return;
     window._apptPatientPackages = [];
+    window._apptPatientGeneralPackages = [];
     wrap.style.display = 'none';
     sel.innerHTML = '<option value="">Χωρίς πακέτο (κανονική χρέωση)</option>';
     if (!pid) return;
-    const [{data:pkgs}, {data:usedRows}] = await Promise.all([
+    const [{data:pkgs}, {data:usedRows}, {data:genPkgs}, {data:genUsedRows}] = await Promise.all([
       sb.from('patient_packages').select('*').eq('patient_id',pid).order('purchased_at',{ascending:false}),
       sb.from('appointments').select('package_id,status').eq('patient_id',pid).not('package_id','is',null),
+      // Γενικά Πακέτα (πολλαπλών υπηρεσιών) — ξεχωριστός πίνακας/λίστα, βλ.
+      // general_packages. Παράλληλη φόρτωση, καμία επίδραση στα Laser Packages.
+      sb.from('general_packages').select('*').eq('patient_id',pid).order('purchased_at',{ascending:false}),
+      sb.from('appointments').select('general_package_id,status').eq('patient_id',pid).not('general_package_id','is',null),
     ]);
-    if (!pkgs || !pkgs.length) return;
-    const usedBy = {};
-    (usedRows||[]).forEach(r=>{ if(r.status!=='cancelled') usedBy[r.package_id]=(usedBy[r.package_id]||0)+1; });
-    // Πακέτα με συνδεδεμένη Φόρμα Laser: το υπόλοιπο μετράει από το κλινικό
-    // αρχείο της φόρμας — μόνο τις περιοχές του κάθε πακέτου, όχι από ραντεβού.
-    const formIds = pkgs.map(p=>p.laser_form_id).filter(Boolean);
-    const formById = {};
-    if (formIds.length) {
-      const {data:formRows} = await sb.from('laser_forms').select('id,machine_settings').in('id', formIds);
-      (formRows||[]).forEach(fr=>{ formById[fr.id] = fr.machine_settings; });
+    let active = [];
+    if (pkgs && pkgs.length) {
+      const usedBy = {};
+      (usedRows||[]).forEach(r=>{ if(r.status!=='cancelled') usedBy[r.package_id]=(usedBy[r.package_id]||0)+1; });
+      // Πακέτα με συνδεδεμένη Φόρμα Laser: το υπόλοιπο μετράει από το κλινικό
+      // αρχείο της φόρμας — μόνο τις περιοχές του κάθε πακέτου, όχι από ραντεβού.
+      const formIds = pkgs.map(p=>p.laser_form_id).filter(Boolean);
+      const formById = {};
+      if (formIds.length) {
+        const {data:formRows} = await sb.from('laser_forms').select('id,machine_settings').in('id', formIds);
+        (formRows||[]).forEach(fr=>{ formById[fr.id] = fr.machine_settings; });
+      }
+      active = pkgs.map(pkg=>({...pkg,
+        used: (pkg.laser_form_id && formById[pkg.laser_form_id]!==undefined)
+          ? packageRegionDates(pkg, formById[pkg.laser_form_id]).size
+          : (usedBy[pkg.id]||0)
+      })).filter(pkg=>pkg.used < (pkg.total_sessions||6));
     }
-    const active = pkgs.map(pkg=>({...pkg,
-      used: (pkg.laser_form_id && formById[pkg.laser_form_id]!==undefined)
-        ? packageRegionDates(pkg, formById[pkg.laser_form_id]).size
-        : (usedBy[pkg.id]||0)
-    })).filter(pkg=>pkg.used < (pkg.total_sessions||6));
     window._apptPatientPackages = active;
-    if (!active.length) return;
+    let activeGeneral = [];
+    if (genPkgs && genPkgs.length) {
+      const genUsedBy = {};
+      (genUsedRows||[]).forEach(r=>{ if(r.status!=='cancelled') genUsedBy[r.general_package_id]=(genUsedBy[r.general_package_id]||0)+1; });
+      activeGeneral = genPkgs.map(pkg=>({...pkg, used: genUsedBy[pkg.id]||0})).filter(pkg=>pkg.used < (pkg.total_sessions||6));
+    }
+    window._apptPatientGeneralPackages = activeGeneral;
+    if (!active.length && !activeGeneral.length) return;
     sel.innerHTML = '<option value="">Χωρίς πακέτο (κανονική χρέωση)</option>' +
-      active.map(pkg=>`<option value="${pkg.id}" data-svc="${esc(pkg.service_name||'')}">${esc(pkg.name)} — ${pkg.used}/${pkg.total_sessions||6} συνεδρίες</option>`).join('');
+      active.map(pkg=>`<option value="${pkg.id}" data-svc="${esc(pkg.service_name||'')}">${esc(pkg.name)} — ${pkg.used}/${pkg.total_sessions||6} συνεδρίες</option>`).join('') +
+      // Οι τιμές των Γενικών Πακέτων παίρνουν πρόθεμα "g:" ώστε να ξεχωρίζουν
+      // από τα uuid των Laser Packages όταν αποθηκεύεται το ραντεβού.
+      activeGeneral.map(pkg=>`<option value="g:${pkg.id}">${esc(pkg.name)} — ${pkg.used}/${pkg.total_sessions||6} συνεδρίες</option>`).join('');
     wrap.style.display = 'block';
     _apptAutoPickPackage();
   };
   // Αν η επιλεγμένη υπηρεσία ταιριάζει με πακέτο που έχει υπόλοιπο → προεπιλογή
+  // (πρώτα Laser Packages όπως πάντα, μετά — μόνο αν δεν ταίριαξε κανένα — τα
+  // Γενικά Πακέτα, αν η υπηρεσία είναι μία από τις service_names του πακέτου).
   const _apptAutoPickPackage = () => {
     const sel = document.getElementById('a-package');
     const svcSel2 = document.getElementById('a-service');
@@ -12130,12 +12267,19 @@ function bindModalEvents() {
     const svcName = svcSel2.value==='__custom__' ? '' : svcSel2.value;
     if (!svcName) return;
     const match = (window._apptPatientPackages||[]).find(pkg=>pkg.service_name && normalizeGreek(pkg.service_name)===normalizeGreek(svcName));
-    if (match) { sel.value = match.id; sel.dispatchEvent(new Event('change')); }
+    if (match) { sel.value = match.id; sel.dispatchEvent(new Event('change')); return; }
+    const svcKey = normalizeGreek(svcName);
+    const matchGeneral = (window._apptPatientGeneralPackages||[]).find(pkg=>(pkg.service_names||[]).some(s=>normalizeGreek(s)===svcKey));
+    if (matchGeneral) { sel.value = 'g:'+matchGeneral.id; sel.dispatchEvent(new Event('change')); }
   };
   const aPackageSel = document.getElementById('a-package');
   if (aPackageSel) aPackageSel.addEventListener('change', () => {
     const hint = document.getElementById('a-package-hint');
-    const pkg = (window._apptPatientPackages||[]).find(x=>x.id===aPackageSel.value);
+    const val = aPackageSel.value;
+    const isGeneralPkg = val.startsWith('g:');
+    const pkg = isGeneralPkg
+      ? (window._apptPatientGeneralPackages||[]).find(x=>x.id===val.slice(2))
+      : (window._apptPatientPackages||[]).find(x=>x.id===val);
     if (pkg) {
       // Συνεδρία πακέτου: προπληρωμένη — μηδενίζουμε την τιμή του ραντεβού για
       // να μη διπλομετρηθεί ο τζίρος (μετράει στην αγορά του πακέτου).
@@ -12143,7 +12287,7 @@ function bindModalEvents() {
       const after = pkg.used + 1;
       const lastNote = after >= (pkg.total_sessions||6) ? ' — ΤΕΛΕΥΤΑΙΑ του πακέτου!' : '';
       const priceNote = canSee(['super_admin','clinic_admin']) ? ' · Τιμή ραντεβού: 0€ (προπληρωμένο).' : ' (προπληρωμένο πακέτο).';
-      hint.textContent = pkg.laser_form_id
+      hint.textContent = (!isGeneralPkg && pkg.laser_form_id)
         ? `Συνεδρία ${after}/${pkg.total_sessions||6}${lastNote}${priceNote} Το υπόλοιπο ενημερώνεται όταν καταγραφεί η συνεδρία στη Φόρμα Laser.`
         : `Θα καταναλωθεί η συνεδρία ${after}/${pkg.total_sessions||6}${lastNote}${priceNote}`;
     } else if (hint) hint.textContent = '';
@@ -12270,6 +12414,13 @@ function bindModalEvents() {
     const btn = document.getElementById('save-appt');
     btn.textContent='Αποθήκευση...'; btn.disabled=true;
     const pkgSel = document.getElementById('a-package');
+    // Το #a-package dropdown δείχνει μαζί Laser Packages (τιμή = uuid) και
+    // Γενικά Πακέτα (τιμή = "g:"+uuid, βλ. _apptLoadPatientPackages) — εδώ τα
+    // ξεχωρίζουμε ώστε να γραφτούν στη σωστή, ανεξάρτητη στήλη το καθένα.
+    const pkgSelVal = pkgSel ? pkgSel.value : '';
+    const isGeneralPkg = pkgSelVal.startsWith('g:');
+    const packageIdVal = pkgSelVal && !isGeneralPkg ? pkgSelVal : null;
+    const generalPackageIdVal = isGeneralPkg ? pkgSelVal.slice(2) : null;
     const branchSel = document.getElementById('a-branch');
     const roomSel = document.getElementById('a-room');
     // Δωμάτιο: ρητή επιλογή, αλλιώς η προεπιλογή της υπηρεσίας (αποθηκεύεται για
@@ -12281,7 +12432,8 @@ function bindModalEvents() {
       is_internal: isInternal,
       internal_title: isInternal ? internalTitle : null,
       therapist_id: therapistSel ? (therapistSel.value||null) : null,
-      package_id: pkgSel && pkgSel.value ? pkgSel.value : null,
+      package_id: packageIdVal,
+      general_package_id: generalPackageIdVal,
       branch_id: branchSel && branchSel.value ? branchSel.value : null,
       room_id: roomId,
       start_time:timeWithTz,
