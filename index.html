@@ -1906,7 +1906,7 @@ function renderShell(content) {
         <div id="search-dropdown" class="search-dropdown-box"></div>
       </div>
       <!-- AI Βοηθός «Ρώτα το CRM» (module ai-assistant, μόνο διαχειριστές) -->
-      ${(cid && isModuleEnabled('ai-assistant') && canSee(['super_admin','clinic_admin']))?`<button id="crm-assistant-btn" title="Ρώτα το CRM — στατιστικά με απλές ερωτήσεις" onclick="toggleCrmAssistant()" style="width:36px;height:36px;border-radius:50%;background:${S.assistantOpen?'var(--navy)':'#EEEDFE'};color:${S.assistantOpen?'#fff':'#3C3489'};border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;transition:.2s">💬</button>`:''}
+      ${(cid && isModuleEnabled('ai-assistant'))?`<button id="crm-assistant-btn" title="Ρώτα το CRM — στατιστικά με απλές ερωτήσεις" onclick="toggleCrmAssistant()" style="width:36px;height:36px;border-radius:50%;background:${S.assistantOpen?'var(--navy)':'#EEEDFE'};color:${S.assistantOpen?'#fff':'#3C3489'};border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;transition:.2s">💬</button>`:''}
       <!-- Voice Agent Button (module voice-agent) -->
       ${isModuleEnabled('voice-agent')?`<button id="voice-agent-btn" title="AI Voice Agent" style="width:36px;height:36px;border-radius:50%;background:${S.voiceActive?'var(--red)':'var(--blue)'};color:#fff;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;transition:.2s;${S.voiceActive?'animation:pulse 1s infinite':''}">${S.voiceActive?'⏹':'🎤'}</button>`:''}
       <span class="topbar-date" style="font-family:var(--mono);font-size:11px;color:var(--text-3)">${new Date().toLocaleDateString('el-GR')}</span>
@@ -13317,6 +13317,11 @@ function renderCrmAssistantPanel() {
   const busy = !!S.assistantBusy;
   const clinicName = (S.clinic&&S.clinic.name)||'';
   const isMobile = window.innerWidth <= 768;
+  // Οικονομικά (έσοδα/τιμές/τζίρος) μόνο για manager & admin — ο server τα
+  // αφαιρεί από τα δεδομένα για τους υπόλοιπους ρόλους· εδώ απλώς προσαρμόζουμε
+  // το κείμενο εισαγωγής και τις προτεινόμενες ερωτήσεις.
+  const canFin = canSee(['super_admin','clinic_admin']);
+  const suggestions = canFin ? CRM_ASSISTANT_SUGGESTIONS : CRM_ASSISTANT_SUGGESTIONS.filter(q => !/έσοδα|πουλάνε/i.test(q)).concat(['Πόσα ραντεβού έχουμε αυτή την εβδομάδα ανά θεραπευτή;']);
   return `<div id="crm-assistant-panel" style="position:fixed;top:${isMobile?'0':'56px'};right:0;bottom:0;width:${isMobile?'100%':'420px'};max-width:100vw;background:var(--white);border-left:1px solid var(--border-2);box-shadow:var(--shadow-lg);z-index:480;display:flex;flex-direction:column">
     <div style="padding:12px 14px;border-bottom:1px solid var(--border-2);display:flex;align-items:center;gap:10px;background:linear-gradient(135deg,#1a1f3a,#2B3BF0 78%);color:#fff">
       <span style="font-size:18px">💬</span>
@@ -13329,10 +13334,10 @@ function renderCrmAssistantPanel() {
     </div>
     <div id="crm-assistant-msgs" style="flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px;background:var(--surface)">
       ${!msgs.length?`<div style="font-size:12.5px;color:var(--text-2);line-height:1.5">
-          Ρώτα με ό,τι θες για τη λειτουργία της κλινικής: θεραπείες, ραντεβού, έσοδα, πελάτες, πωλήσεις, μηνύματα, κριτικές. Απαντώ μόνο με αθροιστικά στοιχεία, ποτέ με προσωπικά δεδομένα πελατών.
+          Ρώτα με ό,τι θες για τη λειτουργία της κλινικής: θεραπείες, ραντεβού, ${canFin?'έσοδα, ':''}πελάτες, ${canFin?'πωλήσεις, ':''}μηνύματα, κριτικές. Απαντώ μόνο με αθροιστικά στοιχεία, ποτέ με προσωπικά δεδομένα πελατών.${canFin?'':' Τα οικονομικά στοιχεία είναι διαθέσιμα μόνο στον διαχειριστή.'}
           <div style="font-size:10.5px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--text-3);margin:14px 0 6px">Δοκίμασε</div>
           <div style="display:flex;flex-direction:column;gap:6px">
-            ${CRM_ASSISTANT_SUGGESTIONS.map(q=>`<button class="btn btn-ghost btn-sm" style="justify-content:flex-start;text-align:left;font-size:12px;white-space:normal;line-height:1.3" onclick="sendCrmAssistantMessage(${JSON.stringify(q).replace(/"/g,'&quot;')})">${esc(q)}</button>`).join('')}
+            ${suggestions.map(q=>`<button class="btn btn-ghost btn-sm" style="justify-content:flex-start;text-align:left;font-size:12px;white-space:normal;line-height:1.3" onclick="sendCrmAssistantMessage(${JSON.stringify(q).replace(/"/g,'&quot;')})">${esc(q)}</button>`).join('')}
           </div>
         </div>`:''}
       ${msgs.map(m=>m.role==='user'

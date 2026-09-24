@@ -9,13 +9,15 @@
 //     ΠΟΤΕ ονόματα, τηλέφωνα ή άλλα στοιχεία πελατών (GDPR)
 //   • χρησιμοποιεί τους ίδιους ορισμούς με τη σελίδα Αναφορών (έσοδα = τιμή
 //     ΟΛΟΚΛΗΡΩΜΕΝΩΝ ραντεβού, εσωτερικά ραντεβού εξαιρούνται)
+//   • οικονομικά πεδία μόνο για super_admin / clinic_admin — για τους υπόλοιπους
+//     ρόλους αφαιρούνται από τα δεδομένα πριν φτάσουν στο μοντέλο (stripFinancial)
 //
 // Called from index.html:
 //   sb.functions.invoke('crm-assistant', { body: { messages:[{role,content}], clinic_id? } })
-// Returns: { reply: string(markdown), tool_calls: [{name, input}], usage }
+// Returns: { reply: string(markdown), tool_calls: [{name, input}], usage, financials }
 //
 // Για δοκιμές/αυτοματισμούς: header x-cron-secret = BIRTHDAY_CRON_SECRET + body.clinic_id
-// (τρέχει με service role, χωρίς χρήστη).
+// (τρέχει με service role, χωρίς χρήστη· προαιρετικό body.role για δοκιμή ρόλων).
 //
 // Required secrets: ANTHROPIC_API_KEY (ήδη ορισμένο). Deploy:
 //   supabase functions deploy crm-assistant --no-verify-jwt
@@ -367,7 +369,26 @@ async function toolReviews(ctx: Ctx) {
   };
 }
 
-async function runTool(ctx: Ctx, name: string, input: any) {
+// Οικονομικά πεδία: μόνο για super_admin / clinic_admin. Για τους υπόλοιπους
+// ρόλους αφαιρούνται ΑΠΟ ΤΑ ΔΕΔΟΜΕΝΑ πριν φτάσουν στο μοντέλο (όχι απλώς
+// «κρυμμένα» στην απάντηση), ώστε να μην μπορεί να τα αποκαλύψει ούτε κατά λάθος.
+const FINANCIAL_KEY = /revenue|ticket|price|amount|avg_sale|ltv|paid/i;
+function stripFinancial(v: any): any {
+  if (Array.isArray(v)) return v.map(stripFinancial);
+  if (v && typeof v === 'object') {
+    const o: any = {};
+    for (const [k, val] of Object.entries(v)) { if (FINANCIAL_KEY.test(k)) continue; o[k] = stripFinancial(val); }
+    return o;
+  }
+  return v;
+}
+
+async function runTool(ctx: Ctx, name: string, input: any, canFin = true) {
+  const out = await runToolRaw(ctx, name, input);
+  return canFin ? out : stripFinancial(out);
+}
+
+async function runToolRaw(ctx: Ctx, name: string, input: any) {
   switch (name) {
     case 'appointments_stats': return toolAppointmentsStats(ctx, input || {});
     case 'patients_stats': return toolPatientsStats(ctx, input || {});
@@ -380,12 +401,15 @@ async function runTool(ctx: Ctx, name: string, input: any) {
   }
 }
 
-function buildSystemPrompt(clinicName: string, ctx: Ctx, role: string) {
+function buildSystemPrompt(clinicName: string, ctx: Ctx, role: string, canFin: boolean) {
   const today = athensParts(new Date());
+  const finRule = canFin
+    ? ''
+    : `\n\nΠΕΡΙΟΡΙΣΜΟΣ ΡΟΛΟΥ: ο χρήστης (${role}) ΔΕΝ έχει πρόσβαση σε οικονομικά στοιχεία. Τα εργαλεία δεν του επιστρέφουν έσοδα, τιμές, τζίρο, μέσο καλάθι ή ποσά. Μην αναφέρεις, μην υπολογίζεις και μην εκτιμάς ποσά σε ευρώ. Αν ρωτήσει κάτι οικονομικό, πες ευγενικά ότι τα οικονομικά στοιχεία είναι διαθέσιμα μόνο στον διαχειριστή της κλινικής και πρόσφερε την αντίστοιχη μη-οικονομική πληροφορία (πλήθη, ποσοστά, πληρότητα).`;
   const svc = ctx.services.slice(0, 150).map(s => `${s.name}${s.category ? ` [${s.category}]` : ''}`).join('; ');
   const staff = ctx.staff.map(s => `${s.full_name} (${s.role})`).join('; ');
   const branches = ctx.branches.map(b => b.name).join('; ');
-  return `Είσαι ο αναλυτικός βοηθός του CRM της κλινικής «${clinicName}» (medi360 CRM). Απαντάς σε ερωτήσεις του ιδιοκτήτη/διαχειριστή για τη λειτουργία της κλινικής (θεραπείες, ραντεβού, έσοδα, πελάτες, πωλήσεις, μηνύματα, κριτικές) ΑΠΟΚΛΕΙΣΤΙΚΑ με βάση τα εργαλεία που έχεις. Ποτέ μη μαντεύεις αριθμούς.
+  return `Είσαι ο αναλυτικός βοηθός του CRM της κλινικής «${clinicName}» (medi360 CRM). Απαντάς σε ερωτήσεις του ιδιοκτήτη/διαχειριστή και του προσωπικού για τη λειτουργία της κλινικής (θεραπείες, ραντεβού, έσοδα, πελάτες, πωλήσεις, μηνύματα, κριτικές) ΑΠΟΚΛΕΙΣΤΙΚΑ με βάση τα εργαλεία που έχεις. Ποτέ μη μαντεύεις αριθμούς.
 
 Σήμερα: ${today.date} (${WEEKDAY_GR[today.weekday] || today.weekday}), ώρα Ελλάδας. Ρόλος χρήστη: ${role}.
 Υπηρεσίες της κλινικής: ${svc || '—'}
@@ -401,7 +425,7 @@ function buildSystemPrompt(clinicName: string, ctx: Ctx, role: string) {
 6. Ονόματα υπηρεσιών: αντιστοίχισε τη λέξη του χρήστη με τη λίστα υπηρεσιών (π.χ. «υδροδερμοαπόξεση» ≈ «Hydrafacial»). Αν η αναζήτηση επιστρέψει 0, δοκίμασε ευρύτερο φίλτρο ή την κατηγορία και πες τι έψαξες.
 7. Ποτέ μη ζητάς ούτε να εμφανίζεις ονόματα, τηλέφωνα ή στοιχεία μεμονωμένων πελατών — τα εργαλεία δίνουν μόνο αθροίσματα. Αν ρωτήσουν για συγκεκριμένο πελάτη, πες ευγενικά ότι αυτό γίνεται από την αναζήτηση/καρτέλα του CRM.
 8. Όταν ένα νούμερο είναι ασυνήθιστο ή τα δεδομένα λίγα, πες το (π.χ. λίγα ραντεβού με τιμή καταχωρημένη → τα έσοδα υποεκτιμώνται).
-9. Κλείσε με μία πρόταση πρακτικού συμπεράσματος ή πρότασης όταν έχει νόημα, όχι γενικότητες.`;
+9. Κλείσε με μία πρόταση πρακτικού συμπεράσματος ή πρότασης όταν έχει νόημα, όχι γενικότητες.${finRule}`;
 }
 
 async function callClaude(apiKey: string, payload: unknown) {
@@ -427,7 +451,7 @@ Deno.serve(async (req: Request) => {
     const cronSecret = Deno.env.get('BIRTHDAY_CRON_SECRET');
     if (cronSecret && req.headers.get('x-cron-secret') === cronSecret) {
       sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
-      cid = String(body.clinic_id || ''); role = 'super_admin';
+      cid = String(body.clinic_id || ''); role = ['super_admin', 'clinic_admin', 'therapist', 'receptionist'].includes(body.role) ? body.role : 'super_admin';
       if (!cid) return json({ error: 'clinic_id required' }, 400);
     } else {
       const authHeader = req.headers.get('Authorization');
@@ -438,7 +462,7 @@ Deno.serve(async (req: Request) => {
       const { data: profile } = await sb.from('profiles').select('role,clinic_id').eq('id', user.id).single();
       if (!profile) return json({ error: 'Profile not found' }, 403);
       role = profile.role;
-      if (!['super_admin', 'clinic_admin'].includes(role)) return json({ error: 'Ο βοηθός στατιστικών είναι διαθέσιμος μόνο σε διαχειριστές.' }, 403);
+      if (!['super_admin', 'clinic_admin', 'therapist', 'receptionist'].includes(role)) return json({ error: 'Δεν έχεις δικαίωμα χρήσης του βοηθού.' }, 403);
       cid = (role === 'super_admin' && body.clinic_id) ? String(body.clinic_id) : profile.clinic_id;
       if (!cid) return json({ error: 'Δεν βρέθηκε κλινική' }, 400);
     }
@@ -462,7 +486,9 @@ Deno.serve(async (req: Request) => {
     if (!messages.length || messages[messages.length - 1].role !== 'user') return json({ error: 'Λείπει η ερώτηση' }, 400);
 
     const apiKey = Deno.env.get('ANTHROPIC_API_KEY')!;
-    const system = buildSystemPrompt(clinic.name || 'Κλινική', ctx, role);
+    // Οικονομικά μόνο για manager (clinic_admin) και admin (super_admin).
+    const canFin = ['super_admin', 'clinic_admin'].includes(role);
+    const system = buildSystemPrompt(clinic.name || 'Κλινική', ctx, role, canFin);
     const toolCalls: { name: string; input: any; ms: number }[] = [];
     let reply = '';
     let usage: any = null;
@@ -479,7 +505,7 @@ Deno.serve(async (req: Request) => {
       for (const tu of toolUses) {
         const t0 = Date.now();
         let out: any;
-        try { out = await runTool(ctx, tu.name, tu.input); } catch (e) { out = { error: e instanceof Error ? e.message : String(e) }; }
+        try { out = await runTool(ctx, tu.name, tu.input, canFin); } catch (e) { out = { error: e instanceof Error ? e.message : String(e) }; }
         toolCalls.push({ name: tu.name, input: tu.input, ms: Date.now() - t0 });
         results.push({ type: 'tool_result', tool_use_id: tu.id, content: JSON.stringify(out).slice(0, 60000) });
       }
@@ -487,7 +513,7 @@ Deno.serve(async (req: Request) => {
       if (round === MAX_TOOL_ROUNDS) reply = texts || 'Χρειάστηκαν πάρα πολλά βήματα — δοκίμασε πιο συγκεκριμένη ερώτηση.';
     }
 
-    return json({ reply, tool_calls: toolCalls, usage, model: MODEL });
+    return json({ reply, tool_calls: toolCalls, usage, model: MODEL, financials: canFin });
   } catch (e) {
     return json({ error: e instanceof Error ? e.message : 'Άγνωστο σφάλμα' }, 500);
   }
