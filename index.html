@@ -2704,7 +2704,7 @@ function renderPatientDiagnosesTab() {
     <div style="border:1px solid var(--border-2);border-radius:12px;padding:14px 16px">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:8px">
         <div style="font-size:13px;font-weight:700">${fmt(e.created_at)}</div>
-        <div style="font-size:11px;color:var(--text-2)">${esc(e.profiles&&e.profiles.full_name||'—')}</div>
+        <div style="font-size:11.5px;color:var(--text-2);display:inline-flex;align-items:center;gap:5px;background:var(--surface-2);border-radius:9px;padding:3px 9px" title="Ποιος έκανε τη διάγνωση">🩺 Διάγνωση από: <b style="color:var(--text)">${esc(e.profiles&&e.profiles.full_name||'άγνωστο')}</b></div>
       </div>
       <div style="font-size:12px;color:var(--text-2);margin-bottom:4px">Διάγνωση</div>
       <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">${(e.diagnosis||[]).map(d=>`<span style="display:inline-flex;align-items:center;gap:6px;background:var(--surface-2);border-radius:20px;padding:4px 12px;font-size:12px">${esc(d)}${e.diagnosis_icd10&&e.diagnosis_icd10[d]?`<span style="color:var(--text-2);font-size:10.5px">${esc(e.diagnosis_icd10[d])}</span>`:''}</span>`).join('')}</div>
@@ -3350,7 +3350,14 @@ function renderPatientDetail() {
             <div style="width:4px;align-self:stretch;border-radius:2px;background:${(STATUS_APPT[a.status]||STATUS_APPT.confirmed).c};flex-shrink:0"></div>
             <div style="flex:1">
               <div style="font-size:13px;font-weight:500">${a.package_id?'<span title="Συνεδρία πακέτου">📦 </span>':''}${esc(a.service_name||'—')}</div>
-              <div style="font-size:11px;color:var(--text-2)">${fmtDt(a.start_time)} · <span style="color:var(--blue)">προβολή στο Πρόγραμμα →</span>${a.created_by&&S.staffDirectory&&S.staffDirectory[a.created_by]?` · Καταχωρήθηκε από: ${esc(S.staffDirectory[a.created_by])}`:''}</div>
+              <div style="font-size:11px;color:var(--text-2)">${fmtDt(a.start_time)} · <span style="color:var(--blue)">προβολή στο Πρόγραμμα →</span>${(()=>{
+                // Με ποιον θεραπευτή έγινε (παρελθόν/ολοκληρωμένο) ή με ποιον έχει
+                // κλειστεί (μελλοντικό) — από appointments.therapist_id → profiles.
+                const tn = a.therapist_id && S.staffDirectory && S.staffDirectory[a.therapist_id];
+                if (!tn) return '';
+                const isPast = a.status==='completed' || new Date(a.start_time).getTime() < Date.now();
+                return ` · <span style="color:var(--text)">${isPast?'Έγινε με':'Κλεισμένο με'}: <b>${esc(tn)}</b></span>`;
+              })()}${a.created_by&&S.staffDirectory&&S.staffDirectory[a.created_by]?` · Καταχωρήθηκε από: ${esc(S.staffDirectory[a.created_by])}`:''}</div>
             </div>
             <button class="btn btn-ghost btn-sm" title="Φωτογραφίες ραντεβού" onclick="event.stopPropagation();S.patTab='photos';S.patPhotoApptFilter='${a.id}';render()">📷${apptPhotoCount?` ${apptPhotoCount}`:''}</button>
             ${canSeeFinancials&&a.price?`<div style="font-size:13px;font-weight:500;color:#0F6E56">${euro(a.price)}</div>`:''}
@@ -4127,16 +4134,19 @@ function renderInjectableDetail() {
         </div>
       </div>
 
-      <div style="display:flex;gap:24px;flex-wrap:wrap;justify-content:center;margin-bottom:20px">
+      <!-- Οι δύο όψεις μεγαλώνουν με το διαθέσιμο πλάτος (έως 360px η καθεμία,
+           44vw σε κινητό ώστε να χωρούν δίπλα-δίπλα). Τα σημεία είναι σε % πάνω
+           στην εικόνα, οπότε το μέγεθος δεν επηρεάζει την ακρίβεια. -->
+      <div style="display:flex;gap:32px;flex-wrap:wrap;justify-content:center;margin-bottom:20px">
         <div style="text-align:center">
-          <div id="inj-face-wrap-front" onclick="handleFaceClick(event,'front')" style="position:relative;width:200px;height:228px;cursor:crosshair;background:#ffffff;border-radius:10px;border:1px solid #EEE6FB">
+          <div id="inj-face-wrap-front" onclick="handleFaceClick(event,'front')" style="position:relative;width:min(360px,44vw);aspect-ratio:200/228;cursor:crosshair;background:#ffffff;border-radius:10px;border:1px solid #EEE6FB">
             ${injFaceSvgFront()}
             <div id="inj-points-overlay-front" style="position:absolute;inset:0">${injPointsOverlayHtml('front')}</div>
           </div>
           <div style="font-size:10px;font-weight:600;color:var(--text-2);letter-spacing:.5px;text-transform:uppercase;margin-top:8px">Μπροστινή Όψη</div>
         </div>
         <div style="text-align:center">
-          <div id="inj-face-wrap-profile" onclick="handleFaceClick(event,'profile')" style="position:relative;width:200px;height:228px;cursor:crosshair;background:#ffffff;border-radius:10px;border:1px solid #EEE6FB">
+          <div id="inj-face-wrap-profile" onclick="handleFaceClick(event,'profile')" style="position:relative;width:min(360px,44vw);aspect-ratio:200/228;cursor:crosshair;background:#ffffff;border-radius:10px;border:1px solid #EEE6FB">
             ${injFaceSvgProfile()}
             <div id="inj-points-overlay-profile" style="position:absolute;inset:0">${injPointsOverlayHtml('profile')}</div>
           </div>
