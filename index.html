@@ -723,6 +723,7 @@ const TOGGLEABLE_MODULES = [
   {key:'product-sale', label:'Πώληση Καλλυντικού'},
   {key:'reports', label:'Αναφορές'},
   {key:'staff-services', label:'Προσωπικό & Υπηρεσίες'},
+  {key:'reviews', label:'Google Reviews'},
 ];
 // Υποσελίδες που ανήκουν σε ένα module αλλά δεν είναι οι ίδιες nav items
 // (π.χ. η λεπτομέρεια μιας φόρμας laser) — πρέπει να μπλοκάρονται μαζί του.
@@ -1318,6 +1319,18 @@ async function loadPageData() {
     const {data:campaigns} = await sb.from('marketing_campaigns').select('*').eq('clinic_id',cid).order('created_at',{ascending:false}).limit(30);
     S.campaignHistory = campaigns||[];
   }
+  if (S.page==='reviews') {
+    // ⭐ Google Reviews: όλες οι κριτικές της κλινικής (συγχρονισμένες από τα
+    // emails του Google Business Profile — βλ. Edge Function google-reviews-sync)
+    // + ελαφριά λίστα πελατών για το χειροκίνητο ματσάρισμα (όνομα/τηλέφωνο μόνο).
+    const [rvRes, ptRes] = await Promise.all([
+      sb.from('google_reviews').select('*').eq('clinic_id',cid).is('review_deleted_at',null).order('review_create_time',{ascending:false,nullsFirst:false}).limit(1000),
+      sb.from('patients').select('id,full_name,phone').eq('clinic_id',cid).order('full_name').limit(5000),
+    ]);
+    S.reviews = rvRes.data||[];
+    S.reviewPatients = ptRes.data||[];
+    if (!S.reviewsFilter) S.reviewsFilter = S.reviews.some(r=>r.matching_status==='needs_review') ? 'needs_review' : 'all';
+  }
   if (S.page==='settings') {
     const {data:uc} = await sb.from('unmatched_consultations').select('*').eq('clinic_id',cid).order('received_at',{ascending:false});
     S.unmatchedConsultations = uc||[];
@@ -1444,6 +1457,17 @@ async function loadPatientDetail(id, tab) {
       const {data:bg} = await sb.from('birthday_gifts').select('*').eq('patient_id',id).order('sent_at',{ascending:false});
       S.patientBirthdayGifts = bg||[];
       S.patientBirthdayGift = (bg&&bg[0])||null;
+    } catch(e) {}
+
+    // ⭐ Google Reviews του πελατή — μόνο οι σίγουρες αντιστοιχίσεις (αυτόματη
+    // HIGH ή χειροκίνητα επιβεβαιωμένη). Προαιρετικό: αν ο πίνακας δεν υπάρχει
+    // ακόμα σε κάποια εγκατάσταση, η καρτέλα συνεχίζει κανονικά.
+    S.patientReviews = [];
+    try {
+      const {data:gr} = await sb.from('google_reviews').select('*').eq('matched_patient_id',id)
+        .in('matching_status',['auto_matched_high_confidence','manually_confirmed'])
+        .is('review_deleted_at',null).order('review_create_time',{ascending:false});
+      S.patientReviews = gr||[];
     } catch(e) {}
 
     // 📬 Ιστορικό επικοινωνιών (email/Viber αργότερα) — αιτήματα επιβεβαίωσης,
@@ -1713,6 +1737,7 @@ function render() {
       S.page==='reports' ? renderReports() :
       S.page==='marketing-gallery' ? renderMarketingGallery() :
       S.page==='marketing-campaigns' ? renderMarketingCampaigns() :
+      S.page==='reviews' ? renderReviews() :
       S.page==='staff-services' ? renderStaffServices() :
       S.page==='settings' ? renderSettings() :
       `<div class="page"><div class="empty-state"><div class="empty-icon">🚧</div><div>Σύντομα διαθέσιμο</div></div></div>`
@@ -1806,12 +1831,13 @@ function renderShell(content) {
     {page:'reports',icon:'▤',label:'Αναφορές',roles:['super_admin','clinic_admin']},
     {page:'marketing-gallery',icon:'📸',label:'Marketing Φωτογραφίες',roles:['super_admin','clinic_admin']},
     {page:'marketing-campaigns',icon:'📢',label:'Μαζικά Μηνύματα',roles:['super_admin','clinic_admin']},
+    {page:'reviews',icon:'⭐',label:'Google Reviews',roles:['super_admin','clinic_admin']},
     {page:'staff-services',icon:'🗂',label:'Προσωπικό & Υπηρεσίες',roles:['super_admin','clinic_admin']},
     {page:'clinics',icon:'⊞',label:'Κλινικές',roles:['super_admin']},
     {page:'settings',icon:'⚙',label:'Ρυθμίσεις',roles:['super_admin','clinic_admin']},
   ].filter(n => n.roles.includes(role) && (isSuperAdmin() && !cid ? ['dashboard','clinics'].includes(n.page) : true) && isModuleEnabled(n.page));
 
-  const PAGE_TITLES = {dashboard:'Dashboard',patients:'Ασθενείς','patient-detail':'Ασθενής',appointments:'Ραντεβού',calendar:'Πρόγραμμα',pipeline:'Pipeline',clinics:'Κλινικές',sms:'SMS & Αυτοματισμοί',laser:'Laser Forms',injectables:'Ενέσιμες Θεραπείες','injectable-detail':'Ενέσιμη Θεραπεία',consultations:'Consultation',consents:'Συναινέσεις','product-sale':'Πώληση Καλλυντικού',reports:'Αναφορές','marketing-gallery':'Marketing Φωτογραφίες','marketing-campaigns':'Μαζικά Μηνύματα','staff-services':'Προσωπικό & Υπηρεσίες',settings:'Ρυθμίσεις'};
+  const PAGE_TITLES = {dashboard:'Dashboard',patients:'Ασθενείς','patient-detail':'Ασθενής',appointments:'Ραντεβού',calendar:'Πρόγραμμα',pipeline:'Pipeline',clinics:'Κλινικές',sms:'SMS & Αυτοματισμοί',laser:'Laser Forms',injectables:'Ενέσιμες Θεραπείες','injectable-detail':'Ενέσιμη Θεραπεία',consultations:'Consultation',consents:'Συναινέσεις','product-sale':'Πώληση Καλλυντικού',reports:'Αναφορές','marketing-gallery':'Marketing Φωτογραφίες','marketing-campaigns':'Μαζικά Μηνύματα',reviews:'Google Reviews','staff-services':'Προσωπικό & Υπηρεσίες',settings:'Ρυθμίσεις'};
 
   return `
   <div class="overlay ${S.sidebarOpen?'open':''}" id="overlay"></div>
@@ -2930,6 +2956,28 @@ function renderPatientDetail() {
         <div style="display:flex;flex-wrap:wrap;gap:6px">
           ${items.map(it=>`<span onclick="${it.act}" style="font-size:11px;font-weight:700;padding:3px 9px;border-radius:9px;cursor:pointer;background:${it.ok?'#E1F5EE':'#FCEBEB'};color:${it.ok?'#0F6E56':'var(--red)'}">${it.ok?'✓':'⚠'} ${esc(it.label)}</span>`).join('')}
         </div>
+      </div>`;
+    })()}
+
+    ${(()=>{
+      // ⭐ Google Review του πελατή (μόνο σίγουρες αντιστοιχίσεις). Όταν υπάρχει,
+      // ο πελάτης ΔΕΝ λαμβάνει πλέον αίτημα αξιολόγησης μετά το ραντεβού
+      // (βλ. appointment-automations → skipped_has_review).
+      const rvs = S.patientReviews||[];
+      if (!rvs.length) return '';
+      const r = rvs[0];
+      const url = googleReviewUrl(r);
+      const snippet = (r.review_text||'').trim();
+      return `<div style="background:#FFF8E6;border:1px solid #F5D98B;border-radius:11px;padding:11px 14px;margin-bottom:12px;display:flex;flex-direction:column;gap:6px">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="font-size:11px;font-weight:800;padding:3px 9px;border-radius:9px;background:#E1F5EE;color:#0F6E56">🟢 Έχει αφήσει αξιολόγηση στο Google</span>
+          <span style="font-size:13px;letter-spacing:1px;color:#D97706" title="${r.star_rating||0}/5">${reviewStars(r.star_rating)}</span>
+          <span style="font-size:11px;color:var(--text-2)">${r.review_create_time?new Date(r.review_create_time).toLocaleDateString('el-GR'):''}${r.reviewer_display_name?' · '+esc(r.reviewer_display_name):''}</span>
+          ${rvs.length>1?`<span style="font-size:11px;color:var(--text-3)">+${rvs.length-1} ακόμα</span>`:''}
+          ${url?`<a href="${esc(url)}" target="_blank" rel="noopener" style="margin-left:auto;font-size:11px;font-weight:700;color:var(--blue);white-space:nowrap">Προβολή στο Google ↗</a>`:''}
+        </div>
+        ${snippet?`<div style="font-size:12px;color:var(--text);line-height:1.45;font-style:italic">“${esc(snippet.length>220?snippet.slice(0,220)+'…':snippet)}”${r.review_text_is_translated?' <span style="font-size:10px;color:var(--text-3);font-style:normal">(μετάφραση Google)</span>':''}</div>`:''}
+        <div style="font-size:10.5px;color:var(--text-3)">Δεν θα του σταλεί ξανά αίτημα αξιολόγησης μετά το ραντεβού.</div>
       </div>`;
     })()}
 
@@ -6631,6 +6679,269 @@ function renderMarketingCampaigns() {
       </tbody></table>` : `<div class="empty-state"><div class="empty-icon">📢</div><div>Καμία καμπάνια ακόμα.</div></div>`}
     </div>
   </div>`;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ⭐ GOOGLE REVIEWS — στατιστικά, ουρά επιβεβαίωσης, χειροκίνητο ματσάρισμα
+// Δεδομένα: πίνακας google_reviews (γεμίζει από την Edge Function
+// google-reviews-sync, κάθε ώρα, από τα emails ειδοποίησης του Google
+// Business Profile). Τα statuses:
+//   auto_matched_high_confidence  → ματσαρίστηκε αυτόματα (όνομα + πρόσφατο ραντεβού)
+//   needs_review                  → βρέθηκε πιθανός πελάτης, θέλει επιβεβαίωση
+//   unmatched                     → κανένας πελάτης με αυτό το όνομα
+//   manually_confirmed / manually_rejected → απόφαση χρήστη (δεν την αλλάζει ο sync)
+// ══════════════════════════════════════════════════════════════════════
+const REVIEW_STATUS_LABEL = {
+  auto_matched_high_confidence:{l:'Αυτόματο match',bg:'#E1F5EE',c:'#0F6E56'},
+  manually_confirmed:{l:'Επιβεβαιωμένο',bg:'#E1F5EE',c:'#0F6E56'},
+  needs_review:{l:'Προς επιβεβαίωση',bg:'#FAEEDA',c:'#854F0B'},
+  unmatched:{l:'Χωρίς αντιστοίχιση',bg:'var(--surface-2)',c:'var(--text-2)'},
+  manually_rejected:{l:'Απορρίφθηκε',bg:'#FCEBEB',c:'#A32D2D'},
+};
+const REVIEW_LINKED_STATUSES = ['auto_matched_high_confidence','manually_confirmed'];
+
+function reviewStars(n) {
+  const k = Math.max(0, Math.min(5, parseInt(n,10)||0));
+  return '★'.repeat(k) + '☆'.repeat(5-k);
+}
+
+// Σύνδεσμος προς την κριτική στο Google Business Profile (θέλει login ως
+// ιδιοκτήτης της επιχείρησης). Τα ids αποθηκεύονται στο clinics.integrations.google_reviews.
+function googleReviewUrl(r) {
+  const gi = (((S.clinic&&S.clinic.integrations)||{}).google_reviews)||{};
+  if (!r || !r.google_review_id || !gi.business_n) return '';
+  const fid = r.google_location_id || gi.location_fid || '';
+  return `https://business.google.com/n/${encodeURIComponent(gi.business_n)}/reviews/${encodeURIComponent(r.google_review_id)}${fid?'?fid='+encodeURIComponent(fid):''}`;
+}
+
+// Πιθανοί πελάτες για μια κριτική: ίδιο όνομα (χωρίς τόνους/πεζά) με
+// οποιαδήποτε σειρά λέξεων — ίδια λογική με την Edge Function.
+function reviewCandidates(r) {
+  const name = (r.reviewer_display_name||'').trim();
+  if (!name) return [];
+  const words = normalizeGreek(name).split(' ').filter(Boolean);
+  if (!words.length) return [];
+  const variants = new Set([words.join(' '), [...words].reverse().join(' ')]);
+  const out = [];
+  for (const p of (S.reviewPatients||[])) {
+    const pn = normalizeGreek(p.full_name);
+    if (variants.has(pn)) out.push(p);
+  }
+  // Αν δεν βρεθεί ακριβές, δοκίμασε «όλες οι λέξεις του reviewer περιέχονται στο όνομα πελάτη»
+  if (!out.length && words.length>=2) {
+    for (const p of (S.reviewPatients||[])) {
+      const pw = normalizeGreek(p.full_name).split(' ');
+      if (words.every(w => pw.includes(w))) out.push(p);
+    }
+  }
+  return out.slice(0, 6);
+}
+
+function reviewPatientName(pid) {
+  if (!pid) return '';
+  const p = (S.reviewPatients||[]).find(x=>x.id===pid);
+  return p ? p.full_name : '(πελάτης)';
+}
+
+function setReviewsFilter(f) { S.reviewsFilter = f; render(); }
+
+function renderReviews() {
+  if (!canSee(['super_admin','clinic_admin'])) return `<div class="page"><div class="empty-state"><div class="empty-icon">🔒</div><div>Δεν έχεις πρόσβαση</div></div></div>`;
+  const all = S.reviews||[];
+  const linked = all.filter(r=>REVIEW_LINKED_STATUSES.includes(r.matching_status));
+  const needs = all.filter(r=>r.matching_status==='needs_review');
+  const unmatched = all.filter(r=>r.matching_status==='unmatched');
+  const rejected = all.filter(r=>r.matching_status==='manually_rejected');
+  const rated = all.filter(r=>r.star_rating);
+  const avg = rated.length ? (rated.reduce((s,r)=>s+r.star_rating,0)/rated.length) : 0;
+  const since30 = Date.now() - 30*864e5;
+  const last30 = all.filter(r=>r.review_create_time && new Date(r.review_create_time).getTime()>=since30).length;
+  const byStar = [5,4,3,2,1].map(s=>({s, n: rated.filter(r=>r.star_rating===s).length}));
+  const totalPatients = (S.reviewPatients||[]).length;
+  const linkedPatients = new Set(linked.map(r=>r.matched_patient_id).filter(Boolean)).size;
+  const pctPatients = totalPatients ? Math.round(linkedPatients*1000/totalPatients)/10 : 0;
+  const lastSync = all.reduce((m,r)=>{ const t=new Date(r.updated_at||r.created_at||0).getTime(); return t>m?t:m; }, 0);
+  const gi = (((S.clinic&&S.clinic.integrations)||{}).google_reviews)||{};
+
+  const filter = S.reviewsFilter || 'all';
+  const tabs = [
+    {k:'needs_review', l:'Προς επιβεβαίωση', n:needs.length, hot:needs.length>0},
+    {k:'unmatched', l:'Χωρίς αντιστοίχιση', n:unmatched.length},
+    {k:'linked', l:'Συνδεδεμένες', n:linked.length},
+    {k:'rejected', l:'Απορριφθείσες', n:rejected.length},
+    {k:'all', l:'Όλες', n:all.length},
+  ];
+  const list = filter==='needs_review' ? needs : filter==='unmatched' ? unmatched : filter==='linked' ? linked : filter==='rejected' ? rejected : all;
+
+  const reviewCard = (r) => {
+    const st = REVIEW_STATUS_LABEL[r.matching_status] || {l:r.matching_status,bg:'var(--surface-2)',c:'var(--text-2)'};
+    const url = googleReviewUrl(r);
+    const isLinked = REVIEW_LINKED_STATUSES.includes(r.matching_status);
+    const cands = (r.matching_status==='needs_review' || r.matching_status==='unmatched') ? reviewCandidates(r) : [];
+    const text = (r.review_text||'').trim();
+    return `<div class="card" style="padding:14px 16px;margin-bottom:10px">
+      <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">
+        <div style="flex:1;min-width:220px">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span style="font-size:15px;letter-spacing:1px;color:#D97706" title="${r.star_rating||0}/5">${reviewStars(r.star_rating)}</span>
+            <span style="font-size:13.5px;font-weight:700">${esc(r.reviewer_display_name||'Ανώνυμος')}</span>
+            <span style="font-size:11px;color:var(--text-2)">${r.review_create_time?new Date(r.review_create_time).toLocaleDateString('el-GR',{day:'numeric',month:'short',year:'numeric'}):'—'}</span>
+            ${badge(st.l, st.bg, st.c)}
+          </div>
+          ${text?`<div style="font-size:12.5px;color:var(--text);line-height:1.5;margin-top:6px">${esc(text)}${r.review_text_is_translated?' <span style="font-size:10px;color:var(--text-3)">(μετάφραση Google)</span>':''}</div>`:`<div style="font-size:12px;color:var(--text-3);margin-top:6px">Χωρίς κείμενο — μόνο αστέρια.</div>`}
+          ${r.reply_text?`<div style="font-size:12px;color:var(--text-2);margin-top:6px;padding-left:10px;border-left:2px solid var(--border-2)">↩ ${esc(r.reply_text)}</div>`:''}
+          ${isLinked && r.matched_patient_id ? `<div style="margin-top:8px;font-size:12px">👤 Πελάτης: <span style="font-weight:700;color:var(--blue);cursor:pointer" onclick="loadPatientDetail('${r.matched_patient_id}')">${esc(reviewPatientName(r.matched_patient_id))}</span></div>` : ''}
+          ${cands.length ? `<div style="margin-top:8px;display:flex;flex-direction:column;gap:5px">
+            <div style="font-size:11px;font-weight:700;color:var(--text-2)">Πιθανός πελάτης${cands.length>1?' ('+cands.length+')':''}:</div>
+            ${cands.map(c=>`<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--surface-2);border-radius:9px;padding:6px 10px">
+              <span style="font-size:12.5px;font-weight:600;cursor:pointer;color:var(--blue)" onclick="loadPatientDetail('${c.id}')">${esc(c.full_name)}</span>
+              <span style="font-size:11px;color:var(--text-2)">${esc(c.phone||'')}</span>
+              <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="confirmReviewMatch('${r.id}','${c.id}')">✓ Είναι αυτός/ή</button>
+            </div>`).join('')}
+          </div>` : ''}
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;min-width:150px">
+          ${!isLinked ? `<button class="btn btn-ghost btn-sm" onclick="openReviewMatchModal('${r.id}')">🔗 ${cands.length?'Διαφορετικός πελάτης':'Σύνδεση με πελάτη'}</button>` : ''}
+          ${r.matching_status==='needs_review' || r.matching_status==='unmatched' ? `<button class="btn btn-ghost btn-sm" onclick="rejectReviewMatch('${r.id}')" title="Δεν είναι πελάτης μας / δεν θέλω να συνδεθεί">✗ Δεν είναι πελάτης</button>` : ''}
+          ${isLinked ? `<button class="btn btn-ghost btn-sm" onclick="unlinkReviewMatch('${r.id}')">⛓ Αποσύνδεση</button>` : ''}
+          ${r.matching_status==='manually_rejected' ? `<button class="btn btn-ghost btn-sm" onclick="openReviewMatchModal('${r.id}')">🔗 Σύνδεση τελικά</button>` : ''}
+          ${url ? `<a class="btn btn-ghost btn-sm" href="${esc(url)}" target="_blank" rel="noopener" style="text-align:center">Google ↗</a>` : ''}
+        </div>
+      </div>
+    </div>`;
+  };
+
+  return `<div class="page">
+    <div class="page-header">
+      <div><h1 class="page-title">⭐ Google Reviews</h1>
+        <p class="page-sub">Οι κριτικές του Google Business Profile, συγχρονισμένες αυτόματα κάθε ώρα από τα emails ειδοποίησης. Όταν μια κριτική συνδεθεί με πελάτη, εμφανίζεται στην καρτέλα του και δεν του ξαναστέλνεται αίτημα αξιολόγησης.</p></div>
+    </div>
+
+    <div class="stats-grid" style="margin-bottom:16px">
+      <div class="stat-card">
+        <div class="stat-icon" style="background:#FFF8E6;color:#D97706">⭐</div>
+        <div class="stat-label">Σύνολο κριτικών</div>
+        <div class="stat-value" style="color:#D97706">${all.length}</div>
+        <div class="stat-change ${last30?'up':''}">${last30?'↑ ':''}${last30} τις τελευταίες 30 μέρες</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon" style="background:#E1F5EE;color:#0F6E56">★</div>
+        <div class="stat-label">Μέση βαθμολογία</div>
+        <div class="stat-value" style="color:#0F6E56">${rated.length?avg.toFixed(2):'—'}</div>
+        <div class="stat-change">${byStar.filter(b=>b.n).map(b=>`${b.s}★ ${b.n}`).join(' · ')||'—'}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon" style="background:#eef0fe;color:var(--blue)">👤</div>
+        <div class="stat-label">Συνδεδεμένες με πελάτη</div>
+        <div class="stat-value" style="color:var(--blue)">${linked.length}</div>
+        <div class="stat-change">${all.length?Math.round(linked.length*100/all.length):0}% των κριτικών · ${pctPatients}% των πελατών</div>
+      </div>
+      <div class="stat-card" style="${needs.length?'border-color:#F5D98B;cursor:pointer':''}" ${needs.length?`onclick="setReviewsFilter('needs_review')"`:''}>
+        <div class="stat-icon" style="background:#FAEEDA;color:#854F0B">❓</div>
+        <div class="stat-label">Προς επιβεβαίωση</div>
+        <div class="stat-value" style="color:#854F0B">${needs.length}</div>
+        <div class="stat-change">${unmatched.length} χωρίς αντιστοίχιση</div>
+      </div>
+    </div>
+
+    <div class="card" style="padding:12px 16px;margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        <div style="flex:1;min-width:220px;display:flex;flex-direction:column;gap:4px">
+          ${byStar.map(b=>`<div style="display:flex;align-items:center;gap:8px;font-size:11px">
+            <span style="width:24px;color:var(--text-2);font-variant-numeric:tabular-nums">${b.s}★</span>
+            <div style="flex:1;height:8px;background:var(--surface-2);border-radius:4px;overflow:hidden"><div style="width:${rated.length?Math.round(b.n*100/rated.length):0}%;height:100%;background:${b.s>=4?'#0F6E56':b.s===3?'#D97706':'#A32D2D'}"></div></div>
+            <span style="width:28px;text-align:right;color:var(--text-2);font-variant-numeric:tabular-nums">${b.n}</span>
+          </div>`).join('')}
+        </div>
+        <div style="font-size:11px;color:var(--text-3);line-height:1.6;min-width:200px">
+          Τελευταία ενημέρωση: <b>${lastSync?new Date(lastSync).toLocaleString('el-GR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'—'}</b><br>
+          Πηγή: emails Google Business Profile (κάθε ώρα)<br>
+          ${gi.enabled===false?'<span style="color:var(--red)">Ο συγχρονισμός είναι απενεργοποιημένος για την κλινική.</span>':gi.business_n?'✓ Σύνδεσμοι προς Google ενεργοί':'Οι σύνδεσμοι «Google ↗» θα ενεργοποιηθούν όταν οριστεί το business id στις Συνδέσεις.'}
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
+      ${tabs.map(t=>`<button class="btn btn-sm ${filter===t.k?'btn-primary':'btn-ghost'}" onclick="setReviewsFilter('${t.k}')" style="${t.hot&&filter!==t.k?'border-color:#F5D98B;color:#854F0B':''}">${esc(t.l)} <span style="opacity:.75">(${t.n})</span></button>`).join('')}
+    </div>
+
+    ${filter==='needs_review' && needs.length ? `<div style="font-size:12px;color:var(--text-2);margin-bottom:10px;line-height:1.5">Για αυτές τις κριτικές βρέθηκε πελάτης με το ίδιο όνομα, αλλά χωρίς πρόσφατο ραντεβού ή με περισσότερους από έναν ομώνυμους. Επιβεβαίωσε ποιος είναι, ή σημείωσε ότι δεν είναι πελάτης.</div>` : ''}
+    ${list.length ? list.map(reviewCard).join('') : `<div class="card"><div class="empty-state"><div class="empty-icon">⭐</div><div>${all.length?'Καμία κριτική σε αυτή την κατηγορία.':'Δεν έχουν συγχρονιστεί κριτικές ακόμα. Ο πρώτος συγχρονισμός γίνεται αυτόματα εντός μίας ώρας.'}</div></div></div>`}
+  </div>`;
+}
+
+async function updateReviewMatch(reviewId, patch) {
+  const {data, error} = await sb.from('google_reviews').update(patch).eq('id', reviewId).select('*').single();
+  if (error) { alert('Σφάλμα: '+error.message); return null; }
+  S.reviews = (S.reviews||[]).map(r => r.id===reviewId ? data : r);
+  return data;
+}
+
+async function confirmReviewMatch(reviewId, patientId) {
+  const r = (S.reviews||[]).find(x=>x.id===reviewId); if (!r) return;
+  const pname = reviewPatientName(patientId);
+  if (!confirm(`Σύνδεση της κριτικής του/της «${r.reviewer_display_name||'Ανώνυμος'}» με τον πελάτη «${pname}»;\n\nΑπό εδώ και πέρα δεν θα του στέλνεται αίτημα αξιολόγησης.`)) return;
+  const ok = await updateReviewMatch(reviewId, {matching_status:'manually_confirmed', matched_patient_id: patientId});
+  if (ok) { const ov=document.getElementById('rv-overlay'); if (ov) ov.remove(); render(); }
+}
+
+async function rejectReviewMatch(reviewId) {
+  const r = (S.reviews||[]).find(x=>x.id===reviewId); if (!r) return;
+  if (!confirm(`Να σημειωθεί ότι η κριτική του/της «${r.reviewer_display_name||'Ανώνυμος'}» ΔΕΝ αντιστοιχεί σε πελάτη μας; Μπορείς να τη συνδέσεις αργότερα από την καρτέλα «Απορριφθείσες».`)) return;
+  const ok = await updateReviewMatch(reviewId, {matching_status:'manually_rejected', matched_patient_id: null});
+  if (ok) render();
+}
+
+async function unlinkReviewMatch(reviewId) {
+  const r = (S.reviews||[]).find(x=>x.id===reviewId); if (!r) return;
+  if (!confirm(`Αποσύνδεση της κριτικής από τον πελάτη «${reviewPatientName(r.matched_patient_id)}»; Η κριτική θα πάει στις «Απορριφθείσες» και ο πελάτης θα λαμβάνει ξανά αιτήματα αξιολόγησης.`)) return;
+  const ok = await updateReviewMatch(reviewId, {matching_status:'manually_rejected', matched_patient_id: null});
+  if (ok) render();
+}
+
+// Χειροκίνητη σύνδεση κριτικής με οποιονδήποτε πελάτη — ίδιο μοτίβο overlay με
+// τη σύνδεση εκκρεμών consultations.
+function openReviewMatchModal(reviewId) {
+  const r = (S.reviews||[]).find(x=>x.id===reviewId); if (!r) return;
+  const old = document.getElementById('rv-overlay'); if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'rv-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9000;display:flex;align-items:center;justify-content:center;padding:16px';
+  ov.innerHTML = `
+    <div style="background:var(--white);border-radius:16px;max-width:480px;width:100%;padding:20px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div style="font-size:15px;font-weight:700">Σύνδεση κριτικής με πελάτη</div>
+        <button onclick="document.getElementById('rv-overlay').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-2)">×</button>
+      </div>
+      <div style="background:#FFF8E6;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12px">
+        <span style="color:#D97706;letter-spacing:1px">${reviewStars(r.star_rating)}</span> <b>${esc(r.reviewer_display_name||'Ανώνυμος')}</b>
+        <span style="color:var(--text-2)"> · ${r.review_create_time?new Date(r.review_create_time).toLocaleDateString('el-GR'):''}</span>
+        ${r.review_text?`<div style="margin-top:4px;color:var(--text-2);font-style:italic">“${esc(r.review_text.length>160?r.review_text.slice(0,160)+'…':r.review_text)}”</div>`:''}
+      </div>
+      <label class="form-label">Αναζήτηση πελάτη</label>
+      <input class="form-control" id="rv-patient-search" placeholder="Όνομα ή τηλέφωνο..." autocomplete="off" value="${esc(r.reviewer_display_name||'')}"/>
+      <div id="rv-patient-results" style="margin-top:6px;max-height:260px;overflow-y:auto;border-radius:10px;display:none"></div>
+    </div>`;
+  document.body.appendChild(ov);
+
+  const ps = document.getElementById('rv-patient-search');
+  let timer = null;
+  const showResults = () => {
+    const q = normalizeGreek(ps.value);
+    const res = document.getElementById('rv-patient-results');
+    const words = q.split(' ').filter(Boolean);
+    let data = (S.reviewPatients||[]);
+    if (words.length) data = data.filter(p => { const n = normalizeGreek(p.full_name)+' '+(p.phone||''); return words.every(w => n.includes(w)); });
+    data = data.slice(0, 12);
+    res.innerHTML = data.map(p=>`<div style="padding:9px 12px;cursor:pointer;font-size:12px;background:var(--white);border-bottom:1px solid var(--border-2)" data-pid="${p.id}">${esc(p.full_name)} · ${esc(p.phone||'')}</div>`).join('')
+      || `<div style="padding:9px 12px;font-size:12px;color:var(--text-3);background:var(--white)">Κανένα αποτέλεσμα</div>`;
+    res.style.display = 'block';
+    res.querySelectorAll('[data-pid]').forEach(el => { el.onclick = () => confirmReviewMatch(reviewId, el.dataset.pid); });
+  };
+  ps.onfocus = showResults;
+  ps.oninput = () => { clearTimeout(timer); timer = setTimeout(showResults, 150); };
+  showResults();
+  setTimeout(()=>ps.focus(), 50);
 }
 
 function renderReports() {
