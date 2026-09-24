@@ -4857,7 +4857,7 @@ function renderLaserDetail() {
       <div>
         <div style="font-size:11px;font-weight:700;color:#C4618A;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">ΠΙΝΑΚΕΣ ΘΕΡΑΠΕΙΑΣ <span style="font-size:10px;font-weight:400;color:var(--text-2)">(επιλέξτε περιοχή για να εμφανιστεί στο γραφικό)</span></div>
         <div id="regions-container" style="display:flex;flex-direction:column;gap:12px">
-          ${regions.map((r,ri)=>`
+          ${_laserRegions.map((r,ri)=>`
           <div style="border:1.5px solid ${ri<2?'#C4618A':'#e8b4ca'};border-radius:10px;overflow:hidden">
             <div style="background:${ri<2?'#C4618A':'#e8b4ca'};padding:10px 14px;display:flex;align-items:center;gap:10px">
               <span style="font-size:11px;font-weight:700;color:#fff;text-transform:uppercase">ΠΕΡΙΟΧΗ ${ri+1}:</span>
