@@ -6714,27 +6714,83 @@ function googleReviewUrl(r) {
   return `https://business.google.com/n/${encodeURIComponent(gi.business_n)}/reviews/${encodeURIComponent(r.google_review_id)}${fid?'?fid='+encodeURIComponent(fid):''}`;
 }
 
-// Πιθανοί πελάτες για μια κριτική: ίδιο όνομα (χωρίς τόνους/πεζά) με
-// οποιαδήποτε σειρά λέξεων — ίδια λογική με την Edge Function.
+// Φωνητικός «σκελετός» ονόματος — ελληνικά ΚΑΙ λατινικά καταλήγουν στην ίδια
+// απλοποιημένη μορφή ("Μαρία Παπαδοπούλου" ≈ "Maria Papadopoulou", "Ειρήνη" ≈
+// "Eirini"). ΙΔΙΟΣ αλγόριθμος με τη function skeleton() της Edge Function
+// google-reviews-sync — αν αλλάξει το ένα, να αλλάξει και το άλλο.
+function reviewSkeleton(t) {
+  let s = (t||'').toLowerCase();
+  s = s.replace(/[άἀἁὰᾶ]/g,'α').replace(/[έἐἑὲ]/g,'ε').replace(/[ήἠἡὴῆ]/g,'η').replace(/[ίϊΐἰἱὶῖ]/g,'ι').replace(/[όὀὁὸ]/g,'ο').replace(/[ύϋΰὐὑὺῦ]/g,'υ').replace(/[ώὠὡὼῶ]/g,'ω');
+  s = s.replace(/ου/g,'u').replace(/ει/g,'i').replace(/οι/g,'i').replace(/αι/g,'e').replace(/ευ/g,'ev').replace(/αυ/g,'av');
+  s = s.replace(/μπ/g,'b').replace(/ντ/g,'d').replace(/γκ/g,'g').replace(/γγ/g,'g');
+  s = s.replace(/θ/g,'th').replace(/ψ/g,'ps').replace(/ξ/g,'ks').replace(/χ/g,'h');
+  const map = {α:'a',β:'v',γ:'g',δ:'d',ε:'e',ζ:'z',η:'i',ι:'i',κ:'k',λ:'l',μ:'m',ν:'n',ο:'o',π:'p',ρ:'r',σ:'s',ς:'s',τ:'t',υ:'i',φ:'f',ω:'o'};
+  s = s.replace(/[α-ω]/g, ch => map[ch] || ch);
+  s = s.replace(/ou/g,'u').replace(/ch/g,'h').replace(/kh/g,'h').replace(/ph/g,'f').replace(/th/g,'8').replace(/ee/g,'i').replace(/ck/g,'k');
+  s = s.replace(/ei/g,'i').replace(/oi/g,'i').replace(/ai/g,'e').replace(/ef/g,'ev').replace(/af/g,'av');
+  s = s.replace(/nt/g,'d').replace(/mp/g,'b').replace(/gk/g,'g').replace(/ng/g,'g').replace(/j/g,'gi');
+  s = s.replace(/c/g,'k').replace(/y/g,'i').replace(/w/g,'o').replace(/b/g,'v').replace(/x/g,'ks').replace(/8/g,'th');
+  s = s.replace(/([a-z])\1/g,'$1');
+  s = s.replace(/[^a-z ]/g,' ').replace(/\s+/g,' ').trim();
+  return s;
+}
+const REVIEW_CAND_KIND_LABEL = {
+  exact:'ίδιο όνομα', translit:'ίδιο όνομα (μεταγραφή)', first_initial:'όνομα + αρχικό επωνύμου', first_only:'μόνο μικρό όνομα',
+};
+
+// Πιθανοί πελάτες για μια κριτική. Πρώτα ό,τι έχει ήδη υπολογίσει η Edge
+// Function (matching_signals.candidates — με ημέρες από τελευταίο ραντεβού και
+// αν έλαβαν αίτημα αξιολόγησης), αλλιώς τοπικός υπολογισμός με τον ίδιο
+// φωνητικό σκελετό (χωρίς τα σήματα ημερομηνίας).
+// Επιστρέφει [{id, full_name, phone, kind, days_since_appt, got_review_request}].
 function reviewCandidates(r) {
+  const pats = S.reviewPatients||[];
+  const byId = new Map(pats.map(p=>[p.id,p]));
+  const sig = (r.matching_signals||{});
+  if (Array.isArray(sig.candidates) && sig.candidates.length) {
+    return sig.candidates.map(c => { const p = byId.get(c.patient_id); return p ? {...p, kind:c.kind, days_since_appt:c.days_since_appt, got_review_request:!!c.got_review_request} : null; }).filter(Boolean).slice(0, 8);
+  }
   const name = (r.reviewer_display_name||'').trim();
   if (!name) return [];
-  const words = normalizeGreek(name).split(' ').filter(Boolean);
+  const words = reviewSkeleton(name).split(' ').filter(Boolean);
   if (!words.length) return [];
-  const variants = new Set([words.join(' '), [...words].reverse().join(' ')]);
-  const out = [];
-  for (const p of (S.reviewPatients||[])) {
-    const pn = normalizeGreek(p.full_name);
-    if (variants.has(pn)) out.push(p);
-  }
-  // Αν δεν βρεθεί ακριβές, δοκίμασε «όλες οι λέξεις του reviewer περιέχονται στο όνομα πελάτη»
-  if (!out.length && words.length>=2) {
-    for (const p of (S.reviewPatients||[])) {
-      const pw = normalizeGreek(p.full_name).split(' ');
-      if (words.every(w => pw.includes(w))) out.push(p);
+  const sk = p => (p._sk || (p._sk = reviewSkeleton(p.full_name).split(' ').filter(Boolean)));
+  const mk = (list, kind) => list.slice(0, 8).map(p => ({...p, kind, days_since_appt:null, got_review_request:false}));
+  if (words.length >= 2) {
+    const full = pats.filter(p => { const pw = sk(p); return pw.length===words.length && words.every(w => pw.includes(w)); });
+    if (full.length) return mk(full, 'translit');
+    if (words.length > 2) {
+      const sub = pats.filter(p => { const pw = sk(p); return words.every(w => pw.includes(w)); });
+      if (sub.length) return mk(sub, 'translit');
     }
   }
-  return out.slice(0, 6);
+  if (words.length === 2 && words[1].length === 1) {
+    const sub = pats.filter(p => { const pw = sk(p); return pw.includes(words[0]) && pw.some(w => w!==words[0] && w.startsWith(words[1])); });
+    if (sub.length) return mk(sub, 'first_initial');
+  }
+  return []; // μόνο μικρό όνομα χωρίς σήμα ημερομηνίας = πάρα πολλοί — δεν προτείνουμε
+}
+
+// Κλήση της Edge Function από το CRM (με το JWT του χρήστη — δέχεται μόνο admins).
+// mode: 'sync' (νέα emails) | 'rematch' (ξανά ταύτιση εκκρεμών) | 'both'
+async function runReviewsSync(mode) {
+  if (S._reviewsSyncBusy) return;
+  S._reviewsSyncBusy = mode; render();
+  try {
+    const {data, error} = await sb.functions.invoke('google-reviews-sync', {body:{mode}});
+    if (error) throw new Error(error.message||'Σφάλμα κλήσης');
+    if (data && data.error) throw new Error(data.error);
+    const parts = [];
+    if (data && data.reviews) parts.push(`${data.reviews.inserted} νέες κριτικές (${data.reviews.auto_matched||0} αυτόματα ταυτισμένες)`);
+    if (data && data.rematch) parts.push(`ξανά ταύτιση ${data.rematch.scanned}: ${data.rematch.auto_matched} αυτόματα, ${data.rematch.needs_review} προς επιβεβαίωση, ${data.rematch.unmatched} χωρίς`);
+    S._reviewsSyncBusy = null;
+    S.reviewsFilter = null;
+    await loadPageData();
+    alert('✓ Ολοκληρώθηκε' + (parts.length ? ':\n' + parts.join('\n') : ''));
+  } catch(e) {
+    S._reviewsSyncBusy = null; render();
+    alert('Σφάλμα: ' + (e.message||e));
+  }
 }
 
 function reviewPatientName(pid) {
@@ -6793,11 +6849,17 @@ function renderReviews() {
           ${isLinked && r.matched_patient_id ? `<div style="margin-top:8px;font-size:12px">👤 Πελάτης: <span style="font-weight:700;color:var(--blue);cursor:pointer" onclick="loadPatientDetail('${r.matched_patient_id}')">${esc(reviewPatientName(r.matched_patient_id))}</span></div>` : ''}
           ${cands.length ? `<div style="margin-top:8px;display:flex;flex-direction:column;gap:5px">
             <div style="font-size:11px;font-weight:700;color:var(--text-2)">Πιθανός πελάτης${cands.length>1?' ('+cands.length+')':''}:</div>
-            ${cands.map(c=>`<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--surface-2);border-radius:9px;padding:6px 10px">
+            ${cands.map(c=>{
+              const hints = [];
+              if (c.kind && REVIEW_CAND_KIND_LABEL[c.kind]) hints.push(REVIEW_CAND_KIND_LABEL[c.kind]);
+              if (c.days_since_appt !== null && c.days_since_appt !== undefined) hints.push(c.days_since_appt<=0 ? 'ραντεβού την ίδια μέρα' : `ραντεβού ${c.days_since_appt} μέρ${c.days_since_appt===1?'α':'ες'} πριν`);
+              if (c.got_review_request) hints.push('έλαβε αίτημα αξιολόγησης');
+              return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--surface-2);border-radius:9px;padding:6px 10px">
               <span style="font-size:12.5px;font-weight:600;cursor:pointer;color:var(--blue)" onclick="loadPatientDetail('${c.id}')">${esc(c.full_name)}</span>
               <span style="font-size:11px;color:var(--text-2)">${esc(c.phone||'')}</span>
+              ${hints.length?`<span style="font-size:10.5px;color:var(--text-3)">· ${esc(hints.join(' · '))}</span>`:''}
               <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="confirmReviewMatch('${r.id}','${c.id}')">✓ Είναι αυτός/ή</button>
-            </div>`).join('')}
+            </div>`;}).join('')}
           </div>` : ''}
         </div>
         <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;min-width:150px">
@@ -6815,6 +6877,10 @@ function renderReviews() {
     <div class="page-header">
       <div><h1 class="page-title">⭐ Google Reviews</h1>
         <p class="page-sub">Οι κριτικές του Google Business Profile, συγχρονισμένες αυτόματα κάθε ώρα από τα emails ειδοποίησης. Όταν μια κριτική συνδεθεί με πελάτη, εμφανίζεται στην καρτέλα του και δεν του ξαναστέλνεται αίτημα αξιολόγησης.</p></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-ghost btn-sm" onclick="runReviewsSync('sync')" ${S._reviewsSyncBusy?'disabled':''} title="Διαβάζει τώρα τα νέα emails κριτικών (αλλιώς γίνεται αυτόματα κάθε ώρα)">${S._reviewsSyncBusy==='sync'?'⏳ Συγχρονισμός…':'🔄 Συγχρονισμός τώρα'}</button>
+        <button class="btn btn-ghost btn-sm" onclick="runReviewsSync('rematch')" ${S._reviewsSyncBusy?'disabled':''} title="Ξανατρέχει την αυτόματη ταύτιση (μεταγραφή ονομάτων + ραντεβού) στις κριτικές που είναι Προς επιβεβαίωση ή Χωρίς αντιστοίχιση. Δεν αγγίζει τις χειροκίνητες αποφάσεις.">${S._reviewsSyncBusy==='rematch'?'⏳ Ταύτιση…':'🧩 Ξανά ταύτιση'}</button>
+      </div>
     </div>
 
     <div class="stats-grid" style="margin-bottom:16px">
