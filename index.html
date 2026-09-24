@@ -13100,8 +13100,21 @@ function showCalTooltip(el, e) {
     +'</div>');
 
   tt.style.display = 'block';
-  var x = Math.min(e.clientX+14, window.innerWidth-280);
-  var y = Math.min(e.clientY+14, window.innerHeight-220);
+  // Τοποθέτηση με βάση το ΠΡΑΓΜΑΤΙΚΟ μέγεθος του tooltip (όχι σταθερή υπόθεση
+  // 220px ύψους): με ιατρικό ιστορικό/αλλεργίες/σημειώσεις γίνεται ψηλότερο
+  // και, για ραντεβού χαμηλά στην οθόνη, κοβόταν κάτω. Αν δεν χωράει κάτω από
+  // τον κέρσορα ανοίγει από πάνω του· αν δεν χωράει πουθενά, κολλάει στην
+  // κάτω άκρη με εσωτερικό scroll.
+  var vw = window.innerWidth, vh = window.innerHeight, pad = 8;
+  tt.style.maxHeight = (vh - 2*pad) + 'px';
+  tt.style.overflowY = 'auto';
+  var w = tt.offsetWidth, hgt = tt.offsetHeight;
+  var x = e.clientX + 14;
+  if (x + w > vw - pad) x = Math.max(pad, e.clientX - w - 14);
+  if (x + w > vw - pad) x = Math.max(pad, vw - w - pad);
+  var y = e.clientY + 14;
+  if (y + hgt > vh - pad) y = e.clientY - hgt - 14;
+  if (y < pad) y = Math.max(pad, vh - hgt - pad);
   tt.style.left = x+'px';
   tt.style.top = y+'px';
 }
