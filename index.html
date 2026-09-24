@@ -305,6 +305,9 @@ summary::-webkit-details-marker{display:none}
   .dash-grid>*{min-width:0}
   th,td{padding:9px 10px}
   .appt-card{flex-wrap:wrap}
+  /* Καρτέλα ασθενή: το sticky header block ακολουθεί το padding 14px της
+     σελίδας σε κινητό (αντί για το desktop 24px) ώστε να μη «ξεχειλώνει». */
+  .pat-sticky-head{margin-left:-14px!important;margin-right:-14px!important;margin-top:-14px!important;padding:10px 14px 0!important}
 }
 @media(max-width:1100px){.stats-grid{grid-template-columns:repeat(2,1fr)}}
 </style>
@@ -2897,19 +2900,19 @@ function renderPatientDetail() {
     ένα ενιαίο block κατά το scroll (όχι μόνο το header) — έτσι τα tabs
     παραμένουν πάντα ορατά/πατήσιμα, αντί να χάνονται κάτω από το header
     μόλις ο χρήστης κατεβεί λίγο στο περιεχόμενο μιας καρτέλας. -->
-    <div style="position:sticky;top:56px;z-index:45;background:var(--surface);margin-left:-24px;margin-right:-24px;margin-top:-24px;padding:16px 24px 0">
+    <div class="pat-sticky-head" style="position:sticky;top:56px;z-index:45;background:var(--surface);margin-left:-24px;margin-right:-24px;margin-top:-24px;padding:14px 24px 0">
     ${criticalBannerHtml(p, p.appointments)}
     <!-- Header: συνδυαστική κατεύθυνση — gradient ταυτότητα (όπως ήδη έχουν τα Laser/
     Ενέσιμα Forms, εδώ γενικευμένη σε navy→blue ως ταυτότητα όλου του CRM) + «επιπλέουσα»
     κάρτα quick actions πάνω στην άκρη της + κάρτα κατάστασης/συναινέσεων από κάτω.
     Τίποτα δεν κρύβεται — η Διαγραφή μετακόμισε σε «⋯ Περισσότερα» μαζί με την
     Επεξεργασία, ώστε οι 4 καθημερινές ενέργειες να μην ανταγωνίζονται μια σπάνια. -->
-    <div style="background:linear-gradient(135deg,#1a1f3a,#2B3BF0 78%);border-radius:14px;padding:16px 16px 30px">
-      <div style="display:flex;align-items:center;gap:12px">
-        <button class="btn btn-sm" data-page="patients" style="background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25)">← Πίσω</button>
-        <div style="width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#fff;flex-shrink:0">${initials(p.full_name)}</div>
+    <div style="background:linear-gradient(135deg,#1a1f3a,#2B3BF0 78%);border-radius:14px;padding:11px 14px 26px">
+      <div style="display:flex;align-items:center;gap:10px">
+        <button class="btn btn-sm" data-page="patients" style="background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);padding:4px 10px;min-height:30px">← Πίσω</button>
+        <div style="width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#fff;flex-shrink:0">${initials(p.full_name)}</div>
         <div style="min-width:0">
-          <h1 class="page-title" style="font-size:17px;color:#fff;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(p.full_name)}</h1>
+          <h1 class="page-title" style="font-size:16px;color:#fff;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(p.full_name)}</h1>
           <div style="font-size:12px;color:rgba(255,255,255,.82);margin-top:1px;display:flex;align-items:center;gap:6px">${esc(p.phone||'')} ${phoneActionsHtml(p.phone, 12)}</div>
         </div>
       </div>
@@ -2919,12 +2922,12 @@ function renderPatientDetail() {
       // γραμμή (η κάρτα «επιπλέει» πάνω στην άκρη του gradient) — μία λεπτή
       // διαχωριστική γραμμή ξεχωρίζει τις ενέργειες από την κατάσταση, αλλά
       // δεν καταλαμβάνουν πλέον ξεχωριστό κατακόρυφο χώρο η καθεμία.
-      const chip = (icon,bg,label,attrs,labelColor,iconColor) => `<button class="btn" ${attrs} style="flex-shrink:0;width:60px;display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 2px;border-radius:10px;background:transparent;border:none;cursor:pointer">
-        <span style="width:30px;height:30px;border-radius:50%;background:${bg};display:flex;align-items:center;justify-content:center;font-size:13px;color:${iconColor||'#fff'}">${icon}</span>
-        <span style="font-size:9px;font-weight:700;color:${labelColor||'var(--text)'};text-align:center;line-height:1.15">${label}</span>
+      const chip = (icon,bg,label,attrs,labelColor,iconColor) => `<button class="btn" ${attrs} style="flex-shrink:0;width:54px;min-height:0;display:flex;flex-direction:column;align-items:center;gap:3px;padding:4px 2px;border-radius:10px;background:transparent;border:none;cursor:pointer">
+        <span style="width:28px;height:28px;border-radius:50%;background:${bg};display:flex;align-items:center;justify-content:center;font-size:13px;color:${iconColor||'#fff'}">${icon}</span>
+        <span style="font-size:9px;font-weight:700;color:${labelColor||'var(--text)'};text-align:center;line-height:1.1">${label}</span>
       </button>`;
-      return `<div style="position:relative;margin:-18px 4px 12px;z-index:2">
-        <div style="background:var(--white);border-radius:12px;box-shadow:var(--shadow);padding:9px 8px;display:flex;align-items:center;gap:6px 10px;flex-wrap:wrap">
+      return `<div style="position:relative;margin:-16px 4px 8px;z-index:2">
+        <div style="background:var(--white);border-radius:12px;box-shadow:var(--shadow);padding:5px 8px;display:flex;align-items:center;gap:2px 10px;flex-wrap:wrap">
           ${chip('📅','var(--blue)','Ραντεβού','data-modal="new-appt"')}
           ${chip('📦','#6B7280','Πακέτο','onclick="openGeneralPackageModal()"')}
           ${chip('⚡','var(--blue)','Laser Form','data-modal="new-laser"')}
@@ -2950,34 +2953,27 @@ function renderPatientDetail() {
       else if (patientNeedsServiceConsent(p,'peelings')) items.push({ok:false,label:'Peelings',act:"openGroupConsentModal('peelings')"});
       if (S.serviceConsentOxygen) items.push({ok:true,label:'Ενυδάτωση/Λάμψη',act:"viewGroupConsent('oxygen')"});
       else if (patientNeedsServiceConsent(p,'oxygen')) items.push({ok:false,label:'Οξυγόνο',act:"openGroupConsentModal('oxygen')"});
-      if (!items.length) return '';
-      return `<div style="background:var(--surface-2);border-radius:11px;padding:11px 14px;margin-bottom:12px;display:flex;flex-direction:column;gap:7px">
-        <div style="font-size:9.5px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--text-3)">Συναινέσεις</div>
-        <div style="display:flex;flex-wrap:wrap;gap:6px">
-          ${items.map(it=>`<span onclick="${it.act}" style="font-size:11px;font-weight:700;padding:3px 9px;border-radius:9px;cursor:pointer;background:${it.ok?'#E1F5EE':'#FCEBEB'};color:${it.ok?'#0F6E56':'var(--red)'}">${it.ok?'✓':'⚠'} ${esc(it.label)}</span>`).join('')}
-        </div>
-      </div>`;
-    })()}
-
-    ${(()=>{
-      // ⭐ Google Review του πελατή (μόνο σίγουρες αντιστοιχίσεις). Όταν υπάρχει,
-      // ο πελάτης ΔΕΝ λαμβάνει πλέον αίτημα αξιολόγησης μετά το ραντεβού
-      // (βλ. appointment-automations → skipped_has_review).
+      // ⭐ Google Review του πελατή (μόνο σίγουρες αντιστοιχίσεις) — στην ΙΔΙΑ
+      // λεπτή γραμμή με τις συναινέσεις, ώστε το header να μένει compact.
+      // Όταν υπάρχει review, ο πελάτης ΔΕΝ λαμβάνει πλέον αίτημα αξιολόγησης
+      // μετά το ραντεβού (βλ. appointment-automations → skipped_has_review).
       const rvs = S.patientReviews||[];
-      if (!rvs.length) return '';
       const r = rvs[0];
-      const url = googleReviewUrl(r);
-      const snippet = (r.review_text||'').trim();
-      return `<div style="background:#FFF8E6;border:1px solid #F5D98B;border-radius:11px;padding:11px 14px;margin-bottom:12px;display:flex;flex-direction:column;gap:6px">
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          <span style="font-size:11px;font-weight:800;padding:3px 9px;border-radius:9px;background:#E1F5EE;color:#0F6E56">🟢 Έχει αφήσει αξιολόγηση στο Google</span>
-          <span style="font-size:13px;letter-spacing:1px;color:#D97706" title="${r.star_rating||0}/5">${reviewStars(r.star_rating)}</span>
-          <span style="font-size:11px;color:var(--text-2)">${r.review_create_time?new Date(r.review_create_time).toLocaleDateString('el-GR'):''}${r.reviewer_display_name?' · '+esc(r.reviewer_display_name):''}</span>
-          ${rvs.length>1?`<span style="font-size:11px;color:var(--text-3)">+${rvs.length-1} ακόμα</span>`:''}
-          ${url?`<a href="${esc(url)}" target="_blank" rel="noopener" style="margin-left:auto;font-size:11px;font-weight:700;color:var(--blue);white-space:nowrap">Προβολή στο Google ↗</a>`:''}
-        </div>
-        ${snippet?`<div style="font-size:12px;color:var(--text);line-height:1.45;font-style:italic">“${esc(snippet.length>220?snippet.slice(0,220)+'…':snippet)}”${r.review_text_is_translated?' <span style="font-size:10px;color:var(--text-3);font-style:normal">(μετάφραση Google)</span>':''}</div>`:''}
-        <div style="font-size:10.5px;color:var(--text-3)">Δεν θα του σταλεί ξανά αίτημα αξιολόγησης μετά το ραντεβού.</div>
+      if (!items.length && !r) return '';
+      let reviewHtml = '';
+      if (r) {
+        const url = googleReviewUrl(r);
+        const rt = reviewDisplayText(r);
+        const when = r.review_create_time ? new Date(r.review_create_time).toLocaleDateString('el-GR',{day:'numeric',month:'numeric',year:'2-digit'}) : '';
+        const tip = `Έχει αφήσει αξιολόγηση στο Google${when?' ('+when+')':''}${r.reviewer_display_name?' ως «'+r.reviewer_display_name+'»':''}.${rt.text?'\n“'+rt.text+'”':''}\nΔεν θα του σταλεί ξανά αίτημα αξιολόγησης μετά το ραντεβού.`;
+        reviewHtml = `<span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;padding:3px 9px;border-radius:9px;background:#FFF3D1;color:#854F0B;white-space:nowrap;cursor:${url?'pointer':'default'}" title="${esc(tip)}" ${url?`onclick="window.open('${esc(url)}','_blank','noopener')"`:''}>🟢 Google <span style="letter-spacing:.5px;color:#D97706">${reviewStars(r.star_rating)}</span>${when?`<span style="font-weight:600;color:#A16207">${when}</span>`:''}${rvs.length>1?`<span style="font-weight:600;color:#A16207">+${rvs.length-1}</span>`:''}${url?'<span style="color:var(--blue)">↗</span>':''}</span>`
+          + (rt.text ? `<span style="flex:1 1 140px;min-width:0;font-size:11px;color:var(--text-2);font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(rt.text)}">“${esc(rt.text)}”</span>` : '');
+      }
+      return `<div style="background:var(--surface-2);border-radius:10px;padding:6px 10px;margin-bottom:8px;display:flex;align-items:center;flex-wrap:wrap;gap:5px 6px">
+        ${items.length?`<span style="font-size:9px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--text-3);margin-right:2px">Συναινέσεις</span>
+          ${items.map(it=>`<span onclick="${it.act}" style="font-size:11px;font-weight:700;padding:3px 9px;border-radius:9px;cursor:pointer;white-space:nowrap;background:${it.ok?'#E1F5EE':'#FCEBEB'};color:${it.ok?'#0F6E56':'var(--red)'}">${it.ok?'✓':'⚠'} ${esc(it.label)}</span>`).join('')}`:''}
+        ${items.length && r ? `<span style="width:1px;height:16px;background:var(--border-2);margin:0 2px"></span>` : ''}
+        ${reviewHtml}
       </div>`;
     })()}
 
@@ -3004,7 +3000,7 @@ function renderPatientDetail() {
     όλα τα tabs παραμένουν, απλά δεν καταλαμβάνουν μόνιμα ύψος στην οθόνη.
     Σειρά κατά συχνότητα χρήσης· το Timeline τελευταίο. -->
     <div style="position:relative">
-      <div style="display:flex;gap:16px;overflow-x:auto;padding-bottom:8px;border-bottom:1px solid var(--border-2)">
+      <div style="display:flex;gap:16px;overflow-x:auto;padding-bottom:6px;border-bottom:1px solid var(--border-2)">
         ${[
           {id:'overview',l:'Στοιχεία'},
           {id:'appointments',l:`Ραντεβού (${(p.appointments&&p.appointments.length)||0})`},
@@ -3019,10 +3015,10 @@ function renderPatientDetail() {
           {id:'timeline',l:'Timeline'},
         ].map(t=>`<button class="btn" style="flex-shrink:0;border-radius:0;border-bottom:2px solid ${patTab===t.id?'var(--blue)':'transparent'};color:${patTab===t.id?'var(--blue)':'var(--text-2)'};background:transparent;padding:0 1px 8px;font-size:12px;white-space:nowrap;font-weight:${patTab===t.id?'700':'500'}" data-pat-tab="${t.id}">${t.l}</button>`).join('')}
       </div>
-      <div style="position:absolute;right:0;top:0;bottom:8px;width:24px;background:linear-gradient(to right, transparent, var(--surface));pointer-events:none"></div>
+      <div style="position:absolute;right:0;top:0;bottom:6px;width:24px;background:linear-gradient(to right, transparent, var(--surface));pointer-events:none"></div>
     </div>
     </div>
-    <div style="margin-top:20px">
+    <div style="margin-top:14px">
 
     <!-- TIMELINE TAB -->
     ${patTab==='timeline'?`
@@ -6705,6 +6701,19 @@ function reviewStars(n) {
   return '★'.repeat(k) + '☆'.repeat(5-k);
 }
 
+// Καθαρό κείμενο κριτικής για εμφάνιση. Τα emails της Google για ξενόγλωσσες
+// (ή απλώς ελληνικές!) κριτικές έρχονται ως
+//   "(Translated by Google) Fantastic!!! (Original) Φανταστικές!!!"
+// — προτιμάμε το πρωτότυπο όταν υπάρχει, αλλιώς κόβουμε το πρόθεμα.
+function reviewDisplayText(r) {
+  const raw = ((r && r.review_text) || '').trim();
+  if (!raw) return {text:'', translated:false};
+  const m = raw.match(/^\(Translated by Google\)\s*([\s\S]*?)\s*\(Original\)\s*([\s\S]*)$/i);
+  if (m && m[2].trim()) return {text:m[2].trim(), translated:false};
+  const stripped = raw.replace(/^\(Translated by Google\)\s*/i,'').trim();
+  return {text:stripped, translated:!!(r && r.review_text_is_translated) || stripped!==raw};
+}
+
 // Σύνδεσμος προς την κριτική στο Google Business Profile (θέλει login ως
 // ιδιοκτήτης της επιχείρησης). Τα ids αποθηκεύονται στο clinics.integrations.google_reviews.
 function googleReviewUrl(r) {
@@ -6714,27 +6723,83 @@ function googleReviewUrl(r) {
   return `https://business.google.com/n/${encodeURIComponent(gi.business_n)}/reviews/${encodeURIComponent(r.google_review_id)}${fid?'?fid='+encodeURIComponent(fid):''}`;
 }
 
-// Πιθανοί πελάτες για μια κριτική: ίδιο όνομα (χωρίς τόνους/πεζά) με
-// οποιαδήποτε σειρά λέξεων — ίδια λογική με την Edge Function.
+// Φωνητικός «σκελετός» ονόματος — ελληνικά ΚΑΙ λατινικά καταλήγουν στην ίδια
+// απλοποιημένη μορφή ("Μαρία Παπαδοπούλου" ≈ "Maria Papadopoulou", "Ειρήνη" ≈
+// "Eirini"). ΙΔΙΟΣ αλγόριθμος με τη function skeleton() της Edge Function
+// google-reviews-sync — αν αλλάξει το ένα, να αλλάξει και το άλλο.
+function reviewSkeleton(t) {
+  let s = (t||'').toLowerCase();
+  s = s.replace(/[άἀἁὰᾶ]/g,'α').replace(/[έἐἑὲ]/g,'ε').replace(/[ήἠἡὴῆ]/g,'η').replace(/[ίϊΐἰἱὶῖ]/g,'ι').replace(/[όὀὁὸ]/g,'ο').replace(/[ύϋΰὐὑὺῦ]/g,'υ').replace(/[ώὠὡὼῶ]/g,'ω');
+  s = s.replace(/ου/g,'u').replace(/ει/g,'i').replace(/οι/g,'i').replace(/αι/g,'e').replace(/ευ/g,'ev').replace(/αυ/g,'av');
+  s = s.replace(/μπ/g,'b').replace(/ντ/g,'d').replace(/γκ/g,'g').replace(/γγ/g,'g');
+  s = s.replace(/θ/g,'th').replace(/ψ/g,'ps').replace(/ξ/g,'ks').replace(/χ/g,'h');
+  const map = {α:'a',β:'v',γ:'g',δ:'d',ε:'e',ζ:'z',η:'i',ι:'i',κ:'k',λ:'l',μ:'m',ν:'n',ο:'o',π:'p',ρ:'r',σ:'s',ς:'s',τ:'t',υ:'i',φ:'f',ω:'o'};
+  s = s.replace(/[α-ω]/g, ch => map[ch] || ch);
+  s = s.replace(/ou/g,'u').replace(/ch/g,'h').replace(/kh/g,'h').replace(/ph/g,'f').replace(/th/g,'8').replace(/ee/g,'i').replace(/ck/g,'k');
+  s = s.replace(/ei/g,'i').replace(/oi/g,'i').replace(/ai/g,'e').replace(/ef/g,'ev').replace(/af/g,'av');
+  s = s.replace(/nt/g,'d').replace(/mp/g,'b').replace(/gk/g,'g').replace(/ng/g,'g').replace(/j/g,'gi');
+  s = s.replace(/c/g,'k').replace(/y/g,'i').replace(/w/g,'o').replace(/b/g,'v').replace(/x/g,'ks').replace(/8/g,'th');
+  s = s.replace(/([a-z])\1/g,'$1');
+  s = s.replace(/[^a-z ]/g,' ').replace(/\s+/g,' ').trim();
+  return s;
+}
+const REVIEW_CAND_KIND_LABEL = {
+  exact:'ίδιο όνομα', translit:'ίδιο όνομα (μεταγραφή)', first_initial:'όνομα + αρχικό επωνύμου', first_only:'μόνο μικρό όνομα',
+};
+
+// Πιθανοί πελάτες για μια κριτική. Πρώτα ό,τι έχει ήδη υπολογίσει η Edge
+// Function (matching_signals.candidates — με ημέρες από τελευταίο ραντεβού και
+// αν έλαβαν αίτημα αξιολόγησης), αλλιώς τοπικός υπολογισμός με τον ίδιο
+// φωνητικό σκελετό (χωρίς τα σήματα ημερομηνίας).
+// Επιστρέφει [{id, full_name, phone, kind, days_since_appt, got_review_request}].
 function reviewCandidates(r) {
+  const pats = S.reviewPatients||[];
+  const byId = new Map(pats.map(p=>[p.id,p]));
+  const sig = (r.matching_signals||{});
+  if (Array.isArray(sig.candidates) && sig.candidates.length) {
+    return sig.candidates.map(c => { const p = byId.get(c.patient_id); return p ? {...p, kind:c.kind, days_since_appt:c.days_since_appt, got_review_request:!!c.got_review_request} : null; }).filter(Boolean).slice(0, 8);
+  }
   const name = (r.reviewer_display_name||'').trim();
   if (!name) return [];
-  const words = normalizeGreek(name).split(' ').filter(Boolean);
+  const words = reviewSkeleton(name).split(' ').filter(Boolean);
   if (!words.length) return [];
-  const variants = new Set([words.join(' '), [...words].reverse().join(' ')]);
-  const out = [];
-  for (const p of (S.reviewPatients||[])) {
-    const pn = normalizeGreek(p.full_name);
-    if (variants.has(pn)) out.push(p);
-  }
-  // Αν δεν βρεθεί ακριβές, δοκίμασε «όλες οι λέξεις του reviewer περιέχονται στο όνομα πελάτη»
-  if (!out.length && words.length>=2) {
-    for (const p of (S.reviewPatients||[])) {
-      const pw = normalizeGreek(p.full_name).split(' ');
-      if (words.every(w => pw.includes(w))) out.push(p);
+  const sk = p => (p._sk || (p._sk = reviewSkeleton(p.full_name).split(' ').filter(Boolean)));
+  const mk = (list, kind) => list.slice(0, 8).map(p => ({...p, kind, days_since_appt:null, got_review_request:false}));
+  if (words.length >= 2) {
+    const full = pats.filter(p => { const pw = sk(p); return pw.length===words.length && words.every(w => pw.includes(w)); });
+    if (full.length) return mk(full, 'translit');
+    if (words.length > 2) {
+      const sub = pats.filter(p => { const pw = sk(p); return words.every(w => pw.includes(w)); });
+      if (sub.length) return mk(sub, 'translit');
     }
   }
-  return out.slice(0, 6);
+  if (words.length === 2 && words[1].length === 1) {
+    const sub = pats.filter(p => { const pw = sk(p); return pw.includes(words[0]) && pw.some(w => w!==words[0] && w.startsWith(words[1])); });
+    if (sub.length) return mk(sub, 'first_initial');
+  }
+  return []; // μόνο μικρό όνομα χωρίς σήμα ημερομηνίας = πάρα πολλοί — δεν προτείνουμε
+}
+
+// Κλήση της Edge Function από το CRM (με το JWT του χρήστη — δέχεται μόνο admins).
+// mode: 'sync' (νέα emails) | 'rematch' (ξανά ταύτιση εκκρεμών) | 'both'
+async function runReviewsSync(mode) {
+  if (S._reviewsSyncBusy) return;
+  S._reviewsSyncBusy = mode; render();
+  try {
+    const {data, error} = await sb.functions.invoke('google-reviews-sync', {body:{mode}});
+    if (error) throw new Error(error.message||'Σφάλμα κλήσης');
+    if (data && data.error) throw new Error(data.error);
+    const parts = [];
+    if (data && data.reviews) parts.push(`${data.reviews.inserted} νέες κριτικές (${data.reviews.auto_matched||0} αυτόματα ταυτισμένες)`);
+    if (data && data.rematch) parts.push(`ξανά ταύτιση ${data.rematch.scanned}: ${data.rematch.auto_matched} αυτόματα, ${data.rematch.needs_review} προς επιβεβαίωση, ${data.rematch.unmatched} χωρίς`);
+    S._reviewsSyncBusy = null;
+    S.reviewsFilter = null;
+    await loadPageData();
+    alert('✓ Ολοκληρώθηκε' + (parts.length ? ':\n' + parts.join('\n') : ''));
+  } catch(e) {
+    S._reviewsSyncBusy = null; render();
+    alert('Σφάλμα: ' + (e.message||e));
+  }
 }
 
 function reviewPatientName(pid) {
@@ -6778,7 +6843,8 @@ function renderReviews() {
     const url = googleReviewUrl(r);
     const isLinked = REVIEW_LINKED_STATUSES.includes(r.matching_status);
     const cands = (r.matching_status==='needs_review' || r.matching_status==='unmatched') ? reviewCandidates(r) : [];
-    const text = (r.review_text||'').trim();
+    const rt = reviewDisplayText(r);
+    const text = rt.text;
     return `<div class="card" style="padding:14px 16px;margin-bottom:10px">
       <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">
         <div style="flex:1;min-width:220px">
@@ -6788,16 +6854,22 @@ function renderReviews() {
             <span style="font-size:11px;color:var(--text-2)">${r.review_create_time?new Date(r.review_create_time).toLocaleDateString('el-GR',{day:'numeric',month:'short',year:'numeric'}):'—'}</span>
             ${badge(st.l, st.bg, st.c)}
           </div>
-          ${text?`<div style="font-size:12.5px;color:var(--text);line-height:1.5;margin-top:6px">${esc(text)}${r.review_text_is_translated?' <span style="font-size:10px;color:var(--text-3)">(μετάφραση Google)</span>':''}</div>`:`<div style="font-size:12px;color:var(--text-3);margin-top:6px">Χωρίς κείμενο — μόνο αστέρια.</div>`}
+          ${text?`<div style="font-size:12.5px;color:var(--text);line-height:1.5;margin-top:6px">${esc(text)}${rt.translated?' <span style="font-size:10px;color:var(--text-3)">(μετάφραση Google)</span>':''}</div>`:`<div style="font-size:12px;color:var(--text-3);margin-top:6px">Χωρίς κείμενο — μόνο αστέρια.</div>`}
           ${r.reply_text?`<div style="font-size:12px;color:var(--text-2);margin-top:6px;padding-left:10px;border-left:2px solid var(--border-2)">↩ ${esc(r.reply_text)}</div>`:''}
           ${isLinked && r.matched_patient_id ? `<div style="margin-top:8px;font-size:12px">👤 Πελάτης: <span style="font-weight:700;color:var(--blue);cursor:pointer" onclick="loadPatientDetail('${r.matched_patient_id}')">${esc(reviewPatientName(r.matched_patient_id))}</span></div>` : ''}
           ${cands.length ? `<div style="margin-top:8px;display:flex;flex-direction:column;gap:5px">
             <div style="font-size:11px;font-weight:700;color:var(--text-2)">Πιθανός πελάτης${cands.length>1?' ('+cands.length+')':''}:</div>
-            ${cands.map(c=>`<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--surface-2);border-radius:9px;padding:6px 10px">
+            ${cands.map(c=>{
+              const hints = [];
+              if (c.kind && REVIEW_CAND_KIND_LABEL[c.kind]) hints.push(REVIEW_CAND_KIND_LABEL[c.kind]);
+              if (c.days_since_appt !== null && c.days_since_appt !== undefined) hints.push(c.days_since_appt<=0 ? 'ραντεβού την ίδια μέρα' : `ραντεβού ${c.days_since_appt} μέρ${c.days_since_appt===1?'α':'ες'} πριν`);
+              if (c.got_review_request) hints.push('έλαβε αίτημα αξιολόγησης');
+              return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--surface-2);border-radius:9px;padding:6px 10px">
               <span style="font-size:12.5px;font-weight:600;cursor:pointer;color:var(--blue)" onclick="loadPatientDetail('${c.id}')">${esc(c.full_name)}</span>
               <span style="font-size:11px;color:var(--text-2)">${esc(c.phone||'')}</span>
+              ${hints.length?`<span style="font-size:10.5px;color:var(--text-3)">· ${esc(hints.join(' · '))}</span>`:''}
               <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="confirmReviewMatch('${r.id}','${c.id}')">✓ Είναι αυτός/ή</button>
-            </div>`).join('')}
+            </div>`;}).join('')}
           </div>` : ''}
         </div>
         <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;min-width:150px">
@@ -6815,6 +6887,10 @@ function renderReviews() {
     <div class="page-header">
       <div><h1 class="page-title">⭐ Google Reviews</h1>
         <p class="page-sub">Οι κριτικές του Google Business Profile, συγχρονισμένες αυτόματα κάθε ώρα από τα emails ειδοποίησης. Όταν μια κριτική συνδεθεί με πελάτη, εμφανίζεται στην καρτέλα του και δεν του ξαναστέλνεται αίτημα αξιολόγησης.</p></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-ghost btn-sm" onclick="runReviewsSync('sync')" ${S._reviewsSyncBusy?'disabled':''} title="Διαβάζει τώρα τα νέα emails κριτικών (αλλιώς γίνεται αυτόματα κάθε ώρα)">${S._reviewsSyncBusy==='sync'?'⏳ Συγχρονισμός…':'🔄 Συγχρονισμός τώρα'}</button>
+        <button class="btn btn-ghost btn-sm" onclick="runReviewsSync('rematch')" ${S._reviewsSyncBusy?'disabled':''} title="Ξανατρέχει την αυτόματη ταύτιση (μεταγραφή ονομάτων + ραντεβού) στις κριτικές που είναι Προς επιβεβαίωση ή Χωρίς αντιστοίχιση. Δεν αγγίζει τις χειροκίνητες αποφάσεις.">${S._reviewsSyncBusy==='rematch'?'⏳ Ταύτιση…':'🧩 Ξανά ταύτιση'}</button>
+      </div>
     </div>
 
     <div class="stats-grid" style="margin-bottom:16px">
