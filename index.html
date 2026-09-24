@@ -727,6 +727,10 @@ const TOGGLEABLE_MODULES = [
   {key:'reports', label:'Αναφορές'},
   {key:'staff-services', label:'Προσωπικό & Υπηρεσίες'},
   {key:'reviews', label:'Google Reviews'},
+  {key:'marketing-gallery', label:'Marketing Φωτογραφίες'},
+  {key:'marketing-campaigns', label:'Μαζικά Μηνύματα'},
+  {key:'voice-agent', label:'AI Voice Agent (μικρόφωνο)'},
+  {key:'ai-assistant', label:'AI Βοηθός «Ρώτα το CRM» (στατιστικά με ερωτήσεις)'},
 ];
 // Υποσελίδες που ανήκουν σε ένα module αλλά δεν είναι οι ίδιες nav items
 // (π.χ. η λεπτομέρεια μιας φόρμας laser) — πρέπει να μπλοκάρονται μαζί του.
@@ -1901,8 +1905,10 @@ function renderShell(content) {
         </div>
         <div id="search-dropdown" class="search-dropdown-box"></div>
       </div>
-      <!-- Voice Agent Button -->
-      <button id="voice-agent-btn" title="AI Voice Agent" style="width:36px;height:36px;border-radius:50%;background:${S.voiceActive?'var(--red)':'var(--blue)'};color:#fff;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;transition:.2s;${S.voiceActive?'animation:pulse 1s infinite':''}">${S.voiceActive?'⏹':'🎤'}</button>
+      <!-- AI Βοηθός «Ρώτα το CRM» (module ai-assistant, μόνο διαχειριστές) -->
+      ${(cid && isModuleEnabled('ai-assistant') && canSee(['super_admin','clinic_admin']))?`<button id="crm-assistant-btn" title="Ρώτα το CRM — στατιστικά με απλές ερωτήσεις" onclick="toggleCrmAssistant()" style="width:36px;height:36px;border-radius:50%;background:${S.assistantOpen?'var(--navy)':'#EEEDFE'};color:${S.assistantOpen?'#fff':'#3C3489'};border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;transition:.2s">💬</button>`:''}
+      <!-- Voice Agent Button (module voice-agent) -->
+      ${isModuleEnabled('voice-agent')?`<button id="voice-agent-btn" title="AI Voice Agent" style="width:36px;height:36px;border-radius:50%;background:${S.voiceActive?'var(--red)':'var(--blue)'};color:#fff;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;transition:.2s;${S.voiceActive?'animation:pulse 1s infinite':''}">${S.voiceActive?'⏹':'🎤'}</button>`:''}
       <span class="topbar-date" style="font-family:var(--mono);font-size:11px;color:var(--text-3)">${new Date().toLocaleDateString('el-GR')}</span>
     </header>
     <!-- Voice Agent Panel -->
@@ -1912,6 +1918,7 @@ function renderShell(content) {
       <span style="flex:1">${S.voiceActive?'🎤 Μιλάτε ελεύθερα — π.χ. "βρες Μαρία", "νέο ραντεβού", "πήγαινε στις αναφορές" (με AI βοήθεια)':esc(S.voiceResult||'')}</span>
       ${S.voiceResult?`<button onclick="S.voiceResult='';render()" style="background:none;border:none;color:rgba(255,255,255,0.5);cursor:pointer;font-size:16px">×</button>`:''}
     </div>`:''}
+    ${S.assistantOpen?renderCrmAssistantPanel():''}
     ${panicActive()&&isSuperAdmin()?`
     <div style="background:#7F1D1D;color:#fff;padding:10px 20px;display:flex;align-items:center;gap:12px;font-size:13px">
       <span style="font-size:16px">🛑</span>
@@ -13232,6 +13239,139 @@ function copyToClipboard(text, msgId) {
     const el = document.getElementById(msgId);
     if (el) { el.style.display='block'; setTimeout(()=>{ el.style.display='none'; }, 2000); }
   });
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// 💬 «ΡΩΤΑ ΤΟ CRM» — AI βοηθός στατιστικών (Edge Function crm-assistant)
+// Ο χρήστης ρωτάει ελεύθερα· ο server επιλέγει προκαθορισμένα εργαλεία
+// (μόνο αθροίσματα, με τα δικαιώματα του χρήστη) και επιστρέφει Markdown.
+// Module 'ai-assistant', μόνο super_admin / clinic_admin.
+// ══════════════════════════════════════════════════════════════════════
+const CRM_ASSISTANT_SUGGESTIONS = [
+  'Πόσα ραντεβού έγιναν αυτόν τον μήνα και πόσα έσοδα;',
+  'Ποια μέρα της εβδομάδας είναι η πιο αδύναμη;',
+  'Ποιες ώρες έχω τα περισσότερα κενά;',
+  'Ποιες υπηρεσίες πέφτουν σε σχέση με πέρυσι;',
+  'Πόσοι πελάτες δεν έχουν έρθει πάνω από 6 μήνες;',
+  'Ποιος θεραπευτής έχει τα περισσότερα no-show;',
+  'Πόσοι νέοι πελάτες ήρθαν φέτος και πόσοι ξαναήρθαν;',
+  'Ποια προϊόντα πουλάνε περισσότερο;',
+];
+
+function toggleCrmAssistant(force) {
+  S.assistantOpen = (typeof force === 'boolean') ? force : !S.assistantOpen;
+  if (!S.assistantMsgs) S.assistantMsgs = [];
+  render();
+  if (S.assistantOpen) setTimeout(() => { const i = document.getElementById('crm-assistant-input'); if (i) i.focus(); crmAssistantScrollBottom(); }, 60);
+}
+function crmAssistantScrollBottom() {
+  const box = document.getElementById('crm-assistant-msgs'); if (box) box.scrollTop = box.scrollHeight;
+}
+function clearCrmAssistant() { S.assistantMsgs = []; render(); }
+
+// Ελαφρύς Markdown → HTML (bold, italics, code, λίστες, επικεφαλίδες, πίνακες).
+// Πάντα μέσα από esc() — το κείμενο έρχεται από το AI.
+function mdLite(src) {
+  const lines = String(src||'').replace(/\r/g,'').split('\n');
+  const out = [];
+  let i = 0;
+  const inline = (t) => esc(t)
+    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+    .replace(/(^|[\s(])\*(?!\s)(.+?)\*(?=[\s).,;:!?]|$)/g, '$1<i>$2</i>')
+    .replace(/`([^`]+)`/g, '<code style="background:var(--surface-2);padding:1px 4px;border-radius:4px;font-size:11px">$1</code>');
+  const isTableRow = (l) => /^\s*\|.*\|\s*$/.test(l);
+  const isSep = (l) => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(l);
+  while (i < lines.length) {
+    const l = lines[i];
+    if (isTableRow(l) && i+1 < lines.length && isSep(lines[i+1])) {
+      const cells = (r) => r.trim().replace(/^\|/,'').replace(/\|$/,'').split('|').map(c=>c.trim());
+      const head = cells(l); i += 2;
+      const rows = [];
+      while (i < lines.length && isTableRow(lines[i])) { rows.push(cells(lines[i])); i++; }
+      const numeric = (v) => /^[-+]?[\d.,]+\s*(€|%|U|ml)?$/.test(v.trim());
+      out.push(`<div style="overflow-x:auto;margin:6px 0"><table style="border-collapse:collapse;font-size:11.5px;min-width:100%"><thead><tr>${head.map(h=>`<th style="text-align:left;padding:4px 8px;border-bottom:1px solid var(--border);background:var(--surface-2);white-space:nowrap">${inline(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(c=>`<td style="padding:4px 8px;border-bottom:1px solid var(--border-2);${numeric(c)?'text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap':''}">${inline(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`);
+      continue;
+    }
+    if (/^\s*([-*•])\s+/.test(l)) {
+      const items = [];
+      while (i < lines.length && /^\s*([-*•])\s+/.test(lines[i])) { items.push(lines[i].replace(/^\s*([-*•])\s+/,'')); i++; }
+      out.push(`<ul style="margin:4px 0 6px 18px;padding:0">${items.map(x=>`<li style="margin:2px 0">${inline(x)}</li>`).join('')}</ul>`);
+      continue;
+    }
+    if (/^\s*\d+[.)]\s+/.test(l)) {
+      const items = [];
+      while (i < lines.length && /^\s*\d+[.)]\s+/.test(lines[i])) { items.push(lines[i].replace(/^\s*\d+[.)]\s+/,'')); i++; }
+      out.push(`<ol style="margin:4px 0 6px 18px;padding:0">${items.map(x=>`<li style="margin:2px 0">${inline(x)}</li>`).join('')}</ol>`);
+      continue;
+    }
+    const h = l.match(/^\s*(#{1,4})\s+(.*)$/);
+    if (h) { out.push(`<div style="font-weight:700;margin:8px 0 3px;font-size:${h[1].length<=2?'13px':'12.5px'}">${inline(h[2])}</div>`); i++; continue; }
+    if (!l.trim()) { out.push('<div style="height:5px"></div>'); i++; continue; }
+    out.push(`<div style="margin:2px 0">${inline(l)}</div>`); i++;
+  }
+  return out.join('');
+}
+
+function renderCrmAssistantPanel() {
+  const msgs = S.assistantMsgs||[];
+  const busy = !!S.assistantBusy;
+  const clinicName = (S.clinic&&S.clinic.name)||'';
+  const isMobile = window.innerWidth <= 768;
+  return `<div id="crm-assistant-panel" style="position:fixed;top:${isMobile?'0':'56px'};right:0;bottom:0;width:${isMobile?'100%':'420px'};max-width:100vw;background:var(--white);border-left:1px solid var(--border-2);box-shadow:var(--shadow-lg);z-index:480;display:flex;flex-direction:column">
+    <div style="padding:12px 14px;border-bottom:1px solid var(--border-2);display:flex;align-items:center;gap:10px;background:linear-gradient(135deg,#1a1f3a,#2B3BF0 78%);color:#fff">
+      <span style="font-size:18px">💬</span>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13.5px;font-weight:700">Ρώτα το CRM</div>
+        <div style="font-size:10.5px;opacity:.8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(clinicName)} · στατιστικά με απλές ερωτήσεις</div>
+      </div>
+      ${msgs.length?`<button onclick="clearCrmAssistant()" title="Νέα συζήτηση" style="background:rgba(255,255,255,.15);border:none;color:#fff;border-radius:8px;padding:4px 8px;cursor:pointer;font-size:11px">🗑</button>`:''}
+      <button onclick="toggleCrmAssistant(false)" title="Κλείσιμο" style="background:rgba(255,255,255,.15);border:none;color:#fff;border-radius:8px;width:28px;height:28px;cursor:pointer;font-size:16px;line-height:1">×</button>
+    </div>
+    <div id="crm-assistant-msgs" style="flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px;background:var(--surface)">
+      ${!msgs.length?`<div style="font-size:12.5px;color:var(--text-2);line-height:1.5">
+          Ρώτα με ό,τι θες για τη λειτουργία της κλινικής: θεραπείες, ραντεβού, έσοδα, πελάτες, πωλήσεις, μηνύματα, κριτικές. Απαντώ μόνο με αθροιστικά στοιχεία, ποτέ με προσωπικά δεδομένα πελατών.
+          <div style="font-size:10.5px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--text-3);margin:14px 0 6px">Δοκίμασε</div>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            ${CRM_ASSISTANT_SUGGESTIONS.map(q=>`<button class="btn btn-ghost btn-sm" style="justify-content:flex-start;text-align:left;font-size:12px;white-space:normal;line-height:1.3" onclick="sendCrmAssistantMessage(${JSON.stringify(q).replace(/"/g,'&quot;')})">${esc(q)}</button>`).join('')}
+          </div>
+        </div>`:''}
+      ${msgs.map(m=>m.role==='user'
+        ? `<div style="align-self:flex-end;max-width:88%;background:var(--blue);color:#fff;border-radius:14px 14px 4px 14px;padding:8px 12px;font-size:12.5px;line-height:1.45;white-space:pre-wrap">${esc(m.content)}</div>`
+        : `<div style="align-self:flex-start;max-width:96%;background:var(--white);border:1px solid var(--border-2);border-radius:14px 14px 14px 4px;padding:10px 12px;font-size:12.5px;line-height:1.5;${m.error?'border-color:#F2B8B5;background:#FCEBEB;color:#A32D2D':''}">${m.error?esc(m.content):mdLite(m.content)}${(m.tools&&m.tools.length)?`<div style="margin-top:6px;font-size:10px;color:var(--text-3)" title="${esc(m.tools.map(t=>t.name+' '+JSON.stringify(t.input)).join('\n'))}">🔎 ${m.tools.length} ${m.tools.length===1?'υπολογισμός':'υπολογισμοί'} στα δεδομένα της κλινικής</div>`:''}</div>`
+      ).join('')}
+      ${busy?`<div style="align-self:flex-start;background:var(--white);border:1px solid var(--border-2);border-radius:14px;padding:8px 12px;font-size:12px;color:var(--text-2)">⏳ Υπολογίζω…</div>`:''}
+    </div>
+    <div style="padding:10px 12px;border-top:1px solid var(--border-2);background:var(--white)">
+      <div style="display:flex;gap:8px;align-items:flex-end">
+        <textarea id="crm-assistant-input" rows="1" placeholder="Γράψε την ερώτησή σου… (Enter = αποστολή)" ${busy?'disabled':''} style="flex:1;resize:none;font-size:13px;padding:9px 12px;border:1px solid var(--border);border-radius:12px;font-family:var(--font);max-height:120px;line-height:1.4"
+          oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,120)+'px'"
+          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendCrmAssistantMessage(this.value);}"></textarea>
+        <button class="btn btn-primary" ${busy?'disabled':''} onclick="sendCrmAssistantMessage(document.getElementById('crm-assistant-input').value)" style="border-radius:12px;padding:9px 14px">➤</button>
+      </div>
+      <div style="font-size:10px;color:var(--text-3);margin-top:6px">Οι απαντήσεις βασίζονται στα δεδομένα του CRM τη στιγμή της ερώτησης. Έλεγξε τα ποσά πριν από σημαντικές αποφάσεις.</div>
+    </div>
+  </div>`;
+}
+
+async function sendCrmAssistantMessage(text) {
+  text = (text||'').trim();
+  if (!text || S.assistantBusy) return;
+  if (!S.assistantMsgs) S.assistantMsgs = [];
+  S.assistantMsgs.push({role:'user', content:text});
+  S.assistantBusy = true;
+  render(); crmAssistantScrollBottom();
+  try {
+    const history = S.assistantMsgs.filter(m=>!m.error).slice(-12).map(m=>({role:m.role, content:m.content}));
+    const {data, error} = await sb.functions.invoke('crm-assistant', {body:{messages:history, clinic_id: clinicId()}});
+    if (error) throw new Error(error.message||'Σφάλμα σύνδεσης');
+    if (data && data.error) throw new Error(data.error);
+    S.assistantMsgs.push({role:'assistant', content:(data&&data.reply)||'Δεν κατάφερα να απαντήσω. Δοκίμασε να διατυπώσεις αλλιώς την ερώτηση.', tools:(data&&data.tool_calls)||[]});
+  } catch(e) {
+    S.assistantMsgs.push({role:'assistant', content:'Σφάλμα: '+(e.message||e), error:true});
+  }
+  S.assistantBusy = false;
+  render();
+  setTimeout(() => { crmAssistantScrollBottom(); const i = document.getElementById('crm-assistant-input'); if (i) i.focus(); }, 40);
 }
 
 function toggleQR(elId, url) {
