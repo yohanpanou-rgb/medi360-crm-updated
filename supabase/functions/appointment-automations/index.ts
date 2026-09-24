@@ -747,6 +747,23 @@ Deno.serve(async (req: Request) => {
     const sendReviewRequest = async (a: Appt, channel = 'email', groupAppts?: Appt[]) => {
       if (!reviewLink) { results.errors++; return; }
 
+      // Αν ο πελάτης έχει ήδη επιβεβαιωμένη αντιστοιχισμένη Google κριτική
+      // (Google Reviews sync, βλ. supabase/functions/google-reviews-sync),
+      // δεν έχει νόημα να του ζητηθεί ξανά αξιολόγηση.
+      if (a.patient_id) {
+        const { data: existingReview } = await supabase
+          .from('google_reviews').select('id')
+          .eq('clinic_id', configuredClinicId).eq('matched_patient_id', a.patient_id)
+          .in('matching_status', ['auto_matched_high_confidence', 'manually_confirmed'])
+          .limit(1);
+        if (existingReview && existingReview.length) {
+          const logGroupSkip = (groupAppts && groupAppts.length) ? groupAppts : [a];
+          for (const g of logGroupSkip) await log(g, 'review_request', channel, 'skipped_has_review');
+          results.skipped_has_review = (results.skipped_has_review || 0) + 1;
+          return;
+        }
+      }
+
       // Τα ραντεβού που καλύπτει ΑΥΤΟ το μήνυμα (ίδιος πελάτης, ίδια ημέρα). Το
       // κείμενο φτιάχνεται από το ραντεβού a — το ΤΕΛΕΥΤΑΙΟ της ημέρας, δηλαδή
       // την πιο πρόσφατη εμπειρία της πελάτισσας· η καταγραφή γίνεται σε ΟΛΑ,

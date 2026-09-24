@@ -4639,6 +4639,8 @@ async function loadLaserForm(id) {
   S._laserBackPage = S.page==='patient-detail' ? 'patient-detail' : 'laser';
   S.laserFormId = id;
   S.page = 'laser-detail';
+  // Force fresh load στο επόμενο renderLaserDetail() — βλ. σχόλιο εκεί.
+  _laserRegionsFormId = null;
   await loadPageData();
 }
 
@@ -4648,15 +4650,29 @@ const HAIR_COLORS_LIST = ['Μαύρο','Σανφό','Γκρι','Καφέ','Κό�
 const BRAND_PINK = '#C4618A';
 let _laserBodyParts = [];
 let _laserRegions = [];
+// Ποιο laser_forms.id αντιστοιχεί στα τρέχοντα _laserBodyParts/_laserRegions —
+// βλ. σχόλιο στο renderLaserDetail() για το γιατί χρειάζεται.
+let _laserRegionsFormId = null;
 let _selectedPhotoIds = new Set();
 
 function renderLaserDetail() {
   const f = S.laserFormDetail;
   if (!f) return '<div class="page"><div class="empty-state"><div>Φόρτωση...</div></div></div>';
   const ms = f.machine_settings||{};
-  const regions = ms.regions||Array(4).fill(null).map(()=>({body_part:'',sessions:Array(6).fill(null).map(()=>({date:'',spot_size:'',energy:'',dcd:'',notes:''})),notes:''}));
-  _laserBodyParts = [...(f.body_parts||[])];
-  _laserRegions = JSON.parse(JSON.stringify(regions));
+  // Το renderLaserDetail() τρέχει σε ΚΑΘΕ render() όσο ο χρήστης είναι σε αυτή
+  // τη σελίδα — όχι μόνο στο αρχικό άνοιγμα της φόρμας. Αν ξαναφτιάχναμε τα
+  // _laserBodyParts/_laserRegions από το f.machine_settings ΚΑΘΕ φορά, ένα
+  // οποιοδήποτε άσχετο re-render (π.χ. από άλλο άνοιγμα modal ή ενέργεια στη
+  // σελίδα) θα σβήσει σιωπηλά τις εντάσεις/ρυθμίσεις που μόλις πληκτρολόγησε ο
+  // χρήστης αλλά δεν είχε ακόμα πατήσει "Αποθήκευση" — αυτό ήταν το bug που
+  // ανέφερε η Χριστιάνα ("καμιά φορά δεν αποθηκεύεται"). Γι' αυτό αρχικοποιούνται
+  // ΜΟΝΟ όταν πραγματικά αλλάζει η φόρμα (νέο f.id) — βλ. loadLaserForm().
+  if (_laserRegionsFormId !== f.id) {
+    const regions = ms.regions||Array(4).fill(null).map(()=>({body_part:'',sessions:Array(6).fill(null).map(()=>({date:'',spot_size:'',energy:'',dcd:'',notes:''})),notes:''}));
+    _laserBodyParts = [...(f.body_parts||[])];
+    _laserRegions = JSON.parse(JSON.stringify(regions));
+    _laserRegionsFormId = f.id;
+  }
 
   const FRONT_ZONES = [
     {id:'Πρόσωπο',x:50,y:7},{id:'Αυχένας',x:50,y:13},{id:'Στήθος',x:50,y:23},
