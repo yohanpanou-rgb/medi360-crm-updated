@@ -2704,7 +2704,7 @@ function renderPatientDiagnosesTab() {
     <div style="border:1px solid var(--border-2);border-radius:12px;padding:14px 16px">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:8px">
         <div style="font-size:13px;font-weight:700">${fmt(e.created_at)}</div>
-        <div style="font-size:11px;color:var(--text-2)">${esc(e.profiles&&e.profiles.full_name||'—')}</div>
+        <div style="font-size:11.5px;color:var(--text-2);display:inline-flex;align-items:center;gap:5px;background:var(--surface-2);border-radius:9px;padding:3px 9px" title="Ποιος έκανε τη διάγνωση">🩺 Διάγνωση από: <b style="color:var(--text)">${esc(e.profiles&&e.profiles.full_name||'άγνωστο')}</b></div>
       </div>
       <div style="font-size:12px;color:var(--text-2);margin-bottom:4px">Διάγνωση</div>
       <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">${(e.diagnosis||[]).map(d=>`<span style="display:inline-flex;align-items:center;gap:6px;background:var(--surface-2);border-radius:20px;padding:4px 12px;font-size:12px">${esc(d)}${e.diagnosis_icd10&&e.diagnosis_icd10[d]?`<span style="color:var(--text-2);font-size:10.5px">${esc(e.diagnosis_icd10[d])}</span>`:''}</span>`).join('')}</div>
@@ -3350,7 +3350,14 @@ function renderPatientDetail() {
             <div style="width:4px;align-self:stretch;border-radius:2px;background:${(STATUS_APPT[a.status]||STATUS_APPT.confirmed).c};flex-shrink:0"></div>
             <div style="flex:1">
               <div style="font-size:13px;font-weight:500">${a.package_id?'<span title="Συνεδρία πακέτου">📦 </span>':''}${esc(a.service_name||'—')}</div>
-              <div style="font-size:11px;color:var(--text-2)">${fmtDt(a.start_time)} · <span style="color:var(--blue)">προβολή στο Πρόγραμμα →</span>${a.created_by&&S.staffDirectory&&S.staffDirectory[a.created_by]?` · Καταχωρήθηκε από: ${esc(S.staffDirectory[a.created_by])}`:''}</div>
+              <div style="font-size:11px;color:var(--text-2)">${fmtDt(a.start_time)} · <span style="color:var(--blue)">προβολή στο Πρόγραμμα →</span>${(()=>{
+                // Με ποιον θεραπευτή έγινε (παρελθόν/ολοκληρωμένο) ή με ποιον έχει
+                // κλειστεί (μελλοντικό) — από appointments.therapist_id → profiles.
+                const tn = a.therapist_id && S.staffDirectory && S.staffDirectory[a.therapist_id];
+                if (!tn) return '';
+                const isPast = a.status==='completed' || new Date(a.start_time).getTime() < Date.now();
+                return ` · <span style="color:var(--text)">${isPast?'Έγινε με':'Κλεισμένο με'}: <b>${esc(tn)}</b></span>`;
+              })()}${a.created_by&&S.staffDirectory&&S.staffDirectory[a.created_by]?` · Καταχωρήθηκε από: ${esc(S.staffDirectory[a.created_by])}`:''}</div>
             </div>
             <button class="btn btn-ghost btn-sm" title="Φωτογραφίες ραντεβού" onclick="event.stopPropagation();S.patTab='photos';S.patPhotoApptFilter='${a.id}';render()">📷${apptPhotoCount?` ${apptPhotoCount}`:''}</button>
             ${canSeeFinancials&&a.price?`<div style="font-size:13px;font-weight:500;color:#0F6E56">${euro(a.price)}</div>`:''}
@@ -3939,6 +3946,89 @@ function injPointsOverlayHtml(view) {
     }).join('');
 }
 
+// Στατική (read-only) απεικόνιση σημείων ΜΙΑΣ αποθηκευμένης συνεδρίας πάνω
+// στην εικόνα: αριθμημένη κουκκίδα + ετικέτα με την ποσότητα δίπλα της.
+// Χρησιμοποιείται από το popup ιστορικού (openInjSessionPopup), όχι από το
+// ενεργό draft (_injPoints) — γι' αυτό δέχεται τη λίστα σημείων ως όρισμα.
+function injStaticOverlayHtml(points, view) {
+  return (points||[]).map((pt,idx)=>({pt,idx})).filter(({pt})=>(pt.view||'front')===view)
+    .map(({pt,idx})=>{
+      const z = faceZone(pt.zone);
+      const dotColor = z ? z.color : INJ_ACCENT;
+      const qty = `${pt.quantity!==undefined&&pt.quantity!==null?pt.quantity:''}${pt.unit?' '+pt.unit:''}`.trim();
+      const onRight = (pt.x||0) < 62; // ετικέτα δεξιά της κουκκίδας, εκτός αν είμαστε κοντά στη δεξιά άκρη
+      return `<div title="${esc(z?z.label:'Εκτός ζώνης')} · ${esc(pt.material||'')} · ${esc(qty)}${pt.notes?' · '+esc(pt.notes):''}" style="position:absolute;left:${pt.x}%;top:${pt.y}%;transform:translate(-50%,-50%);width:18px;height:18px;border-radius:50%;background:${dotColor};border:2px solid #fff;box-shadow:0 0 0 1px ${dotColor};z-index:3;display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff;font-weight:700">${idx+1}</div>
+        ${qty?`<div style="position:absolute;top:${pt.y}%;${onRight?`left:calc(${pt.x}% + 12px)`:`right:calc(${100-(pt.x||0)}% + 12px)`};transform:translateY(-50%);background:rgba(255,255,255,.95);color:var(--navy);border:1px solid ${dotColor};border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700;white-space:nowrap;z-index:4;pointer-events:none;box-shadow:0 1px 3px rgba(0,0,0,.15)">${esc(qty)}</div>`:''}`;
+    }).join('');
+}
+
+// Popup προβολής μιας αποθηκευμένης συνεδρίας ενέσιμων: οι όψεις με τα σημεία
+// και τις ποσότητες πάνω στην εικόνα + αναλυτικός πίνακας από κάτω.
+function openInjSessionPopup(sessionIdx) {
+  const f = S.injFormDetail; if (!f) return;
+  const s = (f.sessions||[])[sessionIdx]; if (!s) return;
+  const pts = s.points||[];
+  const views = [{key:'front', label:'Μπροστινή Όψη', img:injFaceSvgFront()}, {key:'profile', label:'Πλάγια Όψη', img:injFaceSvgProfile()}]
+    .filter(v => pts.some(p => (p.view||'front')===v.key));
+  const shown = views.length ? views : [{key:'front', label:'Μπροστινή Όψη', img:injFaceSvgFront()}];
+  const total = {};
+  pts.forEach(p => { const k = `${p.material||'—'}|${p.unit||''}`; total[k] = (total[k]||0) + (parseFloat(p.quantity)||0); });
+  const old = document.getElementById('inj-session-popup'); if (old) old.remove();
+  const div = document.createElement('div');
+  div.id = 'inj-session-popup';
+  div.className = 'modal-overlay';
+  div.style.zIndex = '9000';
+  div.innerHTML = `<div class="modal" style="max-width:${shown.length>1?'860px':'520px'};width:100%;max-height:92vh;overflow-y:auto">
+    <div class="modal-header">
+      <span class="modal-title">💉 Συνεδρία ${fmt(s.date)} <span style="font-weight:400;color:var(--text-2);font-size:12px">· ${pts.length} σημεία</span></span>
+      <button class="modal-close" id="isp-close">×</button>
+    </div>
+    <div class="modal-body">
+      <div style="display:flex;gap:24px;flex-wrap:wrap;justify-content:center;margin-bottom:14px">
+        ${shown.map(v=>`<div style="text-align:center">
+          <div style="position:relative;width:min(380px,84vw);aspect-ratio:200/228;background:#fff;border-radius:10px;border:1px solid #EEE6FB;overflow:visible">
+            ${v.img}
+            <div style="position:absolute;inset:0">${injStaticOverlayHtml(pts, v.key)}</div>
+          </div>
+          <div style="font-size:10px;font-weight:600;color:var(--text-2);letter-spacing:.5px;text-transform:uppercase;margin-top:8px">${v.label}</div>
+        </div>`).join('')}
+      </div>
+      ${Object.keys(total).length?`<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-bottom:12px">
+        ${Object.entries(total).map(([k,v])=>{ const [m,u]=k.split('|'); return `<span style="font-size:11.5px;font-weight:700;background:#F3EBFF;color:${INJ_ACCENT};border-radius:9px;padding:4px 10px">${esc(m)}: ${Math.round(v*100)/100} ${esc(u)}</span>`; }).join('')}
+      </div>`:''}
+      <table style="width:100%;border-collapse:collapse;font-size:11.5px">
+        <thead><tr style="background:#F3EBFF">
+          <th style="padding:6px 8px;text-align:center;width:26px">#</th>
+          <th style="padding:6px 8px;text-align:left">Ζώνη</th>
+          <th style="padding:6px 8px;text-align:left">Υλικό</th>
+          <th style="padding:6px 8px;text-align:center">Ποσότητα</th>
+          <th style="padding:6px 8px;text-align:left">Σημειώσεις</th>
+        </tr></thead>
+        <tbody>
+          ${pts.map((pt,i)=>{ const z = faceZone(pt.zone); return `<tr style="border-top:1px solid #F5F1FC">
+            <td style="padding:5px 8px;text-align:center"><span style="display:inline-flex;width:18px;height:18px;border-radius:50%;background:${z?z.color:INJ_ACCENT};color:#fff;font-size:9px;font-weight:700;align-items:center;justify-content:center">${i+1}</span></td>
+            <td style="padding:5px 8px">${esc(z?z.label:'Εκτός ζώνης')} <span style="color:var(--text-3);font-size:10px">${(pt.view||'front')==='profile'?'(πλάγια)':''}</span></td>
+            <td style="padding:5px 8px;color:var(--text-2)">${esc(pt.material||'')}</td>
+            <td style="padding:5px 8px;text-align:center;font-weight:600">${esc(String(pt.quantity||''))} ${esc(pt.unit||'')}</td>
+            <td style="padding:5px 8px;color:var(--text-2)">${esc(pt.notes||'')}</td>
+          </tr>`; }).join('')}
+        </tbody>
+      </table>
+      ${s.notes?`<div style="font-size:12px;color:var(--text-2);margin-top:10px;font-style:italic">📝 ${esc(s.notes)}</div>`:''}
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" id="isp-print" title="Εκτύπωση της συνεδρίας">🖨 Εκτύπωση</button>
+      <button class="btn btn-primary" id="isp-ok" style="background:${INJ_ACCENT};border-color:${INJ_ACCENT}">Κλείσιμο</button>
+    </div>
+  </div>`;
+  document.body.appendChild(div);
+  const close = () => div.remove();
+  div.onclick = e => { if (e.target===div) close(); };
+  div.querySelector('#isp-close').onclick = close;
+  div.querySelector('#isp-ok').onclick = close;
+  div.querySelector('#isp-print').onclick = () => window.print();
+}
+
 function injPointsTableHtml() {
   if (!_injPoints.length) return `<div style="font-size:12px;color:var(--text-2);padding:10px 0">Κάνε κλικ πάνω σε μια ζώνη στην εικόνα για να προσθέσεις σημείο έγχυσης.</div>`;
   return `<table style="width:100%;border-collapse:collapse;font-size:11.5px">
@@ -4127,16 +4217,19 @@ function renderInjectableDetail() {
         </div>
       </div>
 
-      <div style="display:flex;gap:24px;flex-wrap:wrap;justify-content:center;margin-bottom:20px">
+      <!-- Οι δύο όψεις μεγαλώνουν με το διαθέσιμο πλάτος (έως 360px η καθεμία,
+           44vw σε κινητό ώστε να χωρούν δίπλα-δίπλα). Τα σημεία είναι σε % πάνω
+           στην εικόνα, οπότε το μέγεθος δεν επηρεάζει την ακρίβεια. -->
+      <div style="display:flex;gap:32px;flex-wrap:wrap;justify-content:center;margin-bottom:20px">
         <div style="text-align:center">
-          <div id="inj-face-wrap-front" onclick="handleFaceClick(event,'front')" style="position:relative;width:200px;height:228px;cursor:crosshair;background:#ffffff;border-radius:10px;border:1px solid #EEE6FB">
+          <div id="inj-face-wrap-front" onclick="handleFaceClick(event,'front')" style="position:relative;width:min(360px,44vw);aspect-ratio:200/228;cursor:crosshair;background:#ffffff;border-radius:10px;border:1px solid #EEE6FB">
             ${injFaceSvgFront()}
             <div id="inj-points-overlay-front" style="position:absolute;inset:0">${injPointsOverlayHtml('front')}</div>
           </div>
           <div style="font-size:10px;font-weight:600;color:var(--text-2);letter-spacing:.5px;text-transform:uppercase;margin-top:8px">Μπροστινή Όψη</div>
         </div>
         <div style="text-align:center">
-          <div id="inj-face-wrap-profile" onclick="handleFaceClick(event,'profile')" style="position:relative;width:200px;height:228px;cursor:crosshair;background:#ffffff;border-radius:10px;border:1px solid #EEE6FB">
+          <div id="inj-face-wrap-profile" onclick="handleFaceClick(event,'profile')" style="position:relative;width:min(360px,44vw);aspect-ratio:200/228;cursor:crosshair;background:#ffffff;border-radius:10px;border:1px solid #EEE6FB">
             ${injFaceSvgProfile()}
             <div id="inj-points-overlay-profile" style="position:absolute;inset:0">${injPointsOverlayHtml('profile')}</div>
           </div>
@@ -4169,8 +4262,11 @@ function renderInjectableDetail() {
     <div class="card" style="padding:16px">
       <div style="font-size:11px;font-weight:700;color:${INJ_ACCENT};text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px">ΙΣΤΟΡΙΚΟ ΣΥΝΕΔΡΙΩΝ ${sessions.length?`(${sessions.length})`:''}</div>
       ${sessions.length===0?`<div style="font-size:12px;color:var(--text-2)">Δεν υπάρχουν καταχωρημένες συνεδρίες ακόμα.</div>`:
-      sessions.map(s=>`<div style="border:1px solid #EEE6FB;border-radius:10px;padding:12px 14px;margin-bottom:10px">
-        <div style="font-size:12.5px;font-weight:600;color:var(--navy);margin-bottom:6px">${fmt(s.date)} <span style="font-weight:400;color:var(--text-2);font-size:11px">· ${(s.points||[]).length} σημεία</span></div>
+      sessions.map(s=>`<div style="border:1px solid #EEE6FB;border-radius:10px;padding:12px 14px;margin-bottom:10px;cursor:pointer" title="Προβολή σημείων & ποσοτήτων πάνω στην εικόνα" onclick="openInjSessionPopup(${(f.sessions||[]).indexOf(s)})">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <div style="font-size:12.5px;font-weight:600;color:var(--navy)">${fmt(s.date)} <span style="font-weight:400;color:var(--text-2);font-size:11px">· ${(s.points||[]).length} σημεία</span></div>
+          <button class="btn btn-ghost btn-xs" style="margin-left:auto;font-size:11px;border-color:#EEE6FB;color:${INJ_ACCENT}" onclick="event.stopPropagation();openInjSessionPopup(${(f.sessions||[]).indexOf(s)})">🔍 Στην εικόνα</button>
+        </div>
         <table style="width:100%;border-collapse:collapse;font-size:11.5px">
           <tbody>
             ${(s.points||[]).map(pt=>`<tr style="border-top:1px solid #F5F1FC">
@@ -13100,8 +13196,21 @@ function showCalTooltip(el, e) {
     +'</div>');
 
   tt.style.display = 'block';
-  var x = Math.min(e.clientX+14, window.innerWidth-280);
-  var y = Math.min(e.clientY+14, window.innerHeight-220);
+  // Τοποθέτηση με βάση το ΠΡΑΓΜΑΤΙΚΟ μέγεθος του tooltip (όχι σταθερή υπόθεση
+  // 220px ύψους): με ιατρικό ιστορικό/αλλεργίες/σημειώσεις γίνεται ψηλότερο
+  // και, για ραντεβού χαμηλά στην οθόνη, κοβόταν κάτω. Αν δεν χωράει κάτω από
+  // τον κέρσορα ανοίγει από πάνω του· αν δεν χωράει πουθενά, κολλάει στην
+  // κάτω άκρη με εσωτερικό scroll.
+  var vw = window.innerWidth, vh = window.innerHeight, pad = 8;
+  tt.style.maxHeight = (vh - 2*pad) + 'px';
+  tt.style.overflowY = 'auto';
+  var w = tt.offsetWidth, hgt = tt.offsetHeight;
+  var x = e.clientX + 14;
+  if (x + w > vw - pad) x = Math.max(pad, e.clientX - w - 14);
+  if (x + w > vw - pad) x = Math.max(pad, vw - w - pad);
+  var y = e.clientY + 14;
+  if (y + hgt > vh - pad) y = e.clientY - hgt - 14;
+  if (y < pad) y = Math.max(pad, vh - hgt - pad);
   tt.style.left = x+'px';
   tt.style.top = y+'px';
 }
