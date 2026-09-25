@@ -748,7 +748,19 @@ function patBadge(status){const s=STATUS_PAT[status]||STATUS_PAT.lead;return bad
 // αλλά το ίδιο το πεδίο medical_history μπορεί να γεμίσει και από αλλού (π.χ. Consultation
 // Form, sync από Sheet) χωρίς ποτέ να μπει αυτή η σημαία. Η εμφάνιση πρέπει να βασίζεται
 // στο αν υπάρχει ΠΡΑΓΜΑΤΙΚΟ περιεχόμενο, όχι μόνο στη σημαία, αλλιώς δείχνει λάθος "❌ Όχι".
+// Εξαίρεση: το Consultation Form αντιγράφει το skin profile στο medical_history όταν αυτό
+// είναι κενό. Αυτό ΔΕΝ είναι φόρμα ιατρικού ιστορικού — δεν πρέπει να δείχνει «Συμπληρωμένο».
+// Ανιχνεύεται μόνο στην ανοιχτή καρτέλα (εκεί είναι φορτωμένα τα consultations του ασθενή):
+// το κείμενο του medical_history βρίσκεται αυτούσιο μέσα σε consent_text consultation.
+function medicalHistoryConsultSource(p) {
+  if (!p || p.medical_history_completed || !p.medical_history) return null;
+  if (!S.patientDetail || S.patientDetail.id !== p.id) return null;
+  const txt = String(p.medical_history).trim();
+  if (!txt) return null;
+  return (S.patConsultations||[]).find(c => c && typeof c.consent_text === 'string' && c.consent_text.includes(txt)) || null;
+}
 function hasMedicalHistoryData(p) {
+  if (medicalHistoryConsultSource(p) && ![p.allergies, p.medications, p.previous_treatments].some(v => v && String(v).trim())) return false;
   return !!(p.medical_history_completed || [p.medical_history, p.allergies, p.medications, p.previous_treatments].some(v => v && String(v).trim()));
 }
 function apptBadge(status){const s=STATUS_APPT[status]||STATUS_APPT.confirmed;return badge(s.l,s.bg,s.c)}
@@ -2990,9 +3002,17 @@ function renderPatientDetail() {
       if (!g) return '';
       const todayStr = new Date().toISOString().slice(0,10);
       if (!g.redeemed_at && g.expires_at >= todayStr) {
+        // Το channel='call' σημαίνει «δεν στάλθηκε email/SMS τη μέρα των γενεθλίων» — είτε
+        // επειδή έλειπε το email, είτε επειδή δεν υπήρχε υπογεγραμμένο GDPR (το backend
+        // απαιτεί και τα δύο). Η αιτία εμφανίζεται με βάση τη ΣΗΜΕΡΙΝΗ κατάσταση της καρτέλας,
+        // ώστε να μη λέει «δεν έχει email» σε πελάτη που έχει.
+        const callNote = g.channel!=='call' ? (g.channel==='sms' ? ' · <span style="color:#0F6E56;font-weight:700">στάλθηκε SMS</span>' : '')
+          : !p.email ? ' · <span style="color:#A32D2D;font-weight:700">δεν έχει email — ενημέρωσέ τον τηλεφωνικά!</span>'
+          : !p.gdpr_signed ? ' · <span style="color:#A32D2D;font-weight:700">έχει email αλλά όχι υπογεγραμμένο GDPR — δεν στέλνεται email, ενημέρωσέ τον τηλεφωνικά!</span>'
+          : ' · <span style="color:#A32D2D;font-weight:700">στα γενέθλια δεν στάλθηκε email (έλειπε email ή GDPR) — μπορείς να το στείλεις τώρα.</span>';
         return `<div style="background:#FDF0F5;border:1.5px solid #C4618A;border-radius:12px;padding:10px 16px;margin-bottom:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
           <span style="font-size:18px">🎁</span>
-          <div style="flex:1;min-width:200px;font-size:12.5px;color:#8A3B5E"><b>Δώρο γενεθλίων ενεργό έως ${new Date(g.expires_at+'T00:00:00').toLocaleDateString('el-GR')}</b> — Δωροεπιταγή ${g.gift_value||80}€ για θεραπεία προσώπου + 10% έκπτωση στα καλλυντικά${g.channel==='call'?' · <span style="color:#A32D2D;font-weight:700">δεν έχει email — ενημέρωσέ τον τηλεφωνικά!</span>':''}</div>
+          <div style="flex:1;min-width:200px;font-size:12.5px;color:#8A3B5E"><b>Δώρο γενεθλίων ενεργό έως ${new Date(g.expires_at+'T00:00:00').toLocaleDateString('el-GR')}</b> — Δωροεπιταγή ${g.gift_value||80}€ για θεραπεία προσώπου + 10% έκπτωση στα καλλυντικά${callNote}</div>
           ${p.email&&p.gdpr_signed?`<button class="btn btn-sm" id="resend-birthday-email-btn" data-gift-id="${g.id}" style="background:#0344F2;color:#fff;font-weight:700">📧 ${g.channel==='call'?'Αποστολή Email τώρα':'Επαναποστολή Email'}</button>`:''}
           <button class="btn btn-sm" onclick="redeemBirthdayGift('${g.id}')" style="background:#C4618A;color:#fff;font-weight:700">✓ Εξαργύρωση</button>
         </div>`;
@@ -3164,7 +3184,7 @@ function renderPatientDetail() {
               ['Πηγή', p.source],
               ...((p.referred_by_name || S.patientReferrer) ? [['Σύσταση από', (S.patientReferrer&&S.patientReferrer.full_name) || p.referred_by_name]] : []),
               ['GDPR', p.gdpr_signed?'✅ Υπογεγραμμένο':'❌ Όχι'],
-              ['Ιατρικό Ιστορικό', [p.medical_history,p.allergies,p.medications,p.previous_treatments].some(v=>v&&v.trim())?'✅ Συμπληρωμένο':(p.medical_history_completed?'✅ Συμπληρωμένο — Ελεύθερο ιστορικό':'❌ Όχι')],
+              ['Ιατρικό Ιστορικό', (medicalHistoryConsultSource(p) && ![p.allergies,p.medications,p.previous_treatments].some(v=>v&&v.trim()))?'❌ Όχι — υπάρχει μόνο skin profile από consultation':([p.medical_history,p.allergies,p.medications,p.previous_treatments].some(v=>v&&v.trim())?'✅ Συμπληρωμένο':(p.medical_history_completed?'✅ Συμπληρωμένο — Ελεύθερο ιστορικό':'❌ Όχι'))],
               ...(canSeeFinancials?[['LTV', euro(p.ltv)]]:[] ),
               ['Εγγραφή', fmt(p.created_at)],
             ].map(([k,v])=>`
@@ -3389,10 +3409,18 @@ function renderPatientDetail() {
           </div>
         </div>
         <div style="padding:16px;display:grid;grid-template-columns:1fr 1fr;gap:20px">
-          ${p.medical_history?`<div>
+          ${p.medical_history?(()=>{
+            const src = medicalHistoryConsultSource(p);
+            if (src) return `<div>
+            <div style="font-size:10px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px">📋 SKIN PROFILE ΑΠΟ CONSULTATION${src.signed_at?' · '+fmt(src.signed_at):''}</div>
+            <div style="font-size:13px;line-height:1.7;color:var(--text)">${esc(p.medical_history)}</div>
+            <div style="margin-top:8px;font-size:11.5px;color:#A32D2D;font-weight:600">⚠ Δεν έχει συμπληρωθεί φόρμα Ιατρικού Ιστορικού — αυτό είναι η περιγραφή δέρματος από το consultation. Πάτησε «Επεξεργασία Φόρμας» για να συμπληρωθεί.</div>
+          </div>`;
+            return `<div>
             <div style="font-size:10px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px">ΙΑΤΡΙΚΟ ΙΣΤΟΡΙΚΟ</div>
             <div style="font-size:13px;line-height:1.7;color:var(--text)">${esc(p.medical_history)}</div>
-          </div>`:''}
+          </div>`;
+          })():''}
           ${p.allergies?`<div>
             <div style="font-size:10px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px">ΑΛΛΕΡΓΙΕΣ</div>
             <div style="font-size:13px;line-height:1.7;color:var(--text)">${esc(p.allergies)}</div>
