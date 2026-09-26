@@ -287,6 +287,13 @@ tr{cursor:pointer}
   .tl-month{top:calc(56px + var(--pat-head-h,52px) + 40px)}
 }
 html[data-theme="dark"] .tl-next{background:rgba(180,83,9,.15);border-color:rgba(253,230,138,.3)}
+/* Χρονολογημένες σημειώσεις πελάτη (Επισκόπηση v2) */
+.pat-note{padding:9px 12px;border-radius:10px;background:var(--surface);margin-top:6px;border-left:3px solid var(--border)}
+.pat-note.pinned{background:#FFFBEB;border-left-color:#D97706}
+.pat-note-meta{font-size:11px;color:var(--text-2);margin-bottom:3px}
+.pat-note-body{font-size:13px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
+.pat-note-actions{display:flex;gap:4px;margin-top:6px;flex-wrap:wrap}
+html[data-theme="dark"] .pat-note.pinned{background:rgba(180,83,9,.15)}
 /* Ρυθμίσεις → Κλινική: υπο-μενού ενοτήτων + dirty state ανά κάρτα (UX audit P2) */
 .settings-clinic{display:grid;grid-template-columns:210px minmax(0,1fr);gap:18px;align-items:start}
 .settings-nav{display:flex;flex-direction:column;gap:2px;position:sticky;top:calc(56px + 64px)}
@@ -1824,6 +1831,13 @@ async function loadPatientDetail(id, tab) {
 
     // 📬 Ιστορικό επικοινωνιών (email/Viber αργότερα) — αιτήματα επιβεβαίωσης,
     // επιβεβαιώσεις/ακυρώσεις πελάτη, οδηγίες θεραπείας — για το Timeline.
+    // 📝 Χρονολογημένες σημειώσεις (patient_notes) — Επισκόπηση v2 + Ιστορικό. Προαιρετικό:
+    // αν λείπει ο πίνακας σε κάποια εγκατάσταση, η καρτέλα συνεχίζει κανονικά.
+    S.patientNotes = [];
+    try {
+      const {data:pn} = await sb.from('patient_notes').select('*, profiles(full_name)').eq('patient_id',id).order('pinned',{ascending:false}).order('created_at',{ascending:false}).limit(200);
+      S.patientNotes = pn||[];
+    } catch(e) {}
     S.patCommLog = [];
     try {
       const {data:cl} = await sb.from('communication_log').select('*').eq('patient_id',id).order('created_at',{ascending:false}).limit(300);
@@ -4269,9 +4283,10 @@ function renderPatientOverviewV2(p, ctx) {
       </div>
     </div>
     <div class="card" style="grid-column:1/-1">
-      <div class="card-header"><span class="card-title">Σημείωση</span><span id="pat-quick-note-status" style="font-size:11px;color:var(--text-3)">αποθηκεύεται αυτόματα</span></div>
-      <div style="padding:10px 16px 14px"><textarea id="pat-quick-note" class="form-control" rows="2" placeholder="Προτιμήσεις, τι είπε στο τηλέφωνο, τι να θυμόμαστε…" onblur="savePatientQuickNote(this)">${esc(p.notes||'')}</textarea></div>
+      <div class="card-header"><span class="card-title">Σταθερή σημείωση</span><span id="pat-quick-note-status" style="font-size:11px;color:var(--text-3)">αποθηκεύεται αυτόματα</span></div>
+      <div style="padding:10px 16px 14px"><textarea id="pat-quick-note" class="form-control" rows="2" placeholder="Προτιμήσεις, τι να θυμόμαστε πάντα για τον πελάτη…" onblur="savePatientQuickNote(this)">${esc(p.notes||'')}</textarea></div>
     </div>
+    ${renderPatientNotesCardV2(p)}
     ${r ? `<div style="grid-column:1/-1;font-size:12px;color:var(--text-2)">🟢 Google review <span style="color:#D97706;letter-spacing:.5px">${reviewStars(r.star_rating)}</span>${r.review_create_time?' · '+fmt(r.review_create_time):''} · <span style="cursor:pointer;color:var(--blue)" onclick="S.patTab='comms';render()">δες στην Επικοινωνία</span></div>` : ''}
     <details style="grid-column:1/-1">
       <summary style="cursor:pointer;font-size:12.5px;font-weight:600;color:var(--text-2);padding:8px 0;list-style:none">▸ Στοιχεία, πακέτα, συσχετισμοί, συστάσεις</summary>
@@ -4325,6 +4340,7 @@ const TL_CAT = {
   clinical: {c:'#534AB7', bg:'#EEEDFE', l:'Κλινικά'},
   comm:     {c:'#0F6E56', bg:'#E1F5EE', l:'Επικοινωνία'},
   purchase: {c:'#B45309', bg:'#FEF3C7', l:'Αγορές'},
+  note:     {c:'#0E2757', bg:'#E8EEFE', l:'Σημειώσεις'},
   system:   {c:'#5B6472', bg:'#EEF1F5', l:'Σύστημα'},
 };
 // Ξανά το ίδιο ραντεβού: ίδιος πελάτης, ίδια υπηρεσία (και θεραπεύτρια αν υπάρχει), νέα ώρα.
@@ -4401,6 +4417,9 @@ function patTimelineEvents(p, ctx) {
   (p.productSales||[]).forEach(s=>ev.push({id:'ps'+s.id, date:s.created_at, cat:'purchase', icon:'🧴', title:(s.product_name||'Προϊόν')+(s.quantity>1?' ×'+s.quantity:''), actor:byName(s.sold_by||s.created_by), amount:(canFin&&s.amount!=null)?euro(s.amount):'', important:true}));
   [...(S.patientPackages||[]), ...(S.patientGeneralPackages||[])].forEach(pk=>ev.push({id:'pk'+pk.id, date:pk.purchased_at||pk.created_at, cat:'purchase', icon:'📦', title:'Πακέτο «'+(pk.name||'—')+'»', desc:(pk.total_sessions?pk.total_sessions+' συνεδρίες':''), amount:(canFin&&pk.price)?euro(pk.price):'', important:true,
     actions:[{l:'Πακέτα', on:"S.patTab='plan';render()"}]}));
+  // Σημειώσεις με ημερομηνία/συντάκτη
+  (S.patientNotes||[]).forEach(n=>ev.push({id:'n'+n.id, date:n.created_at, cat:'note', icon:'📝', title:(n.body||'').length>90?n.body.slice(0,90)+'…':(n.body||''), actor:(n.profiles&&n.profiles.full_name)||'', desc:(n.body||'').length>90?n.body:'', important:true,
+    actions:[{l:'Όλες οι σημειώσεις', on:"S.patTab='overview';render();setTimeout(()=>{const t=document.getElementById('pat-note-new');if(t)t.scrollIntoView({block:'center'});},60)"}]}));
   // Επικοινωνία
   const CM = {confirmation_request:['📧','Αίτημα επιβεβαίωσης ραντεβού',false], confirmation_received:['✅','Ο πελάτης επιβεβαίωσε το ραντεβού',true], cancellation_received:['🚫','Ο πελάτης ακύρωσε το ραντεβού',true], instructions:['📋','Οδηγίες θεραπείας',false], rescheduled:['🔄','Το ραντεβού μεταφέρθηκε',true], review_request:['⭐','Αίτημα αξιολόγησης',false], booking_confirmation:['📅','Ενημέρωση κλεισίματος ραντεβού',false], daily_schedule:['🗓','Καθημερινό πρόγραμμα',false], birthday:['🎂','Ευχές γενεθλίων',false], nameday:['🎉','Ευχές ονομαστικής εορτής',false]};
   (S.patCommLog||[]).forEach(cl=>{
@@ -4451,7 +4470,7 @@ function renderPatientTimelineV2(p, ctx) {
   const filter = S.patTimelineFilter||'all';
   const onlyImp = !!S.patTimelineImportant;
   const limit = S.patTimelineLimit || 40;
-  const FILTERS = [{k:'all',l:'Όλα'},{k:'visit',l:'Επισκέψεις'},{k:'clinical',l:'Κλινικά'},{k:'comm',l:'Επικοινωνία'},{k:'purchase',l:'Αγορές'}];
+  const FILTERS = [{k:'all',l:'Όλα'},{k:'visit',l:'Επισκέψεις'},{k:'clinical',l:'Κλινικά'},{k:'comm',l:'Επικοινωνία'},{k:'purchase',l:'Αγορές'},{k:'note',l:'Σημειώσεις'}];
   const upcoming = all.filter(e=>e.future).sort((a,b)=>new Date(a.date)-new Date(b.date));
   let past = all.filter(e=>!e.future).sort((a,b)=>new Date(b.date)-new Date(a.date));
   if (filter!=='all') past = past.filter(e=>e.cat===filter);
@@ -4585,6 +4604,81 @@ function openPatientMoreMenuV2() {
     else if (a==='inj') { S.modal='new-injectable'; S.modalData={}; renderModal(); }
     else if (a==='del') deletePatientPermanently();
   });
+}
+// ── Χρονολογημένες σημειώσεις (patient_notes, UX audit P2 / απόφαση 5) ──
+// Κάθε σημείωση έχει ποιος/πότε και μπαίνει ως γεγονός στο Ιστορικό. Η «σταθερή σημείωση»
+// (patients.notes) παραμένει για ό,τι πρέπει να θυμόμαστε πάντα.
+function patNoteCanEdit(n) {
+  const me = (S.user && S.user.id) || (S.profile && S.profile.id);
+  return canSee(['super_admin','clinic_admin']) || (!!me && n.author_id === me);
+}
+function renderPatientNotesCardV2(p) {
+  const notes = S.patientNotes || [];
+  const limit = S.patNotesLimit || 5;
+  const shown = notes.slice(0, limit);
+  const me = (S.profile && S.profile.full_name) || '';
+  const noteRow = n => `<div class="pat-note ${n.pinned?'pinned':''}" data-note="${n.id}">
+      <div class="pat-note-meta"><b>${esc((n.profiles&&n.profiles.full_name)||'—')}</b> · ${fmtDt(n.created_at)}${n.pinned?' · 📌 καρφιτσωμένη':''}</div>
+      <div class="pat-note-body">${esc(n.body)}</div>
+      ${patNoteCanEdit(n)?`<div class="pat-note-actions">
+        <button class="btn btn-ghost btn-xs" onclick="togglePinPatientNote('${n.id}')">${n.pinned?'Ξεκαρφίτσωμα':'📌 Καρφίτσωμα'}</button>
+        <button class="btn btn-ghost btn-xs" onclick="editPatientNote('${n.id}')">Επεξεργασία</button>
+        <button class="btn btn-ghost btn-xs" style="color:var(--red-dark)" onclick="deletePatientNote('${n.id}')">Διαγραφή</button>
+      </div>`:''}
+    </div>`;
+  return `<div class="card" style="grid-column:1/-1">
+    <div class="card-header"><span class="card-title">Σημειώσεις (${notes.length})</span><span style="font-size:11px;color:var(--text-3)">με ημερομηνία & συντάκτη · μπαίνουν στο Ιστορικό</span></div>
+    <div style="padding:10px 16px 6px">
+      <textarea id="pat-note-new" class="form-control" rows="2" placeholder="Νέα σημείωση — τι είπε στο τηλέφωνο, τι συμφωνήσαμε, τι να προσέξουμε την επόμενη φορά…" onkeydown="if((event.ctrlKey||event.metaKey)&&event.key==='Enter'){addPatientNote();}"></textarea>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap">
+        <span style="font-size:11px;color:var(--text-3)">${me?'θα καταχωρηθεί ως '+esc(me)+' · ':''}Ctrl+Enter για αποθήκευση</span>
+        <button class="btn btn-primary btn-sm" id="pat-note-add" onclick="addPatientNote()">Προσθήκη σημείωσης</button>
+      </div>
+    </div>
+    <div style="padding:4px 16px 12px">
+      ${shown.length ? shown.map(noteRow).join('') : `<div style="font-size:12.5px;color:var(--text-2);padding:6px 0 4px">Καμία σημείωση ακόμα.</div>`}
+      ${notes.length > shown.length ? `<button class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="S.patNotesLimit=${limit+10};render()">Δείξε περισσότερες (${notes.length-shown.length} ακόμα)</button>` : ''}
+    </div>
+  </div>`;
+}
+async function addPatientNote() {
+  const p = S.patientDetail; const ta = document.getElementById('pat-note-new'); const btn = document.getElementById('pat-note-add');
+  if (!p || !ta) return;
+  const body = ta.value.trim();
+  if (!body) { ta.focus(); return; }
+  btnBusy(btn, true);
+  const author = (S.user && S.user.id) || null;
+  const {data, error} = await sb.from('patient_notes').insert({clinic_id: clinicId(), patient_id: p.id, author_id: author, body}).select('*, profiles(full_name)').single();
+  btnBusy(btn, false);
+  if (error) { showToast('Σφάλμα: '+error.message, 'err'); return; }
+  S.patientNotes = [data, ...(S.patientNotes||[])];
+  showToast('Η σημείωση καταχωρήθηκε', 'ok');
+  render();
+}
+async function togglePinPatientNote(id) {
+  const n = (S.patientNotes||[]).find(x=>x.id===id); if (!n) return;
+  const {error} = await sb.from('patient_notes').update({pinned: !n.pinned, updated_at: new Date().toISOString()}).eq('id', id);
+  if (error) { showToast('Σφάλμα: '+error.message, 'err'); return; }
+  n.pinned = !n.pinned;
+  S.patientNotes.sort((a,b)=>(b.pinned-a.pinned) || (new Date(b.created_at)-new Date(a.created_at)));
+  render();
+}
+async function editPatientNote(id) {
+  const n = (S.patientNotes||[]).find(x=>x.id===id); if (!n) return;
+  const v = prompt('Επεξεργασία σημείωσης:', n.body);
+  if (v === null) return;
+  const body = v.trim(); if (!body) return;
+  const {error} = await sb.from('patient_notes').update({body, updated_at: new Date().toISOString()}).eq('id', id);
+  if (error) { showToast('Σφάλμα: '+error.message, 'err'); return; }
+  n.body = body; showToast('Η σημείωση ενημερώθηκε', 'ok'); render();
+}
+async function deletePatientNote(id) {
+  const n = (S.patientNotes||[]).find(x=>x.id===id); if (!n) return;
+  if (!confirm('Διαγραφή αυτής της σημείωσης;')) return;
+  const {error} = await sb.from('patient_notes').delete().eq('id', id);
+  if (error) { showToast('Σφάλμα: '+error.message, 'err'); return; }
+  S.patientNotes = S.patientNotes.filter(x=>x.id!==id);
+  showToast('Η σημείωση διαγράφηκε', 'ok'); render();
 }
 // Σημείωση Επισκόπησης: αποθήκευση στο blur (patients.notes), χωρίς modal.
 async function savePatientQuickNote(el) {
