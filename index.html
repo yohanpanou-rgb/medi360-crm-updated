@@ -309,7 +309,10 @@ summary::-webkit-details-marker{display:none}
 .modal-close{width:26px;height:26px;border-radius:50%;background:var(--surface-2);color:var(--text-2);display:flex;align-items:center;justify-content:center;font-size:16px}
 .modal-close:hover{background:var(--surface)}
 .modal-body{padding:18px 22px}
-.modal-footer{padding:0 22px 20px;display:flex;gap:10px;justify-content:flex-end}
+.modal-footer{padding:12px 22px 20px;display:flex;gap:10px;justify-content:flex-end;position:sticky;bottom:0;background:var(--white);border-radius:0 0 16px 16px}
+/* Inline σφάλμα πεδίου (fieldError) */
+.field-err{font-size:11.5px;color:#A32D2D;margin-top:4px;font-weight:600}
+input.has-error,select.has-error,textarea.has-error{border-color:#A32D2D!important;box-shadow:0 0 0 3px rgba(163,45,45,.12)!important}
 .form-group{margin-bottom:14px}
 .form-label{display:block;font-size:12px;font-weight:500;color:var(--text-2);margin-bottom:5px}
 .form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
@@ -8791,6 +8794,10 @@ async function openNewApptAt(datetimeLocal, therapistName, roomId, extraModalDat
     const match = (S.apptStaffList||[]).find(s=>sameStaffName(s.full_name, therapistName));
     if (sel && match) { sel.value = match.id; sel.dispatchEvent(new Event('change')); }
   }
+  // Η ώρα/θεραπεύτρια μπήκαν προγραμματιστικά (χωρίς event) — ανανέωση ένδειξης λήξης/ελεύθερων ωρών.
+  if (window.apptUpdateTimeHint) apptUpdateTimeHint();
+  // Από slot: πελάτης και υπηρεσία είναι τα μόνα που λείπουν — focus κατευθείαν στον πελάτη.
+  const psFocus = document.getElementById('a-patient-search'); if (psFocus && !psFocus.value) setTimeout(()=>psFocus.focus(), 50);
 }
 
 // Μετά την καταγραφή Ιατρικής Εξέτασης με σύσταση επανεξέτασης: ανοίγει τη
@@ -10627,20 +10634,27 @@ function modalNewPatient() {
         <div class="form-group"><label class="form-label">Επώνυμο *</label><input class="form-control" id="f-last-name" placeholder="Επώνυμο"/></div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label class="form-label">Τηλέφωνο *</label><input class="form-control" id="f-phone" placeholder="69XXXXXXXX"/>
+        <div class="form-group"><label class="form-label">Τηλέφωνο *</label><input class="form-control" id="f-phone" placeholder="69XXXXXXXX" inputmode="tel"/>
           <div id="f-phone-warning" style="display:none;font-size:11px;color:var(--amber-dark);margin-top:5px">⚠ Υπάρχει ήδη ασθενής με αυτό το τηλέφωνο</div>
         </div>
+        <div class="form-group"><label class="form-label">Email <span style="color:var(--text-3);font-weight:400">(προαιρετικό)</span></label><input class="form-control" id="f-email" type="email" placeholder="email@example.gr"/></div>
       </div>
-      <div class="form-group"><label class="form-label">Email *</label><input class="form-control" id="f-email" type="email" placeholder="email@example.gr"/></div>
-      <div class="form-group"><label class="form-label">ΑΜΚΑ</label><input class="form-control" id="f-amka" inputmode="numeric" maxlength="11" placeholder="11 ψηφία (προαιρετικό)"/></div>
-      <div class="form-row">
-        <div class="form-group"><label class="form-label">Φύλο</label>
-          <select class="form-control" id="f-gender"><option value="female">Γυναίκα</option><option value="male">Άνδρας</option><option value="other">Άλλο</option></select></div>
-        <div class="form-group"><label class="form-label">Κατάσταση</label>
-          <select class="form-control" id="f-status"><option value="lead">Lead</option><option value="active">Ενεργός</option><option value="vip">VIP</option></select></div>
-      </div>
-      <div class="form-group"><label class="form-label">Πηγή</label>
-        <select class="form-control" id="f-source"><option value="">—</option>${['Instagram','Referral','Google','Website','Walk-in','Booking'].map(s=>`<option value="${s.toLowerCase()}">${s}</option>`).join('')}</select></div>
+      <!-- Progressive disclosure (UX audit P1): μόνο τα υποχρεωτικά ορατά· τα υπόλοιπα πτυσσόμενα. -->
+      <details style="margin-bottom:4px">
+        <summary style="cursor:pointer;font-size:12.5px;font-weight:600;color:var(--blue);list-style:none;padding:4px 0 10px">▸ Περισσότερα στοιχεία (ΑΜΚΑ, φύλο, κατάσταση, πηγή)</summary>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">ΑΜΚΑ</label><input class="form-control" id="f-amka" inputmode="numeric" maxlength="11" placeholder="11 ψηφία"/></div>
+          <div class="form-group"><label class="form-label">Φύλο</label>
+            <select class="form-control" id="f-gender"><option value="female">Γυναίκα</option><option value="male">Άνδρας</option><option value="other">Άλλο</option></select></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">Κατάσταση</label>
+            <select class="form-control" id="f-status"><option value="lead">Lead</option><option value="active">Ενεργός</option><option value="vip">VIP</option></select></div>
+          <div class="form-group"><label class="form-label">Πηγή («πού μας βρήκατε»)</label>
+            <!-- Ίδιες κατηγορίες με το Dashboard «Από πού μας βρήκαν» (Σύσταση / Google / Ταμπέλα / Social). -->
+            <select class="form-control" id="f-source"><option value="">—</option>${[['Σύσταση','Σύσταση (φίλοι, οικογένεια)'],['Google','Google'],['Social','Social (Instagram, Facebook)'],['Ταμπέλα','Ταμπέλα / περαστικός'],['Website','Website']].map(([v,l])=>`<option value="${v}">${l}</option>`).join('')}</select></div>
+        </div>
+      </details>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Ακύρωση</button>
@@ -10655,6 +10669,13 @@ function modalNewPatient() {
 // ασθενή/υπηρεσίας, auto-συμπλήρωση διάρκειας/τιμής/δωματίου, auto-pick πακέτου,
 // φίλτρο υπηρεσιών ανά προσωπικό, save) δεν άλλαξε — μόνο ΠΟΥ εμφανίζεται το
 // κάθε πεδίο. Το «βήμα» είναι απλώς ποια wrapper div είναι ορατή.
+// ΜΙΑ οθόνη αντί για wizard 4 βημάτων (UX audit P1): όλα τα πεδία ορατά με σειρά
+// Πελάτης → Υπηρεσία → Πότε → Ποιος → Σημειώσεις, «Αποθήκευση» πάντα ορατό. Τα ids
+// ΔΕΝ αλλάζουν (a-patient-search, a-service, a-time, a-therapist, a-duration, a-price,
+// a-notes, a-internal, a-no-notify) — όλη η υπάρχουσα λογική (αναζήτηση, autofill,
+// πακέτα, φίλτρο υπηρεσιών ανά προσωπικό, αποθήκευση, prefill από slot) δουλεύει ίδια.
+// Οι wrappers appt-step-1..4 μένουν ως ομάδες πεδίων, απλώς είναι όλοι ορατοί.
+const APPT_SINGLE_SCREEN = true;
 function modalNewAppt() {
   const internal = !!(S.modalData && S.modalData.internal);
   const steps = [
@@ -10663,41 +10684,43 @@ function modalNewAppt() {
     {n:3, l:'Διαθεσιμότητα'},
     {n:4, l:'Επιβεβαίωση'},
   ];
-  return `<div class="modal">
+  const sec = (t) => `<div style="font-size:11px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--text-3);margin:6px 0 8px">${t}</div>`;
+  return `<div class="modal" style="max-width:520px">
     <div class="modal-header"><span class="modal-title">${S.modalData && S.modalData.followupSuggestion ? '📅 Πρόταση Κλεισίματος Ραντεβού' : 'Νέο Ραντεβού'}</span><button class="modal-close" onclick="closeModal()">×</button></div>
     <div class="modal-body">
       ${S.modalData && S.modalData.followupSuggestion ? `<div style="background:var(--blue-soft);border-radius:8px;padding:10px 12px;font-size:12px;color:var(--blue);margin-bottom:12px">ℹ️ Προτεινόμενη ημερομηνία επανεξέτασης — άλλαξέ την αν χρειάζεται, ή πάτησε Ακύρωση αν ο ασθενής θα κλείσει αργότερα.</div>`:''}
-      <div style="display:flex;gap:4px;margin-bottom:16px">
+      ${APPT_SINGLE_SCREEN ? '' : `<div style="display:flex;gap:4px;margin-bottom:16px">
         ${steps.map(s=>`<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px">
           <div class="appt-step-dot" data-step="${s.n}" style="width:22px;height:22px;border-radius:50%;background:${s.n===1?'var(--blue)':'var(--border)'};color:${s.n===1?'#fff':'var(--text-2)'};font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center">${s.n}</div>
           <div style="font-size:9.5px;color:var(--text-2);text-align:center">${s.l}</div>
         </div>`).join('')}
-      </div>
+      </div>`}
 
       <!-- ΒΗΜΑ 1 — Πελάτης -->
       <div id="appt-step-1">
-        <div class="form-group" style="background:var(--surface);border-radius:10px;padding:10px 12px;margin-bottom:2px">
+        ${APPT_SINGLE_SCREEN ? sec('Πελάτης') : `<div class="form-group" style="background:var(--surface);border-radius:10px;padding:10px 12px;margin-bottom:2px">
           <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
             <input type="checkbox" id="a-internal" ${internal?'checked':''}/>
             🔒 Εσωτερικό ραντεβού <span style="color:var(--text-2);font-weight:400">— μπλοκάρισμα ώρας χωρίς ασθενή (συνάντηση προσωπικού, άδεια κ.λπ.)</span>
           </label>
-        </div>
+        </div>`}
         <div class="form-group" id="a-patient-wrap" style="position:relative;${internal?'display:none':''}">
-          <label class="form-label">Ασθενής *</label>
-          <input class="form-control" id="a-patient-search" placeholder="Αναζήτηση..."/>
-          <div id="a-patient-results" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--white);border:1px solid var(--border);border-radius:8px;z-index:10;box-shadow:var(--shadow);max-height:160px;overflow-y:auto"></div>
+          <label class="form-label" style="${APPT_SINGLE_SCREEN?'display:none':''}">Ασθενής</label>
+          <input class="form-control" id="a-patient-search" placeholder="Όνομα ή τηλέφωνο… (ή «Νέος πελάτης»)" autocomplete="off"/>
+          <div id="a-patient-results" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--white);border:1px solid var(--border);border-radius:8px;z-index:10;box-shadow:var(--shadow);max-height:260px;overflow-y:auto"></div>
           <input type="hidden" id="a-patient-id"/>
         </div>
         <div class="form-group" id="a-internal-title-wrap" style="${internal?'':'display:none'}">
-          <label class="form-label">Τίτλος *</label>
+          <label class="form-label">Τίτλος</label>
           <input class="form-control" id="a-internal-title" placeholder="π.χ. Συνάντηση προσωπικού, Άδεια, Προσωπικό θέμα" value="${esc((S.modalData&&S.modalData.internalTitle)||'')}"/>
         </div>
       </div>
 
       <!-- ΒΗΜΑ 2 — Υπηρεσία (προσπερνιέται για εσωτερικά ραντεβού) -->
-      <div id="appt-step-2" style="display:none">
+      <div id="appt-step-2" style="${APPT_SINGLE_SCREEN?'':'display:none'}">
+        ${APPT_SINGLE_SCREEN ? sec('Υπηρεσία') : ''}
         <div class="form-group" id="a-service-wrap" style="position:relative">
-          <label class="form-label">Υπηρεσία</label>
+          <label class="form-label" style="display:none">Υπηρεσία</label>
           <input class="form-control" id="a-service-search" placeholder="Αναζήτηση υπηρεσίας..." autocomplete="off"/>
           <div id="a-service-results" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--white);border:1px solid var(--border);border-radius:8px;z-index:10;box-shadow:var(--shadow);max-height:220px;overflow-y:auto"></div>
           <!-- Το πραγματικό <select> μένει στο DOM (κρυφό) — όλη η υπάρχουσα λογική
@@ -10719,7 +10742,8 @@ function modalNewAppt() {
       </div>
 
       <!-- ΒΗΜΑ 3 — Διαθεσιμότητα -->
-      <div id="appt-step-3" style="display:none">
+      <div id="appt-step-3" style="${APPT_SINGLE_SCREEN?'':'display:none'}">
+        ${APPT_SINGLE_SCREEN ? sec('Πότε & με ποιον') : ''}
         ${(S.clinicBranches||[]).length>1?`<div class="form-group"><label class="form-label">Υποκατάστημα</label>
           <select class="form-control" id="a-branch">
             <option value="">—</option>
@@ -10739,7 +10763,10 @@ function modalNewAppt() {
               ${(S.apptStaffList||[]).map(p=>`<option value="${p.id}">${esc(p.full_name)}</option>`).join('')}
             </select>
           </div>
-          <div class="form-group"><label class="form-label">Ημ/νία & Ώρα *</label><input class="form-control" id="a-time" type="datetime-local"/></div>
+          <div class="form-group"><label class="form-label">Ημ/νία & Ώρα</label><input class="form-control" id="a-time" type="datetime-local"/>
+            <!-- Ώρα λήξης + προτεινόμενες ελεύθερες ώρες (ίδια μέρα, ίδια θεραπεύτρια) — βλ. apptUpdateTimeHint -->
+            <div id="a-time-hint" style="font-size:11.5px;color:var(--text-2);margin-top:5px;display:flex;flex-wrap:wrap;gap:6px;align-items:center"></div>
+          </div>
         </div>
         <div class="form-row">
           <div class="form-group"><label class="form-label">Διάρκεια (λεπτά)</label><input class="form-control" id="a-duration" type="number" value="60"/></div>
@@ -10749,23 +10776,84 @@ function modalNewAppt() {
         </div>
       </div>
 
-      <!-- ΒΗΜΑ 4 — Επιβεβαίωση -->
-      <div id="appt-step-4" style="display:none">
-        <div id="appt-summary" style="background:var(--surface);border-radius:10px;padding:10px 12px;margin-bottom:10px;display:flex;flex-direction:column;gap:2px"></div>
-        <div class="form-group"><label class="form-label">Σημειώσεις</label><textarea class="form-control" id="a-notes" rows="2"></textarea></div>
-        <label style="display:flex;align-items:center;gap:8px;margin-top:10px;padding:10px 12px;background:var(--surface);border-radius:10px;cursor:pointer">
-          <input type="checkbox" id="a-no-notify" style="width:16px;height:16px;flex-shrink:0">
-          <span style="font-size:0.9rem">Να μην σταλεί SMS/email στον πελάτη γι' αυτό το ραντεβού</span>
-        </label>
+      <!-- ΒΗΜΑ 4 — Επιβεβαίωση / Σημειώσεις & επιλογές -->
+      <div id="appt-step-4" style="${APPT_SINGLE_SCREEN?'':'display:none'}">
+        ${APPT_SINGLE_SCREEN ? sec('Σημειώσεις & επιλογές') : ''}
+        <div id="appt-summary" style="background:var(--surface);border-radius:10px;padding:10px 12px;margin-bottom:10px;display:flex;flex-direction:column;gap:2px;${APPT_SINGLE_SCREEN?'display:none':''}"></div>
+        <div class="form-group"><label class="form-label">Σημειώσεις</label><textarea class="form-control" id="a-notes" rows="2" placeholder="προαιρετικά"></textarea></div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <label style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--surface);border-radius:10px;cursor:pointer">
+            <input type="checkbox" id="a-no-notify" style="width:16px;height:16px;flex-shrink:0">
+            <span style="font-size:12.5px">Να μην σταλεί SMS/email στον πελάτη γι' αυτό το ραντεβού</span>
+          </label>
+          ${APPT_SINGLE_SCREEN ? `<label style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--surface);border-radius:10px;cursor:pointer">
+            <input type="checkbox" id="a-internal" ${internal?'checked':''} style="width:16px;height:16px;flex-shrink:0"/>
+            <span style="font-size:12.5px">🔒 Εσωτερικό ραντεβού <span style="color:var(--text-2)">— μπλοκάρισμα ώρας χωρίς ασθενή (συνάντηση, άδεια κ.λπ.)</span></span>
+          </label>` : ''}
+        </div>
       </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Ακύρωση</button>
       <button class="btn btn-ghost" id="appt-step-back" style="display:none" onclick="apptStepBack()">← Πίσω</button>
-      <button class="btn btn-primary" id="appt-step-next" onclick="apptStepNext()">Επόμενο →</button>
-      <button class="btn btn-primary" id="save-appt" style="display:none">Αποθήκευση</button>
+      <button class="btn btn-primary" id="appt-step-next" style="${APPT_SINGLE_SCREEN?'display:none':''}" onclick="apptStepNext()">Επόμενο →</button>
+      <button class="btn btn-primary" id="save-appt" style="${APPT_SINGLE_SCREEN?'':'display:none'}">Αποθήκευση ραντεβού</button>
     </div>
   </div>`;
+}
+// Inline σφάλμα κάτω από πεδίο (αντί για alert()): μαρκάρει το πεδίο, δείχνει το μήνυμα,
+// κάνει focus/scroll, και καθαρίζει μόλις ο χρήστης αρχίσει να πληκτρολογεί.
+function fieldError(id, msg) {
+  const el = document.getElementById(id);
+  if (!el) { showToast(msg, 'err'); return false; }
+  let err = el.parentElement && el.parentElement.querySelector(':scope > .field-err');
+  if (!err) { err = document.createElement('div'); err.className = 'field-err'; el.insertAdjacentElement('afterend', err); }
+  err.textContent = msg;
+  el.classList.add('has-error');
+  try { el.scrollIntoView({block:'center', behavior:'smooth'}); el.focus({preventScroll:true}); } catch(e) {}
+  const clear = () => { el.classList.remove('has-error'); if (err) err.remove(); };
+  el.addEventListener('input', clear, {once:true});
+  el.addEventListener('change', clear, {once:true});
+  return false;
+}
+// Ώρα λήξης + 3 προτεινόμενες ελεύθερες ώρες την ίδια μέρα για την επιλεγμένη θεραπεύτρια
+// (ή για όλο το ινστιτούτο αν δεν έχει επιλεγεί), με βάση τα ήδη φορτωμένα ραντεβού.
+function apptUpdateTimeHint() {
+  const hint = document.getElementById('a-time-hint'); if (!hint) return;
+  const timeEl = document.getElementById('a-time'), durEl = document.getElementById('a-duration'), therSel = document.getElementById('a-therapist');
+  const dur = parseInt(durEl && durEl.value, 10) || 60;
+  const val = timeEl && timeEl.value;
+  if (!val) { hint.innerHTML = '<span>Διάλεξε ημερομηνία και ώρα.</span>'; return; }
+  const start = new Date(val); if (isNaN(start.getTime())) { hint.innerHTML = ''; return; }
+  const end = new Date(start.getTime() + dur*60000);
+  const hhmm = d => d.toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'});
+  const therId = therSel && therSel.value ? therSel.value : null;
+  const dayKey = start.toLocaleDateString('sv-SE');
+  const busy = (S.appointments||[]).filter(a => a.start_time && a.status!=='cancelled' && a.status!=='no_show'
+    && (!therId || a.therapist_id===therId) && new Date(a.start_time).toLocaleDateString('sv-SE')===dayKey)
+    .map(a => { const s = new Date(a.start_time).getTime(); return [s, s + (a.duration_minutes||60)*60000]; });
+  const free = (s) => { const e = s + dur*60000; return !busy.some(([bs,be]) => s < be && bs < e); };
+  const conflict = !free(start.getTime());
+  const openH = Math.min(9, (S.clinic&&S.clinic.settings&&S.clinic.settings.start_hour) || 9);
+  const closeH = Math.max(21, (S.clinic&&S.clinic.settings&&S.clinic.settings.end_hour) || 20);
+  const sugg = [];
+  // Χωρίς επικάλυψη: προτείνουμε ώρες ΜΕΤΑ τη λήξη (για το επόμενο ραντεβού/εναλλακτικές),
+  // με επικάλυψη: την πρώτη ελεύθερη από την επιλεγμένη ώρα και μετά.
+  const from = new Date(conflict ? start : end); from.setSeconds(0,0); from.setMinutes(Math.ceil(from.getMinutes()/15)*15);
+  const dayEnd = new Date(start); dayEnd.setHours(closeH,0,0,0);
+  for (let t = from.getTime(); t + dur*60000 <= dayEnd.getTime() && sugg.length < 3; t += 15*60000) {
+    const d = new Date(t); if (d.getHours() < openH) continue;
+    if (t !== start.getTime() && free(t)) sugg.push(d);
+  }
+  const pad = n => String(n).padStart(2,'0');
+  const toLocal = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  hint.innerHTML = `<span>${hhmm(start)} – <b>${hhmm(end)}</b> (${dur}′)</span>`
+    + (conflict ? `<span style="color:#A32D2D;font-weight:600">⚠ επικάλυψη${therId?' με ραντεβού της θεραπεύτριας':''}</span>` : `<span style="color:#0F6E56">✓ ελεύθερη ώρα</span>`)
+    + (sugg.length ? `<span style="color:var(--text-3)">· επόμενες ελεύθερες:</span>` + sugg.map(d=>`<button type="button" class="cal-chip" style="padding:2px 9px;font-size:11.5px" onclick="document.getElementById('a-time').value='${toLocal(d)}';apptUpdateTimeHint()">${hhmm(d)}</button>`).join('') : '');
+}
+function apptBindTimeHint() {
+  ['a-time','a-duration','a-therapist'].forEach(id => { const el = document.getElementById(id); if (el && !el.dataset.hintBound) { el.dataset.hintBound = '1'; el.addEventListener('change', apptUpdateTimeHint); el.addEventListener('input', apptUpdateTimeHint); } });
+  apptUpdateTimeHint();
 }
 
 // Βήμα 2 (Υπηρεσία) δεν υπάρχει για εσωτερικά ραντεβού — δεν έχουν υπηρεσία.
@@ -10776,6 +10864,15 @@ function apptVisibleSteps() {
 let _apptStep = 1;
 function apptShowStep(n) {
   _apptStep = n;
+  if (APPT_SINGLE_SCREEN) {
+    // Μία οθόνη: όλα τα βήματα ορατά, «Αποθήκευση» πάντα ορατό· ενημερώνεται η ένδειξη ώρας.
+    for (let i=1;i<=4;i++) { const el=document.getElementById('appt-step-'+i); if (el) el.style.display=''; }
+    const save=document.getElementById('save-appt'); if (save) save.style.display = '';
+    const next=document.getElementById('appt-step-next'); if (next) next.style.display = 'none';
+    const back=document.getElementById('appt-step-back'); if (back) back.style.display = 'none';
+    apptBindTimeHint();
+    return;
+  }
   for (let i=1;i<=4;i++) { const el=document.getElementById('appt-step-'+i); if (el) el.style.display = i===n?'':'none'; }
   const steps = apptVisibleSteps();
   const pos = steps.indexOf(n);
@@ -11284,6 +11381,10 @@ function bindEvents() {
           pid.value = S.patientDetail.id;
           if (window._apptLoadPatientPackages) window._apptLoadPatientPackages(S.patientDetail.id);
         }
+        // Έξυπνη προεπιλογή: η θεραπεύτρια που εξυπηρέτησε τελευταία τον πελάτη.
+        const sel = document.getElementById('a-therapist');
+        const lastWith = [...(S.patientDetail.appointments||[])].reverse().find(a => a.therapist_id && a.status!=='cancelled');
+        if (sel && lastWith && Array.from(sel.options).some(o=>o.value===lastWith.therapist_id)) { sel.value = lastWith.therapist_id; sel.dispatchEvent(new Event('change')); }
       }
       if (modal==='new-appt' && window.apptShowStep) apptShowStep(1);
     };
@@ -13697,13 +13798,33 @@ function bindModalEvents() {
         el.onmouseout = () => el.style.background='';
       });
       const nb = document.getElementById('pt-new');
-      if (nb) nb.onclick = async () => {
-        let name = q.length>=2 ? q : (prompt('Ονοματεπώνυμο νέου ασθενή:')||'').trim();
-        if (!name || name.length<2) return;
-        const phone = (prompt('Τηλέφωνο (υποχρεωτικό):')||'').trim();
-        if (!/^\+?\d{10,13}$/.test(phone.replace(/\s/g,''))) { alert('Το τηλέφωνο είναι υποχρεωτικό (10-13 ψηφία)'); return; }
-        const email = (prompt('Email (προαιρετικό):')||'').trim();
-        if (email && !/^\S+@\S+\.\S+$/.test(email)) { alert('Το email δεν είναι έγκυρο'); return; }
+      // Νέος πελάτης INLINE (όνομα, τηλέφωνο, email) μέσα στο dropdown — όχι 3 prompt().
+      if (nb) nb.onclick = (ev) => {
+        // Το innerHTML αλλάζει εδώ· χωρίς stopPropagation ο global click-listener θα έβλεπε
+        // το (πλέον αποσπασμένο) #pt-new εκτός του dropdown και θα το έκλεινε αμέσως.
+        if (ev) ev.stopPropagation();
+        const looksLikePhone = /^\+?[\d\s]{6,}$/.test(q);
+        res.innerHTML = `<div style="padding:10px 12px;display:flex;flex-direction:column;gap:8px;background:var(--surface-2)">
+          <div style="font-size:12px;font-weight:700;color:var(--blue)">➕ Νέος πελάτης</div>
+          <input class="form-control" id="pt-new-name" placeholder="Ονοματεπώνυμο" value="${esc(!looksLikePhone && q.length>=2 ? q : '')}" autocomplete="off"/>
+          <input class="form-control" id="pt-new-phone" placeholder="Τηλέφωνο (69XXXXXXXX)" inputmode="tel" value="${esc(looksLikePhone ? q : '')}" autocomplete="off"/>
+          <input class="form-control" id="pt-new-email" placeholder="Email (προαιρετικό)" type="email" autocomplete="off"/>
+          <div style="display:flex;gap:8px;justify-content:flex-end"><button type="button" class="btn btn-ghost btn-sm" id="pt-new-cancel">Άκυρο</button><button type="button" class="btn btn-primary btn-sm" id="pt-new-save">Δημιουργία & επιλογή</button></div>
+        </div>`;
+        res.style.display = 'block';
+        const nameEl = document.getElementById('pt-new-name');
+        setTimeout(() => { const f = (nameEl && !nameEl.value) ? nameEl : document.getElementById('pt-new-phone'); if (f) f.focus(); }, 30);
+        document.getElementById('pt-new-cancel').onclick = () => showPatientDropdown();
+        document.getElementById('pt-new-save').onclick = () => createPatientInline();
+        res.querySelectorAll('input').forEach(i => i.addEventListener('keydown', e => { if (e.key==='Enter') { e.preventDefault(); createPatientInline(); } }));
+      };
+      const createPatientInline = async () => {
+        const name = ((document.getElementById('pt-new-name')||{}).value||'').trim();
+        const phone = ((document.getElementById('pt-new-phone')||{}).value||'').trim();
+        const email = ((document.getElementById('pt-new-email')||{}).value||'').trim();
+        if (!name || name.length<2) return fieldError('pt-new-name', 'Γράψε ονοματεπώνυμο.');
+        if (!/^\+?\d{10,13}$/.test(phone.replace(/\s/g,''))) return fieldError('pt-new-phone', 'Το τηλέφωνο είναι υποχρεωτικό (10–13 ψηφία).');
+        if (email && !/^\S+@\S+\.\S+$/.test(email)) return fieldError('pt-new-email', 'Το email δεν είναι έγκυρο.');
         // Ίδιο τηλέφωνο/email με άλλον πελάτη επιτρέπεται ΜΟΝΟ αν συνδεθούν ρητά.
         const links = [];
         const dupPhone = await findDuplicatePatientByPhone(phone);
@@ -13723,11 +13844,13 @@ function bindModalEvents() {
         const {data:np, error} = await sb.from('patients')
           .insert({clinic_id:clinicId(), full_name:normalizePatientName(name), phone, email: email || null, status:'active'})
           .select('id,full_name').single();
-        if (error) { alert('Σφάλμα: '+error.message); return; }
+        if (error) { showToast('Σφάλμα: '+error.message, 'err'); return; }
         for (const l of links) await sb.from('patient_relationships').insert({clinic_id:clinicId(), patient_a_id:np.id, patient_b_id:l.id, relationship_type:l.relationship_type});
         document.getElementById('a-patient-id').value = np.id;
         ps.value = np.full_name;
         res.style.display='none';
+        showToast('✓ Ο πελάτης δημιουργήθηκε και επιλέχθηκε', 'ok');
+        const svcS = document.getElementById('a-service-search'); if (svcS) svcS.focus();
       };
     };
     ps.onfocus = showPatientDropdown;
@@ -13906,11 +14029,11 @@ function bindModalEvents() {
   const _sa=document.getElementById('save-appt');if(_sa)_sa.addEventListener('click', async () => {
     const isInternal = !!(document.getElementById('a-internal')||{}).checked;
     const pid = isInternal ? '' : document.getElementById('a-patient-id').value;
+    // Επικύρωση inline (κάτω από το πεδίο), όχι alert(): πελάτης → υπηρεσία → ώρα.
+    if (!isInternal && !pid) return fieldError('a-patient-search', 'Επίλεξε πελάτη από τη λίστα ή πάτησε «Νέος πελάτης».');
     const time = document.getElementById('a-time').value;
-    if (!time) return alert('Συμπλήρωσε ημερομηνία και ώρα');
-    const timeWithTz = time.length===16 ? time+':00+03:00' : time+'+03:00'; // datetime-local: "YYYY-MM-DDTHH:MM"
     const internalTitle = isInternal ? document.getElementById('a-internal-title').value.trim() : '';
-    if (isInternal && !internalTitle) return alert('Συμπλήρωσε τίτλο για το εσωτερικό ραντεβού');
+    if (isInternal && !internalTitle) return fieldError('a-internal-title', 'Συμπλήρωσε τίτλο για το εσωτερικό ραντεβού.');
     const svcSel = document.getElementById('a-service');
     const serviceName = isInternal ? internalTitle : (svcSel.value==='__custom__' ? document.getElementById('a-service-custom').value.trim() : svcSel.value);
     // Ασφαλιστική δικλείδα: αν ο χρήστης πληκτρολόγησε στο πεδίο αναζήτησης
@@ -13919,8 +14042,11 @@ function bindModalEvents() {
     // μπλοκάρουμε αντί να αποθηκευτεί ραντεβού με κενή υπηρεσία.
     const svcSearchEl = document.getElementById('a-service-search');
     if (!isInternal && svcSearchEl && svcSearchEl.value.trim() && !serviceName) {
-      return alert('Επίλεξε την υπηρεσία από τη λίστα (ή «✎ Άλλη» για ελεύθερο κείμενο) — αυτό που έγραψες δεν έχει επιλεγεί ακόμα.');
+      return fieldError('a-service-search', 'Επίλεξε την υπηρεσία από τη λίστα (ή «✎ Άλλη» για ελεύθερο κείμενο).');
     }
+    if (!isInternal && !serviceName) return fieldError('a-service-search', 'Επίλεξε υπηρεσία.');
+    if (!time) return fieldError('a-time', 'Συμπλήρωσε ημερομηνία και ώρα.');
+    const timeWithTz = time.length===16 ? time+':00+03:00' : time+'+03:00'; // datetime-local: "YYYY-MM-DDTHH:MM"
     const therapistSel = document.getElementById('a-therapist');
     // Προειδοποίηση διπλοκράτησης ΘΕΡΑΠΕΥΤΗ: αν το νέο ραντεβού επικαλύπτεται
     // χρονικά με άλλο του ίδιου ατόμου, ρωτάμε — δεν μπλοκάρουμε (όπως και με
