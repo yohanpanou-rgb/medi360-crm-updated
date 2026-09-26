@@ -1140,11 +1140,22 @@ async function loadPageData() {
     S.patients = data||[];
   }
   if (S.page==='patients') {
-    // Επόμενο προγραμματισμένο ραντεβού ανά ασθενή — μικρή ένδειξη στη λίστα
-    const {data:nextAppts} = await sb.from('appointments').select('patient_id,start_time').eq('clinic_id',cid)
+    // Επόμενο προγραμματισμένο ραντεβού ανά ασθενή — στήλη «Επόμενο» στη λίστα
+    const {data:nextAppts} = await sb.from('appointments').select('patient_id,start_time,service_name').eq('clinic_id',cid)
       .gte('start_time', new Date().toISOString()).neq('status','cancelled').order('start_time',{ascending:true});
     S.nextApptByPatient = {};
-    (nextAppts||[]).forEach(a=>{ if (a.patient_id && !S.nextApptByPatient[a.patient_id]) S.nextApptByPatient[a.patient_id]=a.start_time; });
+    S.nextApptServiceByPatient = {};
+    (nextAppts||[]).forEach(a=>{ if (a.patient_id && !S.nextApptByPatient[a.patient_id]) { S.nextApptByPatient[a.patient_id]=a.start_time; S.nextApptServiceByPatient[a.patient_id]=a.service_name||''; } });
+    // Τελευταία επίσκεψη ανά ασθενή (UX audit P1): πιο πρόσφατο ραντεβού που έγινε —
+    // ολοκληρωμένο ή παρελθοντικό μη ακυρωμένο/no-show. Ένα ερώτημα, τα πιο πρόσφατα
+    // πρώτα, κρατάμε το πρώτο ανά ασθενή (σελιδοποιημένο, χωρίς όριο 1000).
+    S.lastVisitByPatient = {};
+    try {
+      const nowIso = new Date().toISOString();
+      const rows = await sbAll(() => sb.from('appointments').select('patient_id,start_time,status').eq('clinic_id',cid)
+        .lte('start_time', nowIso).not('status','in','("cancelled","no_show")').order('start_time',{ascending:false}));
+      rows.forEach(a=>{ if (a.patient_id && !S.lastVisitByPatient[a.patient_id]) S.lastVisitByPatient[a.patient_id]=a.start_time; });
+    } catch(e) {}
   }
   if (S.page==='dashboard') {
     // Τελευταία επίσκεψη για VIP + ενεργούς πελάτες — ειδικό, ακριβές query (όχι από το
@@ -1621,6 +1632,7 @@ async function loadPatientDetail(id, tab) {
   try {
     const {data:p, error:pErr} = await sb.from('patients').select('*').eq('id',id).single();
     if (pErr) throw new Error('Ασθενής: '+pErr.message);
+    rememberRecentPatient(p);
     const {data:a} = await sb.from('appointments').select('*').eq('patient_id',id).order('start_time',{ascending:true}).limit(500);
     await ensureStaffDirectory(); // για να δείχνει "Καταχωρήθηκε από: X" στο Ιστορικό Ραντεβού
     // Πωλήσεις καλλυντικών του ασθενή — για να δείχνει το tab Consultation ✓
@@ -2780,7 +2792,7 @@ function renderPatients() {
       (p.phone&&p.phone.includes(q)) ||
       (p.amka&&p.amka.includes(q)) ||
       (p.email&&p.email.toLowerCase().includes(q));
-    const mf = S.filter==='all'||p.status===S.filter;
+    const mf = S.filter==='all'||S.filter==='pending'||p.status===S.filter;
     return ms&&mf;
   });
 
@@ -2795,6 +2807,9 @@ function renderPatients() {
       if (sortKey==='medical_history') return hasMedicalHistoryData(p)?1:0;
       if (sortKey==='consult') return ((S.consultDates||{})[p.id]) ? new Date((S.consultDates||{})[p.id]).getTime() : 0;
       if (sortKey==='ltv') return p.ltv||0;
+      if (sortKey==='last_visit') return ((S.lastVisitByPatient||{})[p.id]) ? new Date(S.lastVisitByPatient[p.id]).getTime() : 0;
+      if (sortKey==='next_appt') return ((S.nextApptByPatient||{})[p.id]) ? new Date(S.nextApptByPatient[p.id]).getTime() : Infinity;
+      if (sortKey==='pending') return patListPending(p).length;
       return '';
     };
     filtered = [...filtered].sort((a,b)=>{
@@ -2804,11 +2819,27 @@ function renderPatients() {
       return 0;
     });
   }
+  // Φίλτρο «Εκκρεμότητες» (UX audit): όσοι έχουν κάτι ανοιχτό (GDPR, ιστορικό, κρίσιμη σημείωση)
+  if (S.filter==='pending') filtered = filtered.filter(p=>patListPending(p).length>0);
   const sortArrow = (key) => sortKey===key ? (sortDir==='asc'?' ▲':' ▼') : '';
   const dupGroups = detectDuplicatePatientGroups();
+  const cnt = (f) => f==='all' ? S.patients.length : f==='pending' ? S.patients.filter(p=>patListPending(p).length>0).length : S.patients.filter(p=>p.status===f).length;
+  const fmtShort = d => d ? new Date(d).toLocaleDateString('el-GR',{day:'numeric',month:'numeric'}) + (new Date(d).getFullYear()!==new Date().getFullYear()?'/'+String(new Date(d).getFullYear()).slice(2):'') : '';
+  const nextCell = (p) => {
+    const n = (S.nextApptByPatient||{})[p.id]; if (!n) return '<span style="color:var(--text-3)">—</span>';
+    const d = new Date(n); const today = d.toDateString()===new Date().toDateString();
+    const svc = (S.nextApptServiceByPatient||{})[p.id];
+    return `<span style="color:var(--blue);font-weight:600;white-space:nowrap">${today?'σήμερα':d.toLocaleDateString('el-GR',{weekday:'short',day:'numeric',month:'numeric'})} ${d.toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit',hour12:false})}</span>${svc?`<span class="hide-mobile" style="color:var(--text-2);font-size:11.5px"> · ${esc(svc)}</span>`:''}`;
+  };
+  const lastCell = (p) => {
+    const l = (S.lastVisitByPatient||{})[p.id]; if (!l) return '<span style="color:var(--text-3)">ποτέ</span>';
+    const days = Math.floor((Date.now()-new Date(l).getTime())/86400000);
+    const stale = days>90;
+    return `<span style="${stale?'color:#B45309':''}" title="${fmt(l)}">${fmtShort(l)}${days>=1?`<span style="font-size:11px;color:${stale?'#B45309':'var(--text-3)'}"> · ${days<30?days+' ημ.':days<365?Math.round(days/30)+' μήν.':Math.round(days/365)+' έτ.'}</span>`:''}</span>`;
+  };
   return `<div class="page">
     <div class="page-header">
-      <div><h1 class="page-title">${entityLabel()}</h1><p class="page-sub">${S.patients.length} συνολικά · ${S.patients.filter(p=>p.status==='active').length} ενεργοί</p></div>
+      <div><h1 class="page-title">${entityLabel()}</h1><p class="page-sub">${filtered.length} από ${S.patients.length}${S.globalSearch||S.search?' · αναζήτηση':''}</p></div>
       <button class="btn btn-primary" data-modal="new-patient">+ ${entityLabel('new')}</button>
     </div>
     ${dupGroups.length?`<div style="background:#FFF4E5;border:1px solid #F5C77E;border-radius:10px;padding:12px 16px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
@@ -2817,54 +2848,61 @@ function renderPatients() {
         ? `<button class="btn btn-sm" id="open-merge-duplicates" style="background:#D97706;color:#fff">Έλεγχος &amp; Συγχώνευση</button>`
         : `<span style="font-size:11px;color:#8A5A00">Η συγχώνευση γίνεται από διαχειριστή.</span>`}
     </div>`:''}
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">
-      ${[{l:'Σύνολο',v:S.patients.length,bg:'var(--surface)'},{l:'Ενεργοί',v:S.patients.filter(p=>p.status==='active').length,bg:'#E1F5EE'},{l:'VIP',v:S.patients.filter(p=>p.status==='vip').length,bg:'#EEEDFE'},{l:'Leads',v:S.patients.filter(p=>p.status==='lead').length,bg:'#E6F1FB'}].map(s=>`
-      <div style="background:${s.bg};border-radius:8px;padding:10px 14px"><div style="font-size:11px;color:var(--text-2);margin-bottom:2px">${s.l}</div><div style="font-size:20px;font-weight:500">${s.v}</div></div>`).join('')}
-    </div>
-    <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;align-items:center">
-      <div class="filter-tabs">
-        ${['all','active','vip','lead','inactive'].map(f=>`<button class="filter-tab ${S.filter===f?'active':''}" data-filter="${f}">${f==='all'?'Όλοι':(STATUS_PAT[f]&&STATUS_PAT[f].l)||f}</button>`).join('')}
-      </div>
-      <div style="font-size:12px;color:var(--text-2);margin-left:auto">${filtered.length} από ${S.patients.length}</div>
+    <!-- Φίλτρα με πλήθος μέσα τους (τα 4 tiles Σύνολο/Ενεργοί/VIP/Leads έφυγαν — UX audit) -->
+    <div class="cal-chips" style="margin-bottom:12px">
+      ${['all','active','vip','lead','inactive','pending'].map(f=>`<button class="cal-chip ${S.filter===f?'on':''}" data-filter="${f}">${f==='all'?'Όλοι':f==='pending'?'⚠ Εκκρεμότητες':(STATUS_PAT[f]&&STATUS_PAT[f].l)||f}<small>${cnt(f)}</small></button>`).join('')}
     </div>
     <div class="card">
-      <div class="table-wrap"><table>
+      <div class="table-wrap pat-list"><table>
         <thead><tr>
-          <th data-sort="full_name" style="cursor:pointer;user-select:none">Ασθενής${sortArrow('full_name')}</th>
-          <th class="hide-mobile" data-sort="phone" style="cursor:pointer;user-select:none">Τηλέφωνο${sortArrow('phone')}</th>
-          <th data-sort="status" style="cursor:pointer;user-select:none">Κατάσταση${sortArrow('status')}</th>
-          <th class="hide-mobile" data-sort="gdpr_signed" style="cursor:pointer;user-select:none">GDPR${sortArrow('gdpr_signed')}</th>
-          <th class="hide-mobile" data-sort="medical_history" style="cursor:pointer;user-select:none">Ιατρ. Ιστ.${sortArrow('medical_history')}</th>
-          <th class="hide-mobile" data-sort="consult" style="cursor:pointer;user-select:none">Consultation${sortArrow('consult')}</th>
-          ${canSeePrices()?`<th class="hide-mobile" data-sort="ltv" style="cursor:pointer;user-select:none">LTV${sortArrow('ltv')}</th>`:''}
+          <th data-sort="full_name" style="cursor:pointer;user-select:none">${entityLabel('one')}${sortArrow('full_name')}</th>
+          <th class="hide-mobile" data-sort="last_visit" style="cursor:pointer;user-select:none">Τελευταία επίσκεψη${sortArrow('last_visit')}</th>
+          <th class="hide-mobile" data-sort="next_appt" style="cursor:pointer;user-select:none">Επόμενο ραντεβού${sortArrow('next_appt')}</th>
+          <th class="hide-mobile" data-sort="status" style="cursor:pointer;user-select:none">Κατάσταση${sortArrow('status')}</th>
+          <th class="hide-mobile" data-sort="pending" style="cursor:pointer;user-select:none" title="GDPR, ιατρικό ιστορικό, consultation, κρίσιμη σημείωση">Εκκρεμότητες${sortArrow('pending')}</th>
+          ${canSeePrices()?`<th class="hide-mobile" data-sort="ltv" style="cursor:pointer;user-select:none;text-align:right">LTV${sortArrow('ltv')}</th>`:''}
           <th></th>
         </tr></thead>
         <tbody>${filtered.length?filtered.map(p=>{
-          const consultDate = (S.consultDates||{})[p.id];
-          return `<tr data-patient="${p.id}">
-          <td><div style="display:flex;align-items:center;gap:9px">
-            <div style="width:28px;height:28px;border-radius:50%;background:#E6F1FB;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;color:#185FA5;flex-shrink:0">${initials(p.full_name)}</div>
-            <div><div style="font-weight:500;font-size:13px">${esc(p.full_name)}</div>${p.email?`<div style="font-size:11px;color:var(--text-2)">${esc(p.email)}</div>`:''}
-              ${(S.nextApptByPatient||{})[p.id]?`<div style="font-size:10.5px;color:var(--blue);font-weight:600" title="Επόμενο ραντεβού">→ ${new Date(S.nextApptByPatient[p.id]).toLocaleDateString('el-GR',{day:'numeric',month:'numeric'})}, ${new Date(S.nextApptByPatient[p.id]).toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'})}</div>`:''}
-              <div class="mobile-pt-indicators">
-                <span style="font-size:10px;padding:1px 6px;border-radius:6px;background:${p.gdpr_signed?'#E1F5EE':'#FCEBEB'};color:${p.gdpr_signed?'#0F6E56':'#A32D2D'}">${p.gdpr_signed?'✅ GDPR':'❌ GDPR'}</span>
-                ${canSeePrices()?`<span style="font-size:10px;padding:1px 6px;border-radius:6px;background:var(--surface);color:#0F6E56;font-weight:500">LTV ${euro(p.ltv)}</span>`:''}
+          const pend = patListPending(p);
+          return `<tr data-patient="${p.id}" class="pat-row">
+          <td><div style="display:flex;align-items:center;gap:10px">
+            <div style="width:32px;height:32px;border-radius:50%;background:#E6F1FB;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:#185FA5;flex-shrink:0">${initials(p.full_name)}</div>
+            <div style="min-width:0;flex:1">
+              <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap"><span style="font-weight:600;font-size:13.5px">${esc(p.full_name)}</span>${p.status==='vip'?patBadge('vip'):''}${pend.filter(x=>x.key==='critical').map(x=>`<span title="${esc(x.label)}" style="color:#B91C1C">‼</span>`).join('')}</div>
+              <div style="font-size:12px;color:var(--text-2);display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                ${p.phone?`<span style="font-family:var(--mono)">${esc(p.phone)}</span>${phoneActionsHtml(p.phone, 12)}`:'<span style="color:var(--red)">χωρίς τηλέφωνο</span>'}
+              </div>
+              <!-- Κινητό: δεύτερη γραμμή με τελευταία/επόμενη — τα ίδια δεδομένα με τις στήλες του desktop -->
+              <div class="mobile-pt-indicators" style="font-size:11.5px;color:var(--text-2)">
+                <span>τελευταία ${lastCell(p)}</span><span>·</span><span>επόμενο ${nextCell(p)}</span>
+                ${pend.filter(x=>x.key!=='critical').map(x=>`<span title="${esc(x.label)}" style="color:${x.color}">${x.icon}</span>`).join('')}
+                ${p.status!=='vip'&&p.status!=='active'?patBadge(p.status):''}
               </div>
             </div>
           </div></td>
-          <td class="hide-mobile" style="font-family:var(--mono);font-size:12px;color:var(--text-2)"><span style="display:inline-flex;align-items:center;gap:6px">${esc(p.phone||'—')} ${phoneActionsHtml(p.phone, 12)}</span></td>
-          <td>${patBadge(p.status)}</td>
-          <td class="hide-mobile">${p.gdpr_signed?'✅':'❌'}</td>
-          <td class="hide-mobile">${hasMedicalHistoryData(p)?'<span style="color:#0F6E56;font-weight:600" title="Έχει συμπληρώσει ιατρικό ιστορικό">✓</span>':'<span style="color:var(--text-3)">—</span>'}</td>
-          <td class="hide-mobile">${consultDate?`<span style="color:#185FA5;font-weight:500;font-size:12px">${new Date(consultDate).toLocaleDateString('el-GR',{day:'2-digit',month:'2-digit',year:'numeric'})}</span>`:'<span style="color:var(--text-3)">—</span>'}</td>
-          ${canSeePrices()?`<td class="hide-mobile" style="font-weight:500;color:#0F6E56">${euro(p.ltv)}</td>`:''}
+          <td class="hide-mobile" style="font-size:12.5px;white-space:nowrap">${lastCell(p)}</td>
+          <td class="hide-mobile" style="font-size:12.5px;white-space:nowrap">${nextCell(p)}</td>
+          <td class="hide-mobile">${patBadge(p.status)}</td>
+          <td class="hide-mobile" style="font-size:14px;letter-spacing:2px">${pend.length?pend.map(x=>`<span title="${esc(x.label)}" style="color:${x.color};cursor:help">${x.icon}</span>`).join(''):'<span style="color:#0F6E56;font-size:12px;letter-spacing:0">✓ όλα οκ</span>'}</td>
+          ${canSeePrices()?`<td class="hide-mobile" style="font-weight:600;color:#0F6E56;text-align:right;font-variant-numeric:tabular-nums">${euro(p.ltv)}</td>`:''}
           <td style="width:1%"><button class="btn btn-ghost btn-xs" data-patient="${p.id}" title="Άνοιγμα" style="padding:4px 9px;font-size:15px;color:var(--text-2)">›</button></td>
         </tr>`;
-        }).join(''):`<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">◎</div><div>Δεν βρέθηκαν ασθενείς</div></div></td></tr>`}
+        }).join(''):`<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">◎</div><div>Δεν βρέθηκαν ${entityLabel().toLowerCase()}</div>${S.filter!=='all'?`<button class="btn btn-ghost btn-sm" data-filter="all" style="margin-top:8px">Καθάρισε το φίλτρο</button>`:''}</div></td></tr>`}
         </tbody>
       </table></div>
     </div>
   </div>`;
+}
+// Εκκρεμότητες πελάτη για τη λίστα (χωρίς την καρτέλα ανοιχτή): μόνο ό,τι ξέρουμε από τη
+// γραμμή του πίνακα patients + consultDates. Ίδια εικονίδια/χρώματα με την καρτέλα v2.
+function patListPending(p) {
+  const out = [];
+  if (p.critical_note && p.critical_note.trim()) out.push({key:'critical', icon:'‼', label:'Κρίσιμη σημείωση: '+p.critical_note.trim(), color:'#B91C1C'});
+  if (!p.gdpr_signed) out.push({key:'gdpr', icon:'🔏', label:'Χωρίς υπογεγραμμένο GDPR', color:'#A32D2D'});
+  if (!hasMedicalHistoryData(p)) out.push({key:'history', icon:'🏥', label:'Χωρίς ιατρικό ιστορικό', color:'#B45309'});
+  if (p.status!=='lead' && !(S.consultDates||{})[p.id]) out.push({key:'consult', icon:'📝', label:'Χωρίς consultation', color:'#5B6472'});
+  return out;
 }
 
 // ── PATIENT DETAIL ──
@@ -12597,8 +12635,30 @@ function bindEvents() {
         else render();
       }
     };
+    // Κενό πεδίο + focus → «Πρόσφατοι» / «Σήμερα». Κλείνει με κλικ έξω ή Escape.
+    _gs.onfocus = () => { S.searchFocused = true; if (!S.globalSearch) updateSearchDropdown(); };
+    if (!window._m360SearchOutside) {
+      window._m360SearchOutside = true;
+      document.addEventListener('click', (e) => {
+        if (e.target.closest('#global-search-wrap')) return;
+        S.searchFocused = false;
+        const dd = document.getElementById('search-dropdown');
+        if (dd && !S.globalSearch) dd.innerHTML = '';
+      });
+      // Συντόμευση desktop: Ctrl/⌘+K ή «/» (εκτός πεδίων) εστιάζει στην αναζήτηση.
+      document.addEventListener('keydown', (e) => {
+        const inField = /^(INPUT|TEXTAREA|SELECT)$/.test((e.target&&e.target.tagName)||'') || (e.target&&e.target.isContentEditable);
+        if (((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='k') || (e.key==='/' && !inField && !e.ctrlKey && !e.metaKey && !e.altKey)) {
+          const inp = document.getElementById('global-search');
+          if (!inp) return;
+          e.preventDefault();
+          if (window.innerWidth <= 768 && !S.mobileSearchOpen) { S.mobileSearchOpen = true; render(); }
+          setTimeout(()=>{ const i = document.getElementById('global-search'); if (i) { i.focus(); i.select(); } }, 30);
+        }
+      });
+    }
     _gs.onkeydown = e => {
-      if (e.key==='Escape') { S.globalSearch=''; S.globalResults=[]; render(); }
+      if (e.key==='Escape') { S.globalSearch=''; S.globalResults=[]; S.searchFocused=false; render(); }
       // Enter on patients page → close dropdown, keep filter
       if (e.key==='Enter' && S.globalResults&&S.globalResults.length>0) {
         const first = S.globalResults[0];
@@ -15101,6 +15161,7 @@ async function deletePatientPermanently() {
   if (delErr) { alert('Σφάλμα: '+delErr.message+'\n\nΔεν διαγράφηκε τίποτα.'); return; }
 
   showToast('✓ Ο ασθενής διαγράφηκε οριστικά.', 'ok');
+  forgetRecentPatient(p.id);
   S.page = 'patients'; S.patientDetail = null;
   await loadPageData(); render();
 }
@@ -15693,10 +15754,39 @@ function handleSearchInput(val) {
   }, 280);
 }
 
+// «Πρόσφατοι» πελάτες (UX audit): οι τελευταίοι που άνοιξε αυτός ο χρήστης σε αυτή τη
+// συσκευή — localStorage ανά κλινική, μόνο id/όνομα/τηλέφωνο, όχι κλινικά δεδομένα.
+function recentPatientsKey() { return 'm360_recent_' + (clinicId()||''); }
+function recentPatients() { try { return JSON.parse(localStorage.getItem(recentPatientsKey())||'[]'); } catch(e) { return []; } }
+function rememberRecentPatient(p) {
+  if (!p || !p.id) return;
+  try {
+    const list = recentPatients().filter(x=>x.id!==p.id);
+    list.unshift({id:p.id, name:p.full_name||'', phone:p.phone||'', at:Date.now()});
+    localStorage.setItem(recentPatientsKey(), JSON.stringify(list.slice(0,8)));
+  } catch(e) {}
+}
+function forgetRecentPatient(id) { try { localStorage.setItem(recentPatientsKey(), JSON.stringify(recentPatients().filter(x=>x.id!==id))); } catch(e) {} }
+// Κενό πεδίο αναζήτησης με focus: «Πρόσφατοι» + «Σήμερα στο ινστιτούτο» (αν έχουν φορτωθεί ραντεβού).
+function searchIdleHtml() {
+  const rec = recentPatients().slice(0,5);
+  const today = new Date().toDateString();
+  const todays = (S.appointments||[]).filter(a=>a.patient_id && a.start_time && new Date(a.start_time).toDateString()===today && !['cancelled','no_show'].includes(a.status))
+    .sort((a,b)=>new Date(a.start_time)-new Date(b.start_time)).slice(0,6);
+  if (!rec.length && !todays.length) return '';
+  const item = (id, title, sub, icon, bg) => `<div onclick="openSearchResult('patient','${id}')" style="padding:9px 14px;border-bottom:1px solid var(--border-2);cursor:pointer;display:flex;align-items:center;gap:10px;min-height:44px" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background=''">
+      <div style="width:28px;height:28px;border-radius:6px;background:${bg};display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0">${icon}</div>
+      <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(title)}</div>${sub?`<div style="font-size:11px;color:var(--text-2)">${esc(sub)}</div>`:''}</div></div>`;
+  const head = t => `<div style="padding:8px 14px 4px;font-size:10.5px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--text-3)">${t}</div>`;
+  return `<div style="background:var(--white);border:1px solid var(--border-2);border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,0.12);max-height:min(60vh,420px);overflow-y:auto">
+    ${rec.length ? head('Πρόσφατοι') + rec.map(r=>item(r.id, r.name, r.phone, '◎', '#E6F1FB')).join('') : ''}
+    ${todays.length ? head('Σήμερα στο ινστιτούτο') + todays.map(a=>item(a.patient_id, (a.patients&&a.patients.full_name)||'—', new Date(a.start_time).toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit',hour12:false})+' · '+(a.service_name||''), '◷', '#E1F5EE')).join('') : ''}
+  </div>`;
+}
 function updateSearchDropdown() {
   const dd = document.getElementById('search-dropdown');
   if (!dd) return;
-  if (!S.globalSearch) { dd.innerHTML = ''; return; }
+  if (!S.globalSearch) { dd.innerHTML = (S.searchFocused ? searchIdleHtml() : ''); return; }
   if (S.globalResults && S.globalResults.length) {
     dd.innerHTML = `<div style="background:var(--white);border:1px solid var(--border-2);border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,0.12);max-height:320px;overflow-y:auto">
       ${S.globalResults.map(r=>`
@@ -15717,7 +15807,7 @@ function updateSearchDropdown() {
 }
 
 function openSearchResult(type, id) {
-  S.globalSearch = ''; S.globalResults = [];
+  S.globalSearch = ''; S.globalResults = []; S.searchFocused = false; S.mobileSearchOpen = false;
   const dd = document.getElementById('search-dropdown');
   if (dd) dd.innerHTML = '';
   const inp = document.getElementById('global-search');
