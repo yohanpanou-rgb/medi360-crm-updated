@@ -154,6 +154,16 @@ a{color:inherit;text-decoration:none}
 .nav-label{}
 .sidebar.collapsed .nav-label{display:none}
 .sidebar.collapsed .nav-item{justify-content:center;padding:10px 0}
+/* Ομάδες μενού (π.χ. Marketing & Επικοινωνία): κεφαλίδα + υποσελίδες με εσοχή */
+.nav-item.nav-group{font-weight:600;color:rgba(255,255,255,0.7)}
+.nav-item.nav-group.group-active{color:#fff}
+.nav-chevron{margin-left:auto;font-size:11px;opacity:.6}
+.nav-item.nav-sub{padding-left:34px;font-size:12.5px;min-height:38px;position:relative}
+.nav-item.nav-sub::before{content:'';position:absolute;left:22px;top:0;bottom:0;width:1px;background:rgba(255,255,255,0.12)}
+.nav-item.nav-sub .nav-icon{font-size:13px}
+.sidebar.collapsed .nav-chevron{display:none}
+.sidebar.collapsed .nav-item.nav-sub{padding-left:0;min-height:36px}
+.sidebar.collapsed .nav-item.nav-sub::before{display:none}
 .sidebar.collapsed .clinic-picker{display:none}
 .sidebar.collapsed .logo-text,.sidebar.collapsed .logo-sub{display:none}
 
@@ -413,6 +423,21 @@ let S = {
 };
 
 function set(patch) { Object.assign(S, patch); render(); }
+
+// Ομάδες του πλευρικού μενού: κοινός τίτλος πάνω από συγγενείς σελίδες. Τα nav items
+// δηλώνουν `group:'<key>'`. Άνοιγμα/κλείσιμο ανά session (S.navGroups), αυτόματα ανοιχτή
+// όταν είσαι σε σελίδα της ομάδας.
+const NAV_GROUPS = {
+  marketing: {icon:'📣', label:'Marketing & Επικοινωνία'},
+};
+function toggleNavGroup(key) {
+  S.navGroups = S.navGroups || {};
+  const kids = ['marketing-gallery','marketing-campaigns','reviews'];
+  const activeIn = key==='marketing' && kids.includes(S.page);
+  // Αν είσαι μέσα στην ομάδα είναι πάντα ανοιχτή· αλλιώς εναλλαγή.
+  S.navGroups[key] = activeIn ? true : !S.navGroups[key];
+  render();
+}
 
 // ── HELPERS ──
 const esc = s => (s===null||s===undefined?'':s).toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -1869,9 +1894,11 @@ function renderShell(content) {
     {page:'consents',icon:'✓',label:'Συναινέσεις',roles:['super_admin','clinic_admin','therapist']},
     {page:'product-sale',icon:'🧴',label:'Πώληση Καλλυντικού',roles:['super_admin','clinic_admin','receptionist','therapist']},
     {page:'reports',icon:'▤',label:'Αναφορές',roles:['super_admin','clinic_admin']},
-    {page:'marketing-gallery',icon:'📸',label:'Marketing Φωτογραφίες',roles:['super_admin','clinic_admin']},
-    {page:'marketing-campaigns',icon:'📢',label:'Μαζικά Μηνύματα',roles:['super_admin','clinic_admin']},
-    {page:'reviews',icon:'⭐',label:'Google Reviews',roles:['super_admin','clinic_admin']},
+    // Ομάδα «Marketing & Επικοινωνία»: τα τρία εμφανίζονται κάτω από κοινό τίτλο στο μενού
+    // (βλ. NAV_GROUPS) — οι σελίδες/modules παραμένουν ανεξάρτητες.
+    {page:'marketing-gallery',icon:'📸',label:'Marketing Φωτογραφίες',roles:['super_admin','clinic_admin'],group:'marketing'},
+    {page:'marketing-campaigns',icon:'📢',label:'Μαζικά Μηνύματα',roles:['super_admin','clinic_admin'],group:'marketing'},
+    {page:'reviews',icon:'⭐',label:'Google Reviews',roles:['super_admin','clinic_admin'],group:'marketing'},
     {page:'prescriptions',icon:'℞',label:'Συνταγές (ΗΔΙΚΑ)',roles:['super_admin','clinic_admin','therapist']},
     {page:'staff-services',icon:'🗂',label:'Προσωπικό & Υπηρεσίες',roles:['super_admin','clinic_admin']},
     {page:'clinics',icon:'⊞',label:'Κλινικές',roles:['super_admin']},
@@ -1908,9 +1935,29 @@ function renderShell(content) {
       <div onclick="panicHide()" title="PANIC — Απόκρυψη όλων των δεδομένων" style="margin:4px 12px 10px;padding:${collapsed?'9px 0':'9px 12px'};border-radius:8px;background:#B91C1C;color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:${collapsed?'center':'flex-start'};gap:8px;cursor:pointer;letter-spacing:.5px">
         <span style="font-size:14px">🛑</span>${!collapsed?'<span>PANIC</span>':''}
       </div>`:''}
-      ${NAV.map(n=>`<div class="nav-item ${S.page===n.page||S.page==='patient-detail'&&n.page==='patients'?'active':''}" data-page="${n.page}">
+      ${(()=>{
+        // Ομαδοποίηση nav items (π.χ. Marketing & Επικοινωνία): τίτλος-κεφαλίδα που ανοίγει/κλείνει
+        // τα παιδιά του. Ανοιχτή αυτόματα όταν η τρέχουσα σελίδα ανήκει στην ομάδα. Σε
+        // collapsed sidebar τα παιδιά μένουν ορατά (μόνο εικονίδια) κάτω από το εικονίδιο της ομάδας.
+        const navItem = (n, sub) => `<div class="nav-item ${sub?'nav-sub':''} ${S.page===n.page||S.page==='patient-detail'&&n.page==='patients'?'active':''}" data-page="${n.page}">
         <span class="nav-icon">${n.icon}</span><span class="nav-label">${n.label}</span>
-      </div>`).join('')}
+      </div>`;
+        const out = []; const done = new Set();
+        NAV.forEach(n => {
+          if (!n.group) { out.push(navItem(n,false)); return; }
+          if (done.has(n.group)) return;
+          done.add(n.group);
+          const g = NAV_GROUPS[n.group] || {icon:'▸', label:n.group};
+          const kids = NAV.filter(x=>x.group===n.group);
+          const activeIn = kids.some(k=>k.page===S.page);
+          const open = collapsed || activeIn || (S.navGroups||{})[n.group] === true;
+          out.push(`<div class="nav-item nav-group ${activeIn?'group-active':''}" onclick="toggleNavGroup('${n.group}')" title="${esc(g.label)}">
+        <span class="nav-icon">${g.icon}</span><span class="nav-label">${esc(g.label)}</span><span class="nav-chevron">${open?'▾':'▸'}</span>
+      </div>`);
+          if (open) kids.forEach(k => out.push(navItem(k,true)));
+        });
+        return out.join('');
+      })()}
     </nav>
     <div class="sidebar-footer">
       <div class="user-info">
