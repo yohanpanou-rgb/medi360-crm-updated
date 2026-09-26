@@ -287,6 +287,28 @@ tr{cursor:pointer}
   .tl-month{top:calc(56px + var(--pat-head-h,52px) + 40px)}
 }
 html[data-theme="dark"] .tl-next{background:rgba(180,83,9,.15);border-color:rgba(253,230,138,.3)}
+/* Ρυθμίσεις → Κλινική: υπο-μενού ενοτήτων + dirty state ανά κάρτα (UX audit P2) */
+.settings-clinic{display:grid;grid-template-columns:210px minmax(0,1fr);gap:18px;align-items:start}
+.settings-nav{display:flex;flex-direction:column;gap:2px;position:sticky;top:calc(56px + 64px)}
+.settings-nav button{display:flex;align-items:center;gap:9px;text-align:left;padding:9px 12px;border-radius:8px;background:transparent;color:var(--text-2);font-size:13px;font-family:var(--font);min-height:40px;border:none;cursor:pointer}
+.settings-nav button:hover{background:var(--white);color:var(--text)}
+.settings-nav button.on{background:var(--white);color:var(--blue);font-weight:600;box-shadow:var(--shadow-sm)}
+.settings-nav .ico{width:17px;height:17px}
+.settings-clinic .card[data-sec]{display:none}
+.settings-clinic[data-sec-active="basics"] .card[data-sec="basics"],
+.settings-clinic[data-sec-active="spaces"] .card[data-sec="spaces"],
+.settings-clinic[data-sec-active="comms"] .card[data-sec="comms"],
+.settings-clinic[data-sec-active="data"] .card[data-sec="data"]{display:block}
+.card.is-dirty .card-header::after{content:'● μη αποθηκευμένες αλλαγές';font-size:11px;font-weight:600;color:#B45309;margin-left:auto;white-space:nowrap}
+.card.is-dirty .btn-primary{box-shadow:0 0 0 3px var(--blue-soft);animation:dirtyPulse 1.2s ease 1}
+@keyframes dirtyPulse{0%{box-shadow:0 0 0 0 rgba(3,68,242,.35)}100%{box-shadow:0 0 0 6px rgba(3,68,242,0)}}
+@media(max-width:768px){
+  .settings-clinic{grid-template-columns:1fr;gap:12px}
+  .settings-nav{position:static;flex-direction:row;overflow-x:auto;gap:6px;scrollbar-width:none;padding-bottom:2px}
+  .settings-nav::-webkit-scrollbar{display:none}
+  .settings-nav button{flex:0 0 auto;border:1px solid var(--border);border-radius:99px;background:var(--white);padding:7px 12px;min-height:38px;font-size:12.5px}
+  .settings-nav button.on{background:var(--blue);color:#fff;border-color:var(--blue);box-shadow:none}
+}
 /* Πρόγραμμα σε κινητό: FAB «+ Ραντεβού», chips θεραπευτριών, γραμμή εργαλείων μίας σειράς */
 .cal-fab{display:none}
 .cal-chips{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}
@@ -10470,6 +10492,13 @@ function renderSettings() {
   const c = S.clinic;
   const integrations = (c&&c.integrations)||{};
   const settingsTab = S.settingsTab||'clinic';
+  const SETTINGS_SECS = [
+    {id:'basics', l:'Στοιχεία & ωράριο', ico:'building'},
+    {id:'spaces', l:'Χώροι', ico:'folder'},
+    {id:'comms',  l:'Επικοινωνία με πελάτες', ico:'mail'},
+    {id:'data',   l:'Δεδομένα & εργαλεία', ico:'settings'},
+  ];
+  const settingsSec = SETTINGS_SECS.some(s=>s.id===S.settingsSec) ? S.settingsSec : 'basics';
   return `<div class="page">
     <div class="page-header"><h1 class="page-title">Ρυθμίσεις</h1></div>
 
@@ -10479,10 +10508,15 @@ function renderSettings() {
       <button class="btn" style="border-radius:0;border-bottom:2px solid ${settingsTab===t.id?'var(--blue)':'transparent'};color:${settingsTab===t.id?'var(--blue)':'var(--text-2)'};background:transparent;padding:8px 16px;font-size:13px" data-settings-tab="${t.id}">${t.l}</button>`).join('')}
     </div>
 
-    <!-- CLINIC TAB -->
+    <!-- CLINIC TAB — υπο-ενότητες (UX audit P2): αριστερό υπο-μενού σε desktop, chips σε κινητό.
+         Οι κάρτες μένουν ίδιες (ίδια ids, ίδιοι handlers), απλώς φιλτράρονται με data-sec. -->
     ${settingsTab==='clinic'?`
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px" class="dash-grid">
-      <div class="card">
+    <div class="settings-clinic" data-sec-active="${settingsSec}">
+      <nav class="settings-nav" aria-label="Ενότητες ρυθμίσεων">
+        ${SETTINGS_SECS.map(s=>`<button type="button" class="${settingsSec===s.id?'on':''}" onclick="S.settingsSec='${s.id}';render()">${icon(s.ico)}<span>${s.l}</span></button>`).join('')}
+      </nav>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px" class="dash-grid settings-cards">
+      <div class="card" data-sec="basics">
         <div class="card-header"><span class="card-title">Πληροφορίες Κλινικής</span></div>
         <div style="padding:16px">
           ${c?[['Όνομα',c.name],['Email',c.email],['Τηλέφωνο',c.phone],['Πόλη',c.city],['Διεύθυνση',c.address],['Ωράριο',c.settings&&c.settings.hours||'09:00 - 20:00']].map(([k,v])=>`
@@ -10491,7 +10525,7 @@ function renderSettings() {
           </div>`).join(''):'<div style="padding:20px;text-align:center;color:var(--text-2)">Δεν έχει επιλεγεί κλινική</div>'}
         </div>
       </div>
-      <div class="card">
+      <div class="card" data-sec="basics">
         <div class="card-header"><span class="card-title">Ωράριο Λειτουργίας</span></div>
         <div style="padding:16px">
           <div class="form-group">
@@ -10513,7 +10547,7 @@ function renderSettings() {
       </div>
 
       <!-- ΟΝΟΜΑΣΙΑ: Πελάτες (ινστιτούτο) ή Ασθενείς (ιατρείο) — μενού, τίτλοι, tab bar -->
-      <div class="card">
+      <div class="card" data-sec="basics">
         <div class="card-header"><span class="card-title">🏷 Ονομασία στο μενού</span></div>
         <div style="padding:16px">
           <div style="font-size:12px;color:var(--text-2);margin-bottom:12px">Πώς λέγονται τα άτομα που εξυπηρετείς: <b>Πελάτες</b> (ινστιτούτο αισθητικής) ή <b>Ασθενείς</b> (ιατρείο). Αλλάζει το μενού, τους τίτλους σελίδων και το κάτω μενού του κινητού — τίποτα στα δεδομένα.</div>
@@ -10525,7 +10559,7 @@ function renderSettings() {
       </div>
 
       <!-- ΟΡΑΤΟΤΗΤΑ ΠΟΣΩΝ ΓΙΑ ΤΗ ΓΡΑΜΜΑΤΕΙΑ (default: κρυμμένα) -->
-      <div class="card">
+      <div class="card" data-sec="basics">
         <div class="card-header"><span class="card-title">€ Ορατότητα ποσών</span></div>
         <div style="padding:16px">
           <div style="font-size:12px;color:var(--text-2);margin-bottom:12px">Οι τιμές ραντεβού και το LTV πελάτη φαίνονται πάντα σε διαχειριστές. Εδώ επιλέγεις αν θα τα βλέπει και η <b>Γραμματεία</b> (λίστες ραντεβού και πελατών, καρτέλα, Πρόγραμμα, φόρμα νέου ραντεβού). Τα έσοδα στο Dashboard και οι Αναφορές παραμένουν μόνο για διαχειριστές.</div>
@@ -10536,7 +10570,7 @@ function renderSettings() {
         </div>
       </div>
 
-      <div class="card">
+      <div class="card" data-sec="comms">
         <div class="card-header"><span class="card-title">🎨 Branding</span></div>
         <div style="padding:16px">
           <div style="font-size:12px;color:var(--text-2);margin-bottom:14px">Χρησιμοποιείται σε όλα τα emails και τους αυτοματισμούς (επιβεβαιώσεις ραντεβού, οδηγίες, γενέθλια, καθημερινό πρόγραμμα κ.λπ.) — άλλαξε το εδώ μία φορά αντί σε κάθε template ξεχωριστά.</div>
@@ -10557,7 +10591,7 @@ function renderSettings() {
       </div>
 
       <!-- ΟΔΗΓΙΕΣ ΠΡΟΣΒΑΣΗΣ / PARKING -->
-      <div class="card">
+      <div class="card" data-sec="comms">
         <div class="card-header"><span class="card-title">🅿️ Οδηγίες Πρόσβασης &amp; Parking</span></div>
         <div style="padding:16px">
           <div style="font-size:12px;color:var(--text-2);margin-bottom:14px">Εμφανίζεται στο email επιβεβαίωσης ραντεβού και στο email κλεισίματος ραντεβού, δίπλα στη διεύθυνση. Μία γραμμή ανά τρόπο πρόσβασης (π.χ. parking, ΜΜΜ). Για να εμφανιστεί σύνδεσμος και στο SMS, πρόσθεσε το <code>{access_link}</code> στο κείμενο SMS επιβεβαίωσης/κλεισίματος (καρτέλα SMS &amp; Αυτοματισμοί) — χωρίς αυτό, τα SMS μένουν όπως είναι σήμερα.</div>
@@ -10570,7 +10604,7 @@ function renderSettings() {
       </div>
 
       <!-- ΖΗΤΗΣΗ ΑΞΙΟΛΟΓΗΣΗΣ -->
-      <div class="card">
+      <div class="card" data-sec="comms">
         <div class="card-header"><span class="card-title">⭐ Ζήτηση Αξιολόγησης</span></div>
         <div style="padding:16px">
           <div style="font-size:12px;color:var(--text-2);margin-bottom:14px">Στέλνει αυτόματα email &amp; SMS στον πελάτη μετά την ολοκλήρωση του ραντεβού, με σύνδεσμο για αξιολόγηση. Αν ο πελάτης έχει <b>δύο ραντεβού την ίδια ημέρα</b>, φεύγει <b>ένα</b> μήνυμα, μετά το τέλος του τελευταίου. Παραμένει ανενεργή μέχρι να τη θέσεις σε λειτουργία.</div>
@@ -10596,7 +10630,7 @@ function renderSettings() {
       ${renderNamedaySettingsCard(c)}
 
       <!-- ΚΑΤΑΓΡΑΦΗ ΑΝΑΛΩΣΙΜΩΝ -->
-      <div class="card">
+      <div class="card" data-sec="data">
         <div class="card-header"><span class="card-title">🧴 Καταγραφή Αναλώσιμων</span></div>
         <div style="padding:16px">
           <div style="font-size:12px;color:var(--text-2);margin-bottom:14px">Προσθέτει στην κάρτα κάθε ολοκληρωμένου ραντεβού τη δυνατότητα καταγραφής των αναλώσιμων που χρησιμοποιήθηκαν. Παραμένει κρυμμένη μέχρι να την ενεργοποιήσεις.</div>
@@ -10611,7 +10645,7 @@ function renderSettings() {
       </div>
 
       <!-- ΥΠΟΚΑΤΑΣΤΗΜΑΤΑ -->
-      <div class="card">
+      <div class="card" data-sec="spaces">
         <div class="card-header"><span class="card-title">🏢 Υποκαταστήματα (${(S.clinicBranches||[]).length})</span>
           <button class="btn btn-primary btn-sm" onclick="openBranchFormModal()">+ Νέο Υποκατάστημα</button>
         </div>
@@ -10636,7 +10670,7 @@ function renderSettings() {
       </div>
 
       <!-- ΔΩΜΑΤΙΑ -->
-      <div class="card">
+      <div class="card" data-sec="spaces">
         <div class="card-header"><span class="card-title">🚪 Δωμάτια (${(S.clinicRooms||[]).length})</span>
           <button class="btn btn-primary btn-sm" onclick="openRoomFormModal()">+ Νέο Δωμάτιο</button>
         </div>
@@ -10662,7 +10696,7 @@ function renderSettings() {
       </div>
 
       <!-- ΚΑΘΗΜΕΡΙΝΗ ΑΝΑΦΟΡΑ ΕΛΕΓΧΟΥ -->
-      <div class="card" style="grid-column:1/-1">
+      <div class="card" data-sec="comms" style="grid-column:1/-1">
         <div class="card-header"><span class="card-title">📋 Καθημερινή Αναφορά Ελέγχου Ραντεβού & Πελατών</span></div>
         <div style="padding:16px">
           <div style="font-size:12px;color:var(--text-2);margin-bottom:14px">Στέλνει κάθε πρωί email (με συνημμένο PDF) με έλεγχο GDPR, consultation, συναινέσεων υπηρεσίας, στοιχείων πελάτη και επόμενου βήματος για τα σημερινά ραντεβού — και τεχνικό/λειτουργικό έλεγχο (διπλότυπους πελάτες, συγκρούσεις ραντεβού, ραντεβού εκτός ωραρίου, automations που απέτυχαν). Πάντα σαν σημείωση με πρόταση — δεν αλλάζει τίποτα αυτόματα. Παραμένει ανενεργή μέχρι να τη θέσεις σε λειτουργία.</div>
@@ -10702,7 +10736,7 @@ function renderSettings() {
 
       <!-- ΕΚΚΡΕΜΕΙΣ CONSULTATIONS -->
       ${(S.unmatchedConsultations&&S.unmatchedConsultations.length)?`
-      <div class="card" style="grid-column:1/-1">
+      <div class="card" data-sec="data" style="grid-column:1/-1">
         <div class="card-header"><span class="card-title">📋 Εκκρεμείς Consultations (${S.unmatchedConsultations.length})</span></div>
         <div style="padding:16px">
           <div style="font-size:11px;color:var(--text-2);margin-bottom:14px;line-height:1.5">Αυτά τα consultation emails δεν βρήκαν αυτόματα αντίστοιχο ασθενή (διαφορετική ορθογραφία ονόματος, ή το email/τηλέφωνο δεν είναι καταχωρημένο στην καρτέλα). Σύνδεσέ τα χειροκίνητα με τον σωστό ασθενή.</div>
@@ -10723,7 +10757,7 @@ function renderSettings() {
       </div>`:''}
 
       <!-- ΕΡΓΑΛΕΙΑ ΔΕΔΟΜΕΝΩΝ -->
-      <div class="card" style="grid-column:1/-1">
+      <div class="card" data-sec="data" style="grid-column:1/-1">
         <div class="card-header"><span class="card-title">🔤 Ονόματα Πελατών σε ΚΕΦΑΛΑΙΑ</span></div>
         <div style="padding:16px">
           <div style="font-size:11px;color:var(--text-2);margin-bottom:12px;line-height:1.5">Μετατρέπει εφάπαξ όλα τα ονοματεπώνυμα των υπαρχόντων πελατών της κλινικής σε κεφαλαία γράμματα. Από εδώ και πέρα, κάθε νέα ή τροποποιημένη καταχώρηση (χειροκίνητη, import, Booking247 sync κλπ) αποθηκεύεται αυτόματα σε κεφαλαία, οπότε αυτό χρειάζεται να τρέξει μία φορά.</div>
@@ -10733,7 +10767,7 @@ function renderSettings() {
       </div>
 
       <!-- PANIC ZONE -->
-      <div class="card" style="grid-column:1/-1;background:#FEF2F2">
+      <div class="card" data-sec="data" style="grid-column:1/-1;background:#FEF2F2">
         <div class="card-header"><span class="card-title" style="color:#7F1D1D">🛑 Panic Zone</span></div>
         <div style="padding:16px;display:flex;flex-direction:column;gap:14px">
           <div style="display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap">
@@ -10758,6 +10792,7 @@ function renderSettings() {
           </div>`:''}
         </div>
       </div>
+    </div>
     </div>`:''}
 
     <!-- INTEGRATIONS TAB -->
@@ -12717,6 +12752,27 @@ function bindEvents() {
     };
     // Κενό πεδίο + focus → «Πρόσφατοι» / «Σήμερα». Κλείνει με κλικ έξω ή Escape.
     _gs.onfocus = () => { S.searchFocused = true; if (!S.globalSearch) updateSearchDropdown(); };
+    // Ρυθμίσεις: dirty state ανά κάρτα (UX audit P2). Αλλαγή σε πεδίο κάρτας που έχει δικό της
+    // «Αποθήκευση» → ένδειξη «μη αποθηκευμένες αλλαγές» στην κεφαλίδα και τονισμός του κουμπιού.
+    // Οι κάρτες με άμεση αποθήκευση (toggles/select χωρίς κουμπί) δεν σημειώνονται.
+    if (!window._m360Dirty) {
+      window._m360Dirty = true;
+      const mark = (e) => {
+        const card = e.target && e.target.closest && e.target.closest('.settings-clinic .card');
+        if (!card || !card.querySelector('button[id^="save-"]')) return;
+        if (e.target.closest('[onchange*="saveClinicSettingPatch"],[onclick*="saveClinicSettingPatch"]')) return;
+        card.classList.add('is-dirty');
+      };
+      document.addEventListener('input', mark);
+      document.addEventListener('change', mark);
+      document.addEventListener('click', (e) => {
+        const btn = e.target && e.target.closest && e.target.closest('.settings-clinic .card button[id^="save-"]');
+        if (btn) { const card = btn.closest('.card'); setTimeout(()=>{ if (card) card.classList.remove('is-dirty'); }, 0); }
+      });
+      window.addEventListener('beforeunload', (e) => {
+        if (document.querySelector('.settings-clinic .card.is-dirty')) { e.preventDefault(); e.returnValue = ''; }
+      });
+    }
     if (!window._m360SearchOutside) {
       window._m360SearchOutside = true;
       document.addEventListener('click', (e) => {
