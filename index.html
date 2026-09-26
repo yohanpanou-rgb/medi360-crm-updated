@@ -287,6 +287,45 @@ tr{cursor:pointer}
   .tl-month{top:calc(56px + var(--pat-head-h,52px) + 40px)}
 }
 html[data-theme="dark"] .tl-next{background:rgba(180,83,9,.15);border-color:rgba(253,230,138,.3)}
+/* ── TABLET 769–1024px (UX audit §6.2): icon rail by default (JS), grids 2 στηλών με ελάχιστο
+   320px, modals 560px. Οι κανόνες με [style*=…] στοχεύουν μόνο τα inline grids 2/4 στηλών. ── */
+@media(min-width:769px) and (max-width:1024px){
+  .dash-grid[style*="grid-template-columns:1fr 1fr;"],.dash-grid[style*="grid-template-columns:1fr 1fr 1fr 1fr"]{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))!important}
+  .dash-grid[style*="grid-template-columns:repeat(4,1fr)"]{grid-template-columns:repeat(2,1fr)!important}
+  .dash-grid[style*="grid-template-columns:2fr 1fr"]{grid-template-columns:1fr!important}
+  .modal{max-width:560px!important}
+  .settings-clinic{grid-template-columns:180px minmax(0,1fr)}
+}
+/* Icon rail: με ποντίκι, το πτυσσόμενο sidebar ανοίγει προσωρινά στο hover (πάνω από το περιεχόμενο) */
+@media(min-width:769px) and (hover:hover){
+  .sidebar.collapsed:hover{width:220px;box-shadow:var(--shadow-lg)}
+  .sidebar.collapsed:hover .nav-label{display:inline}
+  .sidebar.collapsed:hover .nav-item{justify-content:flex-start;padding:10px 16px}
+  .sidebar.collapsed:hover .nav-item.nav-sub{padding-left:34px}
+  .sidebar.collapsed:hover .nav-chevron{display:inline}
+}
+/* ── DESKTOP ≥1025px (UX audit §6.3): περιεχόμενο έως 1320px κεντραρισμένο (εκτός Προγράμματος),
+   συμπαγή stat tiles, καρτέλα πελάτη v2 με πλευρικό πάνελ σε ≥1200px. ── */
+@media(min-width:769px){
+  .stat-card{padding:14px 16px}
+  .stat-value{font-size:22px;margin-bottom:4px;letter-spacing:-.5px}
+  .stat-icon{width:28px;height:28px;font-size:14px;margin-bottom:6px;border-radius:8px}
+  .stat-label{margin-bottom:5px}
+}
+@media(min-width:1025px){
+  .page{max-width:1320px;margin-left:auto;margin-right:auto;width:100%}
+  .page.cal-page{max-width:none}
+  .stats-grid{grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
+}
+.pat-v2-layout{display:block}
+.pat-v2-side{display:none}
+@media(min-width:1200px){
+  .pat-v2-layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:16px;align-items:start}
+  .pat-v2-side{display:flex;flex-direction:column;gap:12px;position:sticky;top:calc(56px + var(--pat-head-h,52px) + 54px)}
+}
+.pat-side-row{display:flex;align-items:flex-start;gap:8px;padding:7px 0;border-bottom:1px solid var(--border-2);font-size:12.5px}
+.pat-side-row:last-child{border-bottom:none}
+.pat-side-row .btn{margin-left:auto}
 /* Χρονολογημένες σημειώσεις πελάτη (Επισκόπηση v2) */
 .pat-note{padding:9px 12px;border-radius:10px;background:var(--surface);margin-top:6px;border-left:3px solid var(--border)}
 .pat-note.pinned{background:#FFFBEB;border-left-color:#D97706}
@@ -994,7 +1033,18 @@ function hasMedicalHistoryData(p) {
 function apptBadge(status){const s=STATUS_APPT[status]||STATUS_APPT.confirmed;return badge(s.l,s.bg,s.c)}
 
 // ── AUTH ──
+// Sidebar: θυμάται την προτίμηση (πτυσσόμενο/ανοιχτό) ανά συσκευή. Χωρίς προτίμηση, σε tablet
+// (769–1024px) ξεκινά ως icon rail — το 820px iPad της ρεσεψιόν χάνει αλλιώς 220px (UX audit §6.2).
+function applySidebarPreference() {
+  try {
+    const pref = localStorage.getItem('m360_sidebar');
+    if (pref === 'collapsed') S.sidebarCollapsed = true;
+    else if (pref === 'expanded') S.sidebarCollapsed = false;
+    else if (window.innerWidth > 768 && window.innerWidth <= 1024) S.sidebarCollapsed = true;
+  } catch(e) {}
+}
 async function init() {
+  applySidebarPreference();
   const { data:{session} } = await sb.auth.getSession();
   if (session&&session.user) await loadProfile(session.user);
   else { set({page:'login',loading:false}); }
@@ -4236,6 +4286,34 @@ function patV2Pending(p) {
     extra: (p.email&&p.gdpr_signed) ? `<button class="btn btn-sm btn-ghost" id="resend-birthday-email-btn" data-gift-id="${g.id}" style="padding:3px 8px;font-size:11px;min-height:0">📧 ${g.channel==='call'?'Αποστολή email':'Επαναποστολή'}</button>` : ''});
   return items;
 }
+// Πλευρικό πάνελ καρτέλας v2 (desktop ≥1200px, tabs εκτός Επισκόπησης) — συμπαγής σύνοψη:
+// επόμενο ραντεβού, εκκρεμότητες, σταθερή σημείωση, τελευταίες 2 σημειώσεις.
+function renderPatientSideV2(p, ctx) {
+  const now = Date.now();
+  const appts = p.appointments||[];
+  const next = appts.filter(a=>a.start_time && new Date(a.start_time).getTime()>=now && !['cancelled','no_show','completed'].includes(a.status)).sort((a,b)=>new Date(a.start_time)-new Date(b.start_time))[0];
+  const ther = a => (a.therapist_id && S.staffDirectory && S.staffDirectory[a.therapist_id]) || '';
+  const pending = patV2Pending(p);
+  const notes = (S.patientNotes||[]).slice(0,2);
+  const lbl = `font-size:11px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--text-3)`;
+  const TONE = {red:'#A32D2D', amber:'#B45309', gray:'var(--text-2)', pink:'#C4618A'};
+  return `<div class="card" style="border-left:4px solid var(--blue)"><div style="padding:12px 14px">
+      <div style="${lbl}">Επόμενο ραντεβού</div>
+      ${next ? `<div style="font-size:13.5px;font-weight:600;margin-top:4px">${esc(next.service_name||'Ραντεβού')}</div>
+        <div style="font-size:12px;color:var(--text-2)">${fmtDt(next.start_time)}${ther(next)?' · '+esc(ther(next)):''}</div>
+        <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">${apptBadge(next.status)}<button class="btn btn-ghost btn-xs" onclick="gotoCalendarDay('${next.start_time}')">Πρόγραμμα →</button></div>`
+      : `<div style="font-size:12.5px;color:var(--text-2);margin:4px 0 8px">Κανένα προγραμματισμένο</div><button class="btn btn-primary btn-sm" data-modal="new-appt">+ Κλείσε ραντεβού</button>`}
+    </div></div>
+    <div class="card"><div style="padding:10px 14px 6px">
+      <div style="${lbl}">Εκκρεμότητες${pending.length?' · '+pending.length:''}</div>
+      ${pending.length ? pending.map(i=>`<div class="pat-side-row"><span>${i.icon}</span><span style="color:${TONE[i.tone]||'inherit'};min-width:0;flex:1">${esc(i.label)}</span><button class="btn btn-ghost btn-xs" onclick="${i.action}">${i.act}</button></div>`).join('') : `<div style="font-size:12.5px;color:#0F6E56;padding:6px 0">✓ Όλα εντάξει</div>`}
+    </div></div>
+    <div class="card"><div style="padding:10px 14px 10px">
+      <div style="display:flex;justify-content:space-between;align-items:center"><span style="${lbl}">Σημείωση</span><button class="btn btn-link btn-xs" onclick="S.patTab='overview';render()">Επεξεργασία</button></div>
+      <div style="font-size:12.5px;line-height:1.5;color:${p.notes?'var(--text)':'var(--text-3)'};white-space:pre-wrap;overflow-wrap:anywhere;margin-top:2px">${p.notes?esc(p.notes):'—'}</div>
+      ${notes.length ? `<div style="margin-top:8px;border-top:1px dashed var(--border-2);padding-top:6px">${notes.map(n=>`<div style="font-size:12px;color:var(--text-2);padding:3px 0"><b style="color:var(--text)">${esc((n.profiles&&n.profiles.full_name)||'—')}</b> · ${fmt(n.created_at)}<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(n.body)}</div></div>`).join('')}</div>` : ''}
+    </div></div>`;
+}
 function renderPatientOverviewV2(p, ctx) {
   const now = Date.now();
   const appts = p.appointments||[];
@@ -4571,7 +4649,12 @@ function renderPatientDetailV2(p, ctx) {
         ${tabs.map(t=>`<button class="btn" data-pat-tab="${t.id}" style="flex-shrink:0;border-radius:8px 8px 0 0;padding:9px 10px;font-size:12.5px;white-space:nowrap;background:${tab===t.id?'var(--white)':'transparent'};color:${tab===t.id?'var(--blue)':'var(--text-2)'};font-weight:${tab===t.id?'700':'500'};border-bottom:2px solid ${tab===t.id?'var(--blue)':'transparent'};margin-bottom:-1px">${t.l}${t.n!=null?`<span style="margin-left:5px;font-size:10.5px;font-weight:700;padding:1px 6px;border-radius:8px;background:${tab===t.id?'var(--blue-soft)':'var(--surface-2)'};color:${tab===t.id?'var(--blue)':'var(--text-2)'}">${t.n}</span>`:''}</button>`).join('')}
       </div>
     </div>
-    ${['appointments','timeline','folder','plan'].includes(tab) ? body : `<div style="margin-top:14px">${body}</div>`}
+    ${(()=>{
+      const main = ['appointments','timeline','folder','plan'].includes(tab) ? body : `<div style="margin-top:14px">${body}</div>`;
+      // Πλευρικό πάνελ (≥1200px, όχι στην Επισκόπηση που τα έχει ήδη): Επόμενο / Εκκρεμότητες / Σημείωση
+      // μένουν ορατά όσο δουλεύεις σε Ραντεβού, Φάκελο, Ιστορικό κ.λπ.
+      return tab==='overview' ? main : `<div class="pat-v2-layout"><div class="pat-v2-main" style="min-width:0">${main}</div><aside class="pat-v2-side">${renderPatientSideV2(p, ctx)}</aside></div>`;
+    })()}
   </div>`;
 }
 // «⋯» της καρτέλας v2: ό,τι ήταν στα κυκλικά quick actions + Επεξεργασία/Διαγραφή.
@@ -12875,7 +12958,8 @@ function bindEvents() {
         const dd = document.getElementById('search-dropdown');
         if (dd && !S.globalSearch) dd.innerHTML = '';
       });
-      // Συντόμευση desktop: Ctrl/⌘+K ή «/» (εκτός πεδίων) εστιάζει στην αναζήτηση.
+      // Συντομεύσεις desktop (UX audit §6.3): Ctrl/⌘+K ή «/» αναζήτηση · N νέο ραντεβού · T σήμερα
+      // στο Πρόγραμμα · ← → προηγούμενη/επόμενη μέρα στο Πρόγραμμα. Ποτέ μέσα σε πεδία ή modal.
       document.addEventListener('keydown', (e) => {
         const inField = /^(INPUT|TEXTAREA|SELECT)$/.test((e.target&&e.target.tagName)||'') || (e.target&&e.target.isContentEditable);
         if (((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='k') || (e.key==='/' && !inField && !e.ctrlKey && !e.metaKey && !e.altKey)) {
@@ -12884,6 +12968,21 @@ function bindEvents() {
           e.preventDefault();
           if (window.innerWidth <= 768 && !S.mobileSearchOpen) { S.mobileSearchOpen = true; render(); }
           setTimeout(()=>{ const i = document.getElementById('global-search'); if (i) { i.focus(); i.select(); } }, 30);
+          return;
+        }
+        if (inField || e.ctrlKey || e.metaKey || e.altKey || !S.user || S.modal || document.querySelector('.modal-overlay')) return;
+        const k = e.key;
+        if ((k==='n'||k==='N'||k==='ν'||k==='Ν') && clinicId()) { e.preventDefault(); openNewApptAt(null, null, null, {}); return; }
+        if ((k==='t'||k==='T'||k==='τ'||k==='Τ') && clinicId()) {
+          e.preventDefault();
+          const now = new Date(); S.calDate = now.toISOString();
+          if (S.page!=='calendar') { S.page='calendar'; loadPageData().then(render); }
+          else { const b = document.querySelector('[data-cal-today]'); if (b) b.click(); else render(); }
+          return;
+        }
+        if ((k==='ArrowLeft'||k==='ArrowRight') && S.page==='calendar') {
+          const b = document.querySelector(`[data-cal-nav="${k==='ArrowLeft'?'-1':'1'}"]`);
+          if (b) { e.preventDefault(); b.click(); }
         }
       });
     }
@@ -13996,7 +14095,7 @@ function bindEvents() {
     render();
   });
   const _ov=document.getElementById('overlay');if(_ov)_ov.addEventListener('click', () => { S.sidebarOpen=false; render(); });
-  const _cb=document.getElementById('collapse-btn');if(_cb)_cb.addEventListener('click', () => { S.sidebarCollapsed=!S.sidebarCollapsed; render(); });
+  const _cb=document.getElementById('collapse-btn');if(_cb)_cb.addEventListener('click', () => { S.sidebarCollapsed=!S.sidebarCollapsed; try { localStorage.setItem('m360_sidebar', S.sidebarCollapsed?'collapsed':'expanded'); } catch(e) {} render(); });
   const _lb=document.getElementById('logout-btn');if(_lb)_lb.addEventListener('click', async () => { await logout(); });
 
   // Clinic picker
