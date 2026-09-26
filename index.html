@@ -168,7 +168,8 @@ a{color:inherit;text-decoration:none}
 .sidebar.collapsed .logo-text,.sidebar.collapsed .logo-sub{display:none}
 
 .sidebar-footer{padding:12px 16px;border-top:1px solid rgba(255,255,255,0.08)}
-.sidebar.collapsed .sidebar-footer{padding:12px 0;display:flex;justify-content:center}
+.sidebar.collapsed .sidebar-footer{padding:12px 0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px}
+.sidebar.collapsed .sidebar-footer .panic-link{width:34px;margin:0 0 6px!important}
 .user-info{display:flex;align-items:center;gap:8px}
 .user-avatar{width:30px;height:30px;border-radius:50%;background:var(--blue);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:#fff;flex-shrink:0}
 .user-name{color:rgba(255,255,255,0.85);font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -259,8 +260,25 @@ tr{cursor:pointer}
 .cal-seg button+button{border-left:1px solid var(--border)}
 .cal-seg button.on{background:var(--blue);color:#fff}
 @media(max-width:768px){
-  .cal-fab{display:flex;position:fixed;right:16px;bottom:calc(18px + env(safe-area-inset-bottom,0px));width:54px;height:54px;border-radius:50%;background:var(--blue);color:#fff;font-size:28px;line-height:1;align-items:center;justify-content:center;box-shadow:0 8px 24px rgba(3,68,242,.35);z-index:60;border:none}
+  .cal-fab{display:flex;position:fixed;right:16px;bottom:calc(74px + env(safe-area-inset-bottom,0px));width:54px;height:54px;border-radius:50%;background:var(--blue);color:#fff;font-size:28px;line-height:1;align-items:center;justify-content:center;box-shadow:0 8px 24px rgba(3,68,242,.35);z-index:60;border:none}
 }
+/* Bottom tab bar (κινητό, UX audit P1): 4 κύριοι προορισμοί + «Μενού» που ανοίγει το πλήρες
+   πλευρικό μενού. Σε desktop/tablet δεν υπάρχει — το sidebar μένει όπως είναι. Ό,τι είναι
+   fixed στο κάτω μέρος (FAB Προγράμματος, παράθυρο ραντεβού, toast) ανεβαίνει πάνω από αυτό. */
+.tabbar{display:none}
+@media(max-width:768px){
+  .tabbar{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:70;background:var(--white);border-top:1px solid var(--border-2);padding:4px 4px calc(4px + env(safe-area-inset-bottom,0px));box-shadow:0 -4px 16px rgba(14,39,87,.06)}
+  .tabbar-item{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:48px;padding:4px 2px;border:none;background:none;border-radius:10px;color:var(--text-3);font-family:var(--font);font-size:11px;font-weight:500;line-height:1;cursor:pointer;-webkit-tap-highlight-color:transparent}
+  .tabbar-item .tabbar-icon{font-size:20px;line-height:1;height:22px;display:flex;align-items:center}
+  .tabbar-item .tabbar-label{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tabbar-item.active{color:var(--blue);font-weight:600}
+  .tabbar-item.active .tabbar-icon{background:var(--blue-soft);border-radius:99px;padding:0 12px}
+  .main.has-tabbar{padding-bottom:calc(64px + env(safe-area-inset-bottom,0px))}
+  .main.has-tabbar #appt-detail-panel{bottom:calc(68px + env(safe-area-inset-bottom,0px))!important;max-height:min(calc(100dvh - 160px),72dvh)!important}
+  .main.has-tabbar .cal-page{height:calc(100dvh - 56px - 64px - env(safe-area-inset-bottom,0px))!important}
+  body.has-tabbar #m-toast-wrap{bottom:calc(76px + env(safe-area-inset-bottom,0px))}
+}
+html[data-theme="dark"] .tabbar{background:#0B1A3F;border-top-color:rgba(255,255,255,.08)}
 @media(max-width:768px){#pat-head{margin-top:0}.pat-tabs-bleed{margin:0 -14px;padding:4px 14px 0}#pat-head.pat-v2-head{margin:0 -14px;padding-left:14px!important;padding-right:14px!important}}
 @media(max-width:768px){
   .topbar-title{display:block!important;flex:1;font-size:15px}
@@ -483,11 +501,19 @@ function set(patch) { Object.assign(S, patch); render(); }
 // όταν είσαι σε σελίδα της ομάδας.
 const NAV_GROUPS = {
   marketing: {icon:'📣', label:'Marketing & Επικοινωνία'},
+  forms:     {icon:'📄', label:'Έντυπα'},
+  admin:     {icon:'⚙',  label:'Διαχείριση'},
+};
+// Ποιες σελίδες ανήκουν σε κάθε ομάδα (για το άνοιγμα/κλείσιμο και το «ενεργό» της κεφαλίδας).
+const NAV_GROUP_PAGES = {
+  marketing: ['sms','marketing-gallery','marketing-campaigns','reviews'],
+  forms:     ['laser','laser-detail','injectables','injectable-detail','consultations','consents','prescriptions'],
+  admin:     ['staff-services','clinics','settings'],
 };
 function toggleNavGroup(key) {
   S.navGroups = S.navGroups || {};
-  const kids = ['marketing-gallery','marketing-campaigns','reviews'];
-  const activeIn = key==='marketing' && kids.includes(S.page);
+  const kids = NAV_GROUP_PAGES[key] || [];
+  const activeIn = kids.includes(S.page);
   // Αν είσαι μέσα στην ομάδα είναι πάντα ανοιχτή· αλλιώς εναλλαγή.
   S.navGroups[key] = activeIn ? true : !S.navGroups[key];
   render();
@@ -830,6 +856,21 @@ function isModuleEnabled(page) {
   const em = (S.clinic && S.clinic.settings && S.clinic.settings.enabled_modules) || {};
   if (em[key] === undefined) return !mod.defaultOff;
   return em[key] !== false;
+}
+// Ονομασία ανά κλινική (UX audit, απόφαση 1): «Πελάτες» για ινστιτούτα αισθητικής,
+// «Ασθενείς» για ιατρεία. clinics.settings.entity_label = 'clients' | 'patients'. Χωρίς ρύθμιση,
+// ιατρείο θεωρείται όποια κλινική έχει ενεργή Ηλεκτρονική Συνταγογράφηση. Χρησιμοποιείται στο
+// μενού, στους τίτλους σελίδων και στο tab bar — τα ids/σελίδες (patients) δεν αλλάζουν.
+function entityMode() {
+  const s = (S.clinic && S.clinic.settings) || {};
+  if (s.entity_label === 'clients' || s.entity_label === 'patients') return s.entity_label;
+  return isModuleEnabled('prescriptions') ? 'patients' : 'clients';
+}
+function entityLabel(form) {
+  const c = entityMode() === 'clients';
+  if (form === 'one') return c ? 'Πελάτης' : 'Ασθενής';
+  if (form === 'new') return c ? 'Νέος Πελάτης' : 'Νέος Ασθενής';
+  return c ? 'Πελάτες' : 'Ασθενείς';
 }
 
 function badge(label,bg,c){return `<span class="badge" style="background:${bg};color:${c}">${esc(label)}</span>`}
@@ -1964,6 +2005,7 @@ function render() {
   if (S.modal) renderModal();
   bindEvents();
   if (S.page==='patient-detail') syncPatStickyOffsets();
+  if (!S.user) document.body.classList.remove('has-tabbar');
 
   // Επαναφορά focus/cursor στο ίδιο input μετά το re-render
   if (_actId) {
@@ -2037,33 +2079,60 @@ function renderShell(content) {
   const cid = clinicId();
   const collapsed = S.sidebarCollapsed;
   const role = (S.profile&&S.profile.role)||'';
+  // Μενού (UX audit P1 — «6 προορισμοί»): 6 κύριες σελίδες πάνω-πάνω (Σήμερα, Πρόγραμμα,
+  // Πελάτες, Πωλήσεις, Αναφορές, Marketing & Επικοινωνία) και δύο πτυσσόμενες ομάδες:
+  // «Έντυπα» (φόρμες/συναινέσεις/συνταγές) και «Διαχείριση» (προσωπικό, κλινικές, ρυθμίσεις).
+  // Οι σελίδες, τα ids και τα modules δεν αλλάζουν — μόνο η σειρά, οι ετικέτες και οι ομάδες.
   const NAV = [
-    {page:'dashboard',icon:'◉',label:'Dashboard',roles:['super_admin','clinic_admin','therapist','receptionist']},
-    {page:'patients',icon:'◎',label:'Ασθενείς',roles:['super_admin','clinic_admin','therapist','receptionist']},
+    {page:'dashboard',icon:'◉',label:'Σήμερα',roles:['super_admin','clinic_admin','therapist','receptionist']},
     // «Ραντεβού» (επίπεδη λίστα) ενώθηκε με το «Πρόγραμμα» ως προβολή «Λίστα» (UX audit P1).
     // Η σελίδα appointments παραμένει προσβάσιμη (παλιοί σύνδεσμοι), απλώς όχι στο μενού.
     {page:'calendar',icon:'⊟',label:'Πρόγραμμα',roles:['super_admin','clinic_admin','therapist','receptionist']},
-    {page:'sms',icon:'✉',label:'SMS & Auto.',roles:['super_admin','clinic_admin']},
-    {page:'laser',icon:'⚡',label:'Laser Forms',roles:['super_admin','clinic_admin','therapist']},
-    {page:'injectables',icon:'💉',label:'Ενέσιμες Θεραπείες',roles:['super_admin','clinic_admin','therapist']},
-    {page:'consultations',icon:'📋',label:'Consultation',roles:['super_admin','clinic_admin','therapist']},
-    {page:'consents',icon:'✓',label:'Συναινέσεις',roles:['super_admin','clinic_admin','therapist']},
-    {page:'product-sale',icon:'🧴',label:'Πώληση Καλλυντικού',roles:['super_admin','clinic_admin','receptionist','therapist']},
+    {page:'patients',icon:'◎',label:entityLabel(),roles:['super_admin','clinic_admin','therapist','receptionist']},
+    {page:'product-sale',icon:'🧴',label:'Πωλήσεις',roles:['super_admin','clinic_admin','receptionist','therapist']},
     {page:'reports',icon:'▤',label:'Αναφορές',roles:['super_admin','clinic_admin']},
-    // Ομάδα «Marketing & Επικοινωνία»: τα τρία εμφανίζονται κάτω από κοινό τίτλο στο μενού
-    // (βλ. NAV_GROUPS) — οι σελίδες/modules παραμένουν ανεξάρτητες.
+    // Ομάδα «Marketing & Επικοινωνία» (βλ. NAV_GROUPS/NAV_GROUP_PAGES) — οι σελίδες/modules
+    // παραμένουν ανεξάρτητες.
+    {page:'sms',icon:'✉',label:'SMS & Αυτοματισμοί',roles:['super_admin','clinic_admin'],group:'marketing'},
     {page:'marketing-gallery',icon:'📸',label:'Marketing Φωτογραφίες',roles:['super_admin','clinic_admin'],group:'marketing'},
     {page:'marketing-campaigns',icon:'📢',label:'Μαζικά Μηνύματα',roles:['super_admin','clinic_admin'],group:'marketing'},
     {page:'reviews',icon:'⭐',label:'Google Reviews',roles:['super_admin','clinic_admin'],group:'marketing'},
-    {page:'prescriptions',icon:'℞',label:'Συνταγές (ΗΔΙΚΑ)',roles:['super_admin','clinic_admin','therapist']},
-    {page:'staff-services',icon:'🗂',label:'Προσωπικό & Υπηρεσίες',roles:['super_admin','clinic_admin']},
-    {page:'clinics',icon:'⊞',label:'Κλινικές',roles:['super_admin']},
-    {page:'settings',icon:'⚙',label:'Ρυθμίσεις',roles:['super_admin','clinic_admin']},
+    // Ομάδα «Έντυπα»
+    {page:'laser',icon:'⚡',label:'Laser Forms',roles:['super_admin','clinic_admin','therapist'],group:'forms'},
+    {page:'injectables',icon:'💉',label:'Ενέσιμες Θεραπείες',roles:['super_admin','clinic_admin','therapist'],group:'forms'},
+    {page:'consultations',icon:'📋',label:'Consultation',roles:['super_admin','clinic_admin','therapist'],group:'forms'},
+    {page:'consents',icon:'✓',label:'Συναινέσεις',roles:['super_admin','clinic_admin','therapist'],group:'forms'},
+    {page:'prescriptions',icon:'℞',label:'Συνταγές (ΗΔΙΚΑ)',roles:['super_admin','clinic_admin','therapist'],group:'forms'},
+    // Ομάδα «Διαχείριση»
+    {page:'staff-services',icon:'🗂',label:'Προσωπικό & Υπηρεσίες',roles:['super_admin','clinic_admin'],group:'admin'},
+    {page:'clinics',icon:'⊞',label:'Κλινικές',roles:['super_admin'],group:'admin'},
+    {page:'settings',icon:'⚙',label:'Ρυθμίσεις',roles:['super_admin','clinic_admin'],group:'admin'},
   ].filter(n => n.roles.includes(role) && (isSuperAdmin() && !cid ? ['dashboard','clinics'].includes(n.page) : true) && isModuleEnabled(n.page)
     // ℞ Συνταγές: μόνο όποιος βλέπει διαγνώσεις (θεραπευτής χωρίς το δικαίωμα δεν το βλέπει καν).
     && (n.page!=='prescriptions' || canViewDiagnosis()));
 
-  const PAGE_TITLES = {dashboard:'Dashboard',patients:'Ασθενείς','patient-detail':'Ασθενής',appointments:'Ραντεβού',calendar:'Πρόγραμμα',pipeline:'Pipeline',clinics:'Κλινικές',sms:'SMS & Αυτοματισμοί',laser:'Laser Forms',injectables:'Ενέσιμες Θεραπείες','injectable-detail':'Ενέσιμη Θεραπεία',consultations:'Consultation',consents:'Συναινέσεις','product-sale':'Πώληση Καλλυντικού',reports:'Αναφορές','marketing-gallery':'Marketing Φωτογραφίες','marketing-campaigns':'Μαζικά Μηνύματα',reviews:'Google Reviews',prescriptions:'Ηλεκτρονική Συνταγογράφηση (ΗΔΙΚΑ)','staff-services':'Προσωπικό & Υπηρεσίες',settings:'Ρυθμίσεις'};
+  const PAGE_TITLES = {dashboard:'Σήμερα',patients:entityLabel(),'patient-detail':entityLabel('one'),appointments:'Ραντεβού',calendar:'Πρόγραμμα',pipeline:'Pipeline',clinics:'Κλινικές',sms:'SMS & Αυτοματισμοί',laser:'Laser Forms',injectables:'Ενέσιμες Θεραπείες','injectable-detail':'Ενέσιμη Θεραπεία',consultations:'Consultation',consents:'Συναινέσεις','product-sale':'Πωλήσεις','laser-detail':'Laser Form',reports:'Αναφορές','marketing-gallery':'Marketing Φωτογραφίες','marketing-campaigns':'Μαζικά Μηνύματα',reviews:'Google Reviews',prescriptions:'Ηλεκτρονική Συνταγογράφηση (ΗΔΙΚΑ)','staff-services':'Προσωπικό & Υπηρεσίες',settings:'Ρυθμίσεις'};
+
+  // Bottom tab bar (κινητό): Σήμερα · Πρόγραμμα · Πελάτες · Πωλήσεις (ή Έντυπα/Αναφορές αν η
+  // κλινική δεν έχει το module) · Μενού. Ίδια data-page σύνδεση με το sidebar.
+  const tabPages = ['dashboard','calendar','patients'];
+  const fourth = ['product-sale','laser','reports','consultations'].find(pg => NAV.some(n=>n.page===pg));
+  if (fourth) tabPages.push(fourth);
+  const TAB_LABELS = {'product-sale':'Πωλήσεις', laser:'Έντυπα', reports:'Αναφορές', consultations:'Έντυπα'};
+  const tabItems = tabPages.map(pg => NAV.find(n=>n.page===pg)).filter(Boolean);
+  const tabActive = (pg) => S.page===pg || (pg==='patients' && S.page==='patient-detail') || (pg==='calendar' && S.page==='appointments')
+    || (pg==='laser' && ['laser-detail','injectables','injectable-detail','consultations','consents','prescriptions'].includes(S.page));
+  const tabbarHtml = (S.user && (cid || !isSuperAdmin())) ? `
+  <nav class="tabbar" id="tabbar" aria-label="Κύρια πλοήγηση">
+    ${tabItems.map(n => `<button type="button" class="tabbar-item ${tabActive(n.page)?'active':''}" data-page="${n.page}" aria-label="${esc(TAB_LABELS[n.page]||n.label)}">
+      <span class="tabbar-icon">${TAB_LABELS[n.page]==='Έντυπα'?NAV_GROUPS.forms.icon:n.icon}</span><span class="tabbar-label">${esc(TAB_LABELS[n.page]||n.label)}</span>
+    </button>`).join('')}
+    <button type="button" class="tabbar-item ${S.sidebarOpen?'active':''}" id="tabbar-menu" aria-label="Μενού" onclick="S.sidebarOpen=true;render()">
+      <span class="tabbar-icon">☰</span><span class="tabbar-label">Μενού</span>
+    </button>
+  </nav>` : '';
+  const hasTabbar = !!tabbarHtml;
+  document.body.classList.toggle('has-tabbar', hasTabbar);
 
   return `
   <div class="overlay ${S.sidebarOpen?'open':''}" id="overlay"></div>
@@ -2087,10 +2156,6 @@ function renderShell(content) {
       </div>
     </div>`:''}
     <nav class="sidebar-nav">
-      ${canSee(['super_admin','clinic_admin'])&&cid?`
-      <div onclick="panicHide()" title="PANIC — Απόκρυψη όλων των δεδομένων" style="margin:4px 12px 10px;padding:${collapsed?'9px 0':'9px 12px'};border-radius:8px;background:#B91C1C;color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:${collapsed?'center':'flex-start'};gap:8px;cursor:pointer;letter-spacing:.5px">
-        <span style="font-size:14px">🛑</span>${!collapsed?'<span>PANIC</span>':''}
-      </div>`:''}
       ${(()=>{
         // Ομαδοποίηση nav items (π.χ. Marketing & Επικοινωνία): τίτλος-κεφαλίδα που ανοίγει/κλείνει
         // τα παιδιά του. Ανοιχτή αυτόματα όταν η τρέχουσα σελίδα ανήκει στην ομάδα. Σε
@@ -2116,6 +2181,12 @@ function renderShell(content) {
       })()}
     </nav>
     <div class="sidebar-footer">
+      ${canSee(['super_admin','clinic_admin'])&&cid?`
+      <!-- PANIC (απόκρυψη όλων των δεδομένων): διακριτικό, στο κάτω μέρος του μενού αντί για
+           κόκκινο μπλοκ πάνω από την πλοήγηση (UX audit) — ίδια λειτουργία, ίδιο panicHide(). -->
+      <div class="panic-link" onclick="panicHide()" title="PANIC — Απόκρυψη όλων των δεδομένων" style="margin:0 0 10px;padding:${collapsed?'7px 0':'7px 10px'};border-radius:8px;border:1px solid rgba(252,165,165,.35);color:#FCA5A5;font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:${collapsed?'center':'flex-start'};gap:8px;cursor:pointer;letter-spacing:.4px">
+        <span style="font-size:13px">🛑</span>${!collapsed?'<span>PANIC — απόκρυψη δεδομένων</span>':''}
+      </div>`:''}
       <div class="user-info">
         <div class="user-avatar">${initials((S.profile&&S.profile.full_name))}</div>
         ${!collapsed?`<div style="flex:1;min-width:0">
@@ -2127,7 +2198,7 @@ function renderShell(content) {
       ${collapsed?`<button class="logout-btn" id="logout-btn" title="Αποσύνδεση" style="margin-top:8px">⎋</button>`:''}
     </div>
   </aside>
-  <div class="main ${collapsed?'expanded':''}" id="main">
+  <div class="main ${collapsed?'expanded':''} ${hasTabbar?'has-tabbar':''}" id="main">
     <header class="topbar ${S.mobileSearchOpen?'search-open':''}">
       <button class="hamburger" id="hamburger"><span></span><span></span><span></span></button>
       <span class="topbar-title">${S.page==='patient-detail'&&S.patientDetail?esc(S.patientDetail.full_name):(PAGE_TITLES[S.page]||'medi360')}</span>
@@ -2167,7 +2238,8 @@ function renderShell(content) {
       <button onclick="panicRestore()" class="btn btn-sm" style="background:#fff;color:#7F1D1D;font-weight:700;border:none">Επαναφορά δεδομένων</button>
     </div>`:''}
     <main>${content}</main>
-  </div>`;
+  </div>
+  ${tabbarHtml}`;
 }
 
 // ── DASHBOARD ──
@@ -2697,8 +2769,8 @@ function renderPatients() {
   const dupGroups = detectDuplicatePatientGroups();
   return `<div class="page">
     <div class="page-header">
-      <div><h1 class="page-title">Ασθενείς</h1><p class="page-sub">${S.patients.length} συνολικά · ${S.patients.filter(p=>p.status==='active').length} ενεργοί</p></div>
-      <button class="btn btn-primary" data-modal="new-patient">+ Νέος Ασθενής</button>
+      <div><h1 class="page-title">${entityLabel()}</h1><p class="page-sub">${S.patients.length} συνολικά · ${S.patients.filter(p=>p.status==='active').length} ενεργοί</p></div>
+      <button class="btn btn-primary" data-modal="new-patient">+ ${entityLabel('new')}</button>
     </div>
     ${dupGroups.length?`<div style="background:#FFF4E5;border:1px solid #F5C77E;border-radius:10px;padding:12px 16px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
       <div style="font-size:12px;color:#8A5A00"><strong>⚠ ${dupGroups.length} πιθανά διπλότυπα</strong> — ίδιο τηλέφωνο σε περισσότερους από έναν ασθενείς.</div>
@@ -5216,7 +5288,7 @@ function renderCalendar() {
     </div>`;
   };
 
-  return `<div class="page" style="display:flex;flex-direction:column;gap:14px;height:calc(100vh - 56px);overflow:hidden;padding:16px">
+  return `<div class="page cal-page" style="display:flex;flex-direction:column;gap:14px;height:calc(100vh - 56px);overflow:hidden;padding:16px">
     <!-- Tooltip -->
     <div id="cal-tooltip" style="display:none;position:fixed;top:0;left:0;z-index:1000;background:var(--navy);color:#fff;padding:10px 14px;border-radius:10px;font-size:12px;line-height:1.6;pointer-events:none;max-width:240px;box-shadow:var(--shadow-lg)"></div>
 
@@ -6917,7 +6989,7 @@ function renderProductSale() {
   const sales = S.recentProductSales||[];
   return `
   <div class="page">
-    <div class="page-header"><div><h1 class="page-title">Πώληση Καλλυντικού</h1><p class="page-sub">Έκδοση απόδειξης λιανικής για πώληση προϊόντος</p></div></div>
+    <div class="page-header"><div><h1 class="page-title">Πωλήσεις</h1><p class="page-sub">Πώληση καλλυντικού — έκδοση απόδειξης λιανικής για πώληση προϊόντος</p></div></div>
     <div class="card" style="max-width:520px;margin-bottom:20px">
       <div style="padding:16px 20px">
         <div class="form-group">
@@ -10095,6 +10167,18 @@ function renderSettings() {
             </select>
           </div>
           <button class="btn btn-primary" id="save-clinic-settings">Αποθήκευση</button>
+        </div>
+      </div>
+
+      <!-- ΟΝΟΜΑΣΙΑ: Πελάτες (ινστιτούτο) ή Ασθενείς (ιατρείο) — μενού, τίτλοι, tab bar -->
+      <div class="card">
+        <div class="card-header"><span class="card-title">🏷 Ονομασία στο μενού</span></div>
+        <div style="padding:16px">
+          <div style="font-size:12px;color:var(--text-2);margin-bottom:12px">Πώς λέγονται τα άτομα που εξυπηρετείς: <b>Πελάτες</b> (ινστιτούτο αισθητικής) ή <b>Ασθενείς</b> (ιατρείο). Αλλάζει το μενού, τους τίτλους σελίδων και το κάτω μενού του κινητού — τίποτα στα δεδομένα.</div>
+          <select class="form-control" id="entity-label-select" style="max-width:280px" onchange="saveClinicSettingPatch({entity_label:this.value}, 'Η ονομασία ενημερώθηκε').then(ok=>{ if(ok) render(); })">
+            <option value="clients" ${entityMode()==='clients'?'selected':''}>Πελάτες / Πελάτης</option>
+            <option value="patients" ${entityMode()==='patients'?'selected':''}>Ασθενείς / Ασθενής</option>
+          </select>
         </div>
       </div>
 
