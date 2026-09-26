@@ -87,7 +87,7 @@ html[data-theme="dark"] .page-header{background:var(--surface)}
 }
 @media(max-width:768px){
   input,select,textarea{font-size:16px!important} /* iOS: αποφυγή auto-zoom στο focus */
-  .btn{min-height:40px} .btn-sm{min-height:34px} .btn-xs{min-height:30px} /* touch targets */
+  .btn{min-height:44px} .btn-sm{min-height:40px} .btn-xs{min-height:30px} /* touch targets */
   .modal{max-width:100%;border-radius:16px 16px 0 0;max-height:94vh;align-self:flex-end}
   .modal-overlay{align-items:flex-end;padding:0}
   /* Παράθυρο λεπτομερειών ραντεβού (Πρόγραμμα): σε κινητό το inline
@@ -335,17 +335,39 @@ html[data-theme="dark"] .tabbar{background:#0B1A3F;border-top-color:rgba(255,255
 }
 summary::-webkit-details-marker{display:none}
 
-/* BUTTONS */
-.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:8px;font-size:13px;font-weight:500;line-height:1;white-space:nowrap;transition:.15s}
+/* BUTTONS — ιεραρχία (UX audit §8): primary (μπλε, μία ανά οθόνη) · secondary (tonal) ·
+   ghost/tertiary · danger (κείμενο κόκκινο· γεμάτο μόνο σε επιβεβαίωση) · neon (μία conversion).
+   Μεγέθη: 36px default / 32px compact, σε κινητό 44 / 40. */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:8px 14px;border-radius:8px;font-size:13px;font-weight:500;line-height:1;white-space:nowrap;transition:.15s;min-height:36px}
 .btn-primary{background:var(--blue);color:#fff}
 .btn-neon{background:var(--neon);color:var(--neon-text);font-weight:600}
 .btn-neon:hover{opacity:.88}
 .btn-primary:hover{background:#1e2cb8;box-shadow:0 4px 12px rgba(43,59,240,0.3)}
+.btn-secondary{background:var(--surface-2);color:var(--navy);font-weight:600}
+.btn-secondary:hover{background:var(--border)}
 .btn-ghost{background:transparent;color:var(--text-2);border:1px solid var(--border)}
 .btn-ghost:hover{background:var(--surface);color:var(--text)}
-.btn-sm{padding:5px 11px;font-size:12px}
-.btn-xs{padding:3px 8px;font-size:11px;border-radius:6px}
+.btn-link{background:transparent;color:var(--blue);padding-left:6px;padding-right:6px;font-weight:600}
+.btn-link:hover{text-decoration:underline}
+.btn-sm{padding:5px 11px;font-size:12px;min-height:32px}
+.btn-xs{padding:3px 8px;font-size:11px;border-radius:6px;min-height:0}
 .btn-danger{background:var(--red-soft);color:var(--red-dark)}
+.btn-danger-solid{background:#B91C1C;color:#fff;font-weight:700}
+.btn-warn{background:#FAEEDA;color:#854F0B;font-weight:600}
+.btn-warn:hover{background:#F5DFB6}
+.btn:disabled,.btn[aria-disabled="true"]{opacity:.4;cursor:not-allowed;pointer-events:none}
+/* Κατάσταση φόρτωσης μέσα στο κουμπί (btnBusy): spinner αντί για αλλαγή κειμένου */
+.btn.is-busy{position:relative;color:transparent!important;pointer-events:none}
+.btn.is-busy::after{content:'';position:absolute;width:14px;height:14px;border-radius:50%;border:2px solid rgba(255,255,255,.5);border-top-color:#fff;animation:btnSpin .7s linear infinite}
+.btn-ghost.is-busy::after,.btn-secondary.is-busy::after,.btn-warn.is-busy::after,.btn-danger.is-busy::after{border-color:rgba(14,39,87,.25);border-top-color:var(--navy)}
+@keyframes btnSpin{to{transform:rotate(360deg)}}
+/* Εικονίδια UI (Lucide, inline SVG, currentColor) — βλ. icon() */
+.ico{width:1.15em;height:1.15em;flex-shrink:0;vertical-align:-.2em;display:inline-block}
+.btn .ico{width:16px;height:16px;vertical-align:middle}
+.nav-icon .ico{width:18px;height:18px;vertical-align:middle}
+.tabbar-icon .ico{width:21px;height:21px}
+html[data-theme="dark"] .btn-secondary{background:rgba(255,255,255,.1);color:#fff}
+html[data-theme="dark"] .btn-warn{background:rgba(133,79,11,.3);color:#F5C77E}
 
 /* SEARCH */
 .search-box{display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:7px 12px}
@@ -539,10 +561,17 @@ function set(patch) { Object.assign(S, patch); render(); }
 // δηλώνουν `group:'<key>'`. Άνοιγμα/κλείσιμο ανά session (S.navGroups), αυτόματα ανοιχτή
 // όταν είσαι σε σελίδα της ομάδας.
 const NAV_GROUPS = {
-  marketing: {icon:'📣', label:'Marketing & Επικοινωνία'},
-  forms:     {icon:'📄', label:'Έντυπα'},
-  admin:     {icon:'⚙',  label:'Διαχείριση'},
+  marketing: {icon:'📣', ico:'megaphone', label:'Marketing & Επικοινωνία'},
+  forms:     {icon:'📄', ico:'file',      label:'Έντυπα'},
+  admin:     {icon:'⚙',  ico:'settings',  label:'Διαχείριση'},
 };
+// Εικονίδιο μενού ανά σελίδα (Lucide, βλ. ICONS/icon()). Το παλιό `icon` (emoji/σύμβολο) μένει
+// στα nav items ως fallback για ό,τι δεν έχει αντιστοίχιση.
+const NAV_ICONS = {dashboard:'sun', calendar:'calendar', patients:'users', 'product-sale':'bag', reports:'chart',
+  sms:'mail', 'marketing-gallery':'image', 'marketing-campaigns':'send', reviews:'star',
+  laser:'zap', injectables:'syringe', consultations:'clipboard', consents:'filecheck', prescriptions:'pill',
+  'staff-services':'briefcase', clinics:'building', settings:'settings', appointments:'calendar'};
+const navIcon = (page, fallback) => icon(NAV_ICONS[page]) || fallback || '';
 // Ποιες σελίδες ανήκουν σε κάθε ομάδα (για το άνοιγμα/κλείσιμο και το «ενεργό» της κεφαλίδας).
 const NAV_GROUP_PAGES = {
   marketing: ['sms','marketing-gallery','marketing-campaigns','reviews'],
@@ -1014,6 +1043,57 @@ const canSee = (roles) => roles.includes((S.profile&&S.profile.role));
 const canSeePrices = () => canSee(['super_admin','clinic_admin']) || (canSee(['receptionist']) && !!(S.clinic&&S.clinic.settings&&S.clinic.settings.receptionist_sees_prices));
 // Toast: μήνυμα επιτυχίας/πληροφορίας που δεν διακόπτει τη ροή (αντί για alert()).
 // kind: 'ok' | 'info' | 'warn' | 'err'. Εξαφανίζεται μόνο του σε ~3″.
+// ── ΕΙΚΟΝΙΔΙΑ UI (UX audit): ένα σετ (Lucide, 24px grid, stroke 1.75, currentColor) με σταθερή
+// αντιστοίχιση έννοιας → εικονίδιο. Inline SVG — χωρίς εξωτερικό αρχείο, αλλάζει χρώμα με το θέμα.
+// Τα emoji μένουν μόνο σε περιεχόμενο πελάτη (🎂 γενέθλια, ⭐ review), όχι σε μενού/κουμπιά.
+const ICONS = {
+  home:'<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/>',
+  sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>',
+  calendar:'<rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/>',
+  users:'<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+  user:'<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+  bag:'<path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/>',
+  chart:'<path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>',
+  megaphone:'<path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/>',
+  mail:'<rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>',
+  image:'<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>',
+  send:'<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
+  star:'<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>',
+  file:'<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>',
+  filecheck:'<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="m9 15 2 2 4-4"/>',
+  zap:'<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
+  syringe:'<path d="m18 2 4 4"/><path d="m17 7 3-3"/><path d="M19 9 8.7 19.3c-1 1-2.5 1-3.4 0l-.6-.6c-1-1-1-2.5 0-3.4L15 5"/><path d="m9 11 4 4"/><path d="m5 19-3 3"/><path d="m14 4 6 6"/>',
+  clipboard:'<rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/>',
+  pill:'<path d="m10.5 20.5 10-10a4.95 4.95 0 1 0-7-7l-10 10a4.95 4.95 0 1 0 7 7Z"/><path d="m8.5 8.5 7 7"/>',
+  briefcase:'<path d="M16 20V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/><rect width="20" height="14" x="2" y="6" rx="2"/>',
+  building:'<path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4"/><path d="M10 10h4"/><path d="M10 14h4"/><path d="M10 18h4"/>',
+  settings:'<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
+  menu:'<path d="M4 12h16"/><path d="M4 6h16"/><path d="M4 18h16"/>',
+  search:'<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+  plus:'<path d="M5 12h14"/><path d="M12 5v14"/>',
+  folder:'<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+  check:'<path d="M20 6 9 17l-5-5"/>',
+  alert:'<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+  chevron:'<path d="m9 18 6-6-6-6"/>',
+  more:'<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>',
+  camera:'<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/>',
+  package:'<path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>',
+  phone:'<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>',
+  message:'<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+  layout:'<rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/>',
+  stethoscope:'<path d="M4.8 2.3A.3.3 0 1 0 5 2H4a2 2 0 0 0-2 2v5a6 6 0 0 0 6 6 6 6 0 0 0 6-6V4a2 2 0 0 0-2-2h-1a.2.2 0 1 0 .3.3"/><path d="M8 15v1a6 6 0 0 0 6 6 6 6 0 0 0 6-6v-4"/><circle cx="20" cy="10" r="2"/>',
+  x:'<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+};
+function icon(name, extraClass) {
+  const d = ICONS[name]; if (!d) return '';
+  return `<svg class="ico ${extraClass||''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+}
+// Κατάσταση φόρτωσης κουμπιού: btnBusy(el, true) πριν από await, btnBusy(el, false) μετά.
+function btnBusy(el, on) {
+  if (!el) return;
+  if (on) { el.classList.add('is-busy'); el.setAttribute('aria-busy','true'); el.disabled = true; }
+  else { el.classList.remove('is-busy'); el.removeAttribute('aria-busy'); el.disabled = false; }
+}
 function showToast(msg, kind) {
   try {
     let wrap = document.getElementById('m-toast-wrap');
@@ -2176,10 +2256,10 @@ function renderShell(content) {
   const tabbarHtml = (S.user && (cid || !isSuperAdmin())) ? `
   <nav class="tabbar" id="tabbar" aria-label="Κύρια πλοήγηση">
     ${tabItems.map(n => `<button type="button" class="tabbar-item ${tabActive(n.page)?'active':''}" data-page="${n.page}" aria-label="${esc(TAB_LABELS[n.page]||n.label)}">
-      <span class="tabbar-icon">${TAB_LABELS[n.page]==='Έντυπα'?NAV_GROUPS.forms.icon:n.icon}</span><span class="tabbar-label">${esc(TAB_LABELS[n.page]||n.label)}</span>
+      <span class="tabbar-icon">${TAB_LABELS[n.page]==='Έντυπα'?icon(NAV_GROUPS.forms.ico):navIcon(n.page, n.icon)}</span><span class="tabbar-label">${esc(TAB_LABELS[n.page]||n.label)}</span>
     </button>`).join('')}
     <button type="button" class="tabbar-item ${S.sidebarOpen?'active':''}" id="tabbar-menu" aria-label="Μενού" onclick="S.sidebarOpen=true;render()">
-      <span class="tabbar-icon">☰</span><span class="tabbar-label">Μενού</span>
+      <span class="tabbar-icon">${icon('menu')}</span><span class="tabbar-label">Μενού</span>
     </button>
   </nav>` : '';
   const hasTabbar = !!tabbarHtml;
@@ -2212,7 +2292,7 @@ function renderShell(content) {
         // τα παιδιά του. Ανοιχτή αυτόματα όταν η τρέχουσα σελίδα ανήκει στην ομάδα. Σε
         // collapsed sidebar τα παιδιά μένουν ορατά (μόνο εικονίδια) κάτω από το εικονίδιο της ομάδας.
         const navItem = (n, sub) => `<div class="nav-item ${sub?'nav-sub':''} ${S.page===n.page||S.page==='patient-detail'&&n.page==='patients'?'active':''}" data-page="${n.page}">
-        <span class="nav-icon">${n.icon}</span><span class="nav-label">${n.label}</span>
+        <span class="nav-icon">${navIcon(n.page, n.icon)}</span><span class="nav-label">${n.label}</span>
       </div>`;
         const out = []; const done = new Set();
         NAV.forEach(n => {
@@ -2224,7 +2304,7 @@ function renderShell(content) {
           const activeIn = kids.some(k=>k.page===S.page);
           const open = collapsed || activeIn || (S.navGroups||{})[n.group] === true;
           out.push(`<div class="nav-item nav-group ${activeIn?'group-active':''}" onclick="toggleNavGroup('${n.group}')" title="${esc(g.label)}">
-        <span class="nav-icon">${g.icon}</span><span class="nav-label">${esc(g.label)}</span><span class="nav-chevron">${open?'▾':'▸'}</span>
+        <span class="nav-icon">${icon(g.ico) || g.icon}</span><span class="nav-label">${esc(g.label)}</span><span class="nav-chevron">${open?'▾':'▸'}</span>
       </div>`);
           if (open) kids.forEach(k => out.push(navItem(k,true)));
         });
@@ -2253,12 +2333,12 @@ function renderShell(content) {
     <header class="topbar ${S.mobileSearchOpen?'search-open':''}">
       <button class="hamburger" id="hamburger"><span></span><span></span><span></span></button>
       <span class="topbar-title">${S.page==='patient-detail'&&S.patientDetail?esc(S.patientDetail.full_name):(PAGE_TITLES[S.page]||'medi360')}</span>
-      <button class="mobile-only-btn" id="mobile-search-btn" title="Αναζήτηση" onclick="S.mobileSearchOpen=true;render();setTimeout(()=>{const i=document.getElementById('global-search');if(i)i.focus();},60)">⌕</button>
+      <button class="mobile-only-btn" id="mobile-search-btn" title="Αναζήτηση" onclick="S.mobileSearchOpen=true;render();setTimeout(()=>{const i=document.getElementById('global-search');if(i)i.focus();},60)">${icon('search')}</button>
       <button class="theme-toggle" id="theme-toggle" title="Εναλλαγή θέματος">${document.documentElement.getAttribute('data-theme')==='dark'?'☀️':'🌙'}</button>
       <!-- Global Search -->
       <div id="global-search-wrap" style="flex:1;max-width:320px;margin:0 16px;position:relative">
         <div style="display:flex;align-items:center;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:6px 12px;gap:8px">
-          <span style="color:var(--text-3);font-size:14px">⌕</span>
+          <span style="color:var(--text-3);font-size:14px;display:inline-flex">${icon('search')}</span>
           <input id="global-search" placeholder="Αναζήτηση ασθενή, ραντεβού..." value="${esc(S.globalSearch||'')}"
             style="border:none;background:transparent;font-size:12px;outline:none;width:100%;color:var(--text)"
             oninput="handleSearchInput(this.value)"
@@ -2561,7 +2641,7 @@ function renderDashboard() {
             <span style="color:var(--text-2);flex:1;min-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.service_name||'')}</span>
             ${hasEmail?'<span style="font-size:10px;color:var(--text-2)">✉ εστάλη email</span>':'<span style="font-size:10px;color:#A32D2D;font-weight:700">χωρίς email — κάλεσε!</span>'}
             ${a.patients&&a.patients.phone?phoneActionsHtml(a.patients.phone):''}
-            <button class="btn btn-sm" style="background:#0F6E56;color:#fff;font-weight:700;font-size:10.5px" onclick="manualConfirmAppt('${a.id}')">✓ Επιβεβαίωση</button>
+            <button class="btn btn-sm btn-secondary" onclick="manualConfirmAppt('${a.id}')">${icon('check')} Επιβεβαίωση</button>
           </div>`;
         }).join('')}
       </div>
@@ -2845,7 +2925,7 @@ function renderPatients() {
     ${dupGroups.length?`<div style="background:#FFF4E5;border:1px solid #F5C77E;border-radius:10px;padding:12px 16px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
       <div style="font-size:12px;color:#8A5A00"><strong>⚠ ${dupGroups.length} πιθανά διπλότυπα</strong> — ίδιο τηλέφωνο σε περισσότερους από έναν ασθενείς.</div>
       ${canSee(['super_admin','clinic_admin'])
-        ? `<button class="btn btn-sm" id="open-merge-duplicates" style="background:#D97706;color:#fff">Έλεγχος &amp; Συγχώνευση</button>`
+        ? `<button class="btn btn-sm btn-warn" id="open-merge-duplicates">Έλεγχος &amp; Συγχώνευση</button>`
         : `<span style="font-size:11px;color:#8A5A00">Η συγχώνευση γίνεται από διαχειριστή.</span>`}
     </div>`:''}
     <!-- Φίλτρα με πλήθος μέσα τους (τα 4 tiles Σύνολο/Ενεργοί/VIP/Leads έφυγαν — UX audit) -->
@@ -3080,7 +3160,7 @@ function renderPatientDiagnosesTab() {
         <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
           <div style="font-size:11.5px;color:var(--text-2);display:inline-flex;align-items:center;gap:5px;background:var(--surface-2);border-radius:9px;padding:3px 9px" title="Ποιος έκανε τη διάγνωση">🩺 Διάγνωση από: <b style="color:var(--text)">${esc(e.profiles&&e.profiles.full_name||'άγνωστο')}</b></div>
           ${rxOn?`<button class="btn btn-sm btn-primary" style="padding:3px 10px;font-size:11.5px" onclick="openPrescriptionModal({examId:'${e.id}'})" title="Νέα ηλεκτρονική συνταγή με τις διαγνώσεις και τα φάρμακα αυτής της εξέτασης">℞ Συνταγή</button>
-          <button class="btn btn-sm" style="padding:3px 10px;font-size:11.5px;background:#0F6E56;color:#fff;font-weight:600" onclick="openPrescriptionModal({examId:'${e.id}', kind:'exams'})" title="Νέο παραπεμπτικό εξετάσεων με τις διαγνώσεις αυτής της εξέτασης">🧪 Παραπεμπτικό</button>`:''}
+          <button class="btn btn-sm btn-secondary" style="padding:3px 10px;font-size:11.5px" onclick="openPrescriptionModal({examId:'${e.id}', kind:'exams'})" title="Νέο παραπεμπτικό εξετάσεων με τις διαγνώσεις αυτής της εξέτασης">🧪 Παραπεμπτικό</button>`:''}
         </div>
       </div>
       <div style="font-size:12px;color:var(--text-2);margin-bottom:4px">Διάγνωση</div>
@@ -3108,7 +3188,7 @@ function renderPatientExamsTab() {
         <div style="font-weight:700">Χωρίς υπογεγραμμένο GDPR δεν αποθηκεύονται εξετάσεις</div>
         <div style="margin-top:2px">Ούτε από εδώ ούτε από τα email που στέλνει ο ασθενής. Υπόγραψε πρώτα τη Φόρμα Ιστορικού${blockedFiles.length?` — <b>${blockedFiles.length}</b> αρχεί${blockedFiles.length===1?'ο':'α'} περιμέν${blockedFiles.length===1?'ει':'ουν'} (${esc(blockedFiles.slice(0,3).join(', '))}${blockedFiles.length>3?'…':''}) και θα εισαχθ${blockedFiles.length===1?'εί':'ούν'} αυτόματα στον επόμενο συγχρονισμό`:''}.</div>
       </div>
-      <button class="btn btn-sm" style="background:#A32D2D;color:#fff;font-weight:700;flex-shrink:0" onclick="openHistoryFormModal()">📝 Υπογραφή τώρα</button>
+      <button class="btn btn-sm btn-primary" style="flex-shrink:0" onclick="openHistoryFormModal()">Υπογραφή τώρα</button>
     </div>` : (blockedFiles.length && !exams.length ? `<div style="background:#FAEEDA;border-radius:10px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#854F0B">✓ GDPR υπογράφηκε — ${blockedFiles.length} αρχεί${blockedFiles.length===1?'ο':'α'} από email θα εισαχθ${blockedFiles.length===1?'εί':'ούν'} αυτόματα στον επόμενο συγχρονισμό.</div>` : '');
   return `<div>
     ${gdprBanner}
@@ -3174,7 +3254,7 @@ function renderPatientExamCard(ex) {
                 <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
                   <span style="font-weight:700;color:#534AB7">🤖 ${esc(ex.ai_type||'—')}</span>
                   ${ex.confirmed?`<span style="font-size:10px;font-weight:700;color:#0F6E56;background:#E1F5EE;padding:2px 7px;border-radius:8px">✓ Επιβεβαιωμένο</span>`
-                    :`<button class="btn btn-sm" style="padding:2px 8px;background:#0F6E56;color:#fff;font-weight:700;font-size:10.5px" data-confirm-exam="${ex.id}">✓ Επιβεβαίωση</button>`}
+                    :`<button class="btn btn-sm btn-secondary" style="padding:2px 8px;font-size:11px" data-confirm-exam="${ex.id}">${icon('check')} Επιβεβαίωση</button>`}
                 </div>
                 ${ex.ai_summary?`<div style="margin-top:4px;color:var(--text-2);line-height:1.5">${esc(ex.ai_summary)}</div>`:''}
               </div>`:''}
@@ -3384,8 +3464,8 @@ function renderPatientDetail(opts) {
         return `<div style="background:#FDF0F5;border:1.5px solid #C4618A;border-radius:12px;padding:10px 16px;margin-bottom:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
           <span style="font-size:18px">🎁</span>
           <div style="flex:1;min-width:200px;font-size:12.5px;color:#8A3B5E"><b>Δώρο γενεθλίων ενεργό έως ${new Date(g.expires_at+'T00:00:00').toLocaleDateString('el-GR')}</b> — Δωροεπιταγή ${g.gift_value||80}€ για θεραπεία προσώπου + 10% έκπτωση στα καλλυντικά${callNote}</div>
-          ${p.email&&p.gdpr_signed?`<button class="btn btn-sm" id="resend-birthday-email-btn" data-gift-id="${g.id}" style="background:#0344F2;color:#fff;font-weight:700">📧 ${g.channel==='call'?'Αποστολή Email τώρα':'Επαναποστολή Email'}</button>`:''}
-          <button class="btn btn-sm" onclick="redeemBirthdayGift('${g.id}')" style="background:#C4618A;color:#fff;font-weight:700">✓ Εξαργύρωση</button>
+          ${p.email&&p.gdpr_signed?`<button class="btn btn-sm btn-secondary" id="resend-birthday-email-btn" data-gift-id="${g.id}">${icon('mail')} ${g.channel==='call'?'Αποστολή email τώρα':'Επαναποστολή email'}</button>`:''}
+          <button class="btn btn-sm btn-primary" onclick="redeemBirthdayGift('${g.id}')">${icon('check')} Εξαργύρωση</button>
         </div>`;
       }
       if (g.redeemed_at && (Date.now()-new Date(g.redeemed_at).getTime()) < 60*86400000) {
@@ -5813,7 +5893,7 @@ function renderLaserDetail() {
             ? `<span class="badge badge-green" style="font-size:11px">✓ Συναίνεση υπογεγραμμένη ${new Date(S.laserPatientConsent.signed_at).toLocaleDateString('el-GR')}</span>
                <button class="btn btn-xs" onclick="viewLaserConsent()" style="font-size:11px">Προβολή</button>`
             : `<span class="badge badge-red" style="font-size:11px">⚠ Χωρίς Συναίνεση Laser</span>
-               <button class="btn btn-sm" onclick="openLaserConsentModal()" style="background:#C4618A;color:#fff;font-weight:600;font-size:11px">📝 Φόρμα Συναίνεσης</button>`}
+               <button class="btn btn-sm btn-primary" onclick="openLaserConsentModal()" style="font-size:11px">${icon('filecheck')} Φόρμα συναίνεσης</button>`}
         </div>
       </div>
     </div>
@@ -6896,7 +6976,7 @@ async function loadApptExamSlot(a) {
     slot.innerHTML = `<div style="margin-top:8px;padding:8px 10px;background:var(--surface);border-radius:8px;font-size:11px;color:var(--text-2);text-align:center">🔒 Ιατρική Εξέταση — περιορισμένη πρόσβαση</div>`;
     return;
   }
-  slot.innerHTML = `<button class="btn btn-sm" style="width:100%;margin-top:8px;justify-content:center;background:#0F6E56;color:#fff;font-weight:700" onclick="openMedicalExamModal('${a.id}','${a.patient_id}','${esc(a.patients&&a.patients.full_name||'')}')">🩺 Καταγραφή Ιατρικής Εξέτασης</button>`;
+  slot.innerHTML = `<button class="btn btn-sm btn-secondary" style="width:100%;margin-top:8px" onclick="openMedicalExamModal('${a.id}','${a.patient_id}','${esc(a.patients&&a.patients.full_name||'')}')">🩺 Καταγραφή Ιατρικής Εξέτασης</button>`;
 }
 
 async function resendApptAutomation(aid, action) {
@@ -6947,7 +7027,7 @@ function showAutomationPreviewModal(data) {
         ` : ''}
       </div>
       <div style="padding:12px 18px;border-top:1px solid var(--border);text-align:right">
-        <button class="btn btn-sm" id="auto-preview-close" style="background:#0891B2;color:#fff">Κλείσιμο</button>
+        <button class="btn btn-sm btn-primary" id="auto-preview-close">Κλείσιμο</button>
       </div>
     </div>`;
   document.body.appendChild(overlay);
@@ -6981,7 +7061,7 @@ function openRescheduleApptPicker(appt) {
         <input type="time" id="resched-time" value="${curTime}" style="width:100%;margin-bottom:16px;font-family:var(--font)">
         <div style="display:flex;gap:8px">
           <button class="btn btn-ghost btn-sm" id="resched-cancel" style="flex:1;justify-content:center">Άκυρο</button>
-          <button class="btn btn-sm" id="resched-ok" style="flex:1;justify-content:center;background:#0891B2;color:#fff">Μετακίνηση</button>
+          <button class="btn btn-sm btn-primary" id="resched-ok" style="flex:1">Μετακίνηση</button>
         </div>
       </div>`;
     document.body.appendChild(overlay);
@@ -7647,7 +7727,7 @@ function renderMarketingCampaigns() {
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
         <button class="btn btn-ghost" onclick="previewCampaignRecipients()">🔍 Προεπισκόπηση παραληπτών</button>
         ${preview ? `<span style="font-size:13px;color:var(--text-2)"><b>${preview.count}</b> παραλήπτες${preview.sample.length?' — π.χ. '+preview.sample.slice(0,3).map(p=>esc(p.full_name)).join(', '):''}</span>` : ''}
-        ${preview && preview.count ? `<button class="btn" style="background:#0891B2;color:#fff" onclick="sendCampaignNow()">📤 Αποστολή</button>` : ''}
+        ${preview && preview.count ? `<button class="btn btn-primary" onclick="sendCampaignNow()">${icon('send')} Αποστολή</button>` : ''}
       </div>
     </div>
     <div class="card" style="padding:14px 16px">
@@ -8115,7 +8195,7 @@ function renderPatientPrescriptionsBlock() {
   return `<div class="card" style="margin-bottom:14px">
     <div class="card-header" style="flex-wrap:wrap;gap:8px">
       <div><span class="card-title">℞ Ηλεκτρονικές Συνταγές</span><div style="font-size:11px;color:var(--text-2);margin-top:2px">${p.amka?'ΑΜΚΑ: '+esc(String(p.amka).replace(/^(\d{6})\d{5}$/,'$1•••••')):'<span style="color:var(--red)">Ο ασθενής δεν έχει ΑΜΚΑ — απαιτείται για συνταγή</span>'}</div></div>
-      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">${eprescStatusChip()}<button class="btn btn-primary btn-sm" onclick="openPrescriptionModal({})">+ Συνταγή</button><button class="btn btn-sm" style="background:#0F6E56;color:#fff;font-weight:600" onclick="openPrescriptionModal({kind:'exams'})">+ Παραπεμπτικό</button></div>
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">${eprescStatusChip()}<button class="btn btn-primary btn-sm" onclick="openPrescriptionModal({})">+ Συνταγή</button><button class="btn btn-sm btn-secondary" onclick="openPrescriptionModal({kind:'exams'})">+ Παραπεμπτικό</button></div>
     </div>
     ${list.length?`<div style="padding:0 16px 12px">${list.map(r=>`
       <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border-2);flex-wrap:wrap">
@@ -8394,7 +8474,7 @@ function showPrescriptionPreviewModal(data) {
         <pre style="font-size:11px;background:var(--surface);border-radius:8px;padding:10px 12px;overflow:auto;max-height:340px;white-space:pre-wrap;word-break:break-all">${esc(data.xml)}</pre>`:''}
       </div>
       <div style="padding:12px 18px;border-top:1px solid var(--border);text-align:right">
-        <button class="btn btn-sm" id="rx-preview-close" style="background:#0891B2;color:#fff">Κλείσιμο</button>
+        <button class="btn btn-sm btn-primary" id="rx-preview-close">Κλείσιμο</button>
       </div>
     </div>`;
   document.body.appendChild(overlay);
@@ -12456,7 +12536,7 @@ function bindEvents() {
           <button class="btn btn-ghost btn-sm" id="appt-notes-save" style="margin-top:4px;width:100%;justify-content:center">💾 Αποθήκευση σημειώσεων</button>
         </div>
         ${missingThisConsent?`
-        <button class="btn btn-sm" style="width:100%;margin-top:8px;justify-content:center;background:#D97706;color:#fff;font-weight:700" onclick="openConsentFromAppointment('${a.patient_id}','${esc(a.patients&&a.patients.full_name||'')}','${consentGrp}')">📝 Συμπλήρωση Συναίνεσης ${consentLabels[consentGrp]}</button>`:''}
+        <button class="btn btn-sm btn-warn" style="width:100%;margin-top:8px" onclick="openConsentFromAppointment('${a.patient_id}','${esc(a.patients&&a.patients.full_name||'')}','${consentGrp}')">📝 Συμπλήρωση Συναίνεσης ${consentLabels[consentGrp]}</button>`:''}
         <div id="appt-exam-slot"></div>
         ${(!a.is_internal && a.patient_id)?`
         <div style="display:flex;gap:6px;margin-top:8px">
@@ -14977,7 +15057,7 @@ function confirmLinkPatients(dup, fieldLabel) {
         <select id="link-rel-type" class="form-control" style="width:100%;margin-bottom:14px">${RELATIONSHIP_TYPES.map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join('')}</select>
         <div style="display:flex;gap:8px">
           <button class="btn btn-ghost btn-sm" id="link-cancel" style="flex:1;justify-content:center">Άκυρο</button>
-          <button class="btn btn-sm" id="link-ok" style="flex:1;justify-content:center;background:#0891B2;color:#fff">Σύνδεση &amp; Συνέχεια</button>
+          <button class="btn btn-sm btn-primary" id="link-ok" style="flex:1">Σύνδεση &amp; Συνέχεια</button>
         </div>
       </div>`;
     document.body.appendChild(overlay);
@@ -15779,8 +15859,8 @@ function searchIdleHtml() {
       <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(title)}</div>${sub?`<div style="font-size:11px;color:var(--text-2)">${esc(sub)}</div>`:''}</div></div>`;
   const head = t => `<div style="padding:8px 14px 4px;font-size:10.5px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--text-3)">${t}</div>`;
   return `<div style="background:var(--white);border:1px solid var(--border-2);border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,0.12);max-height:min(60vh,420px);overflow-y:auto">
-    ${rec.length ? head('Πρόσφατοι') + rec.map(r=>item(r.id, r.name, r.phone, '◎', '#E6F1FB')).join('') : ''}
-    ${todays.length ? head('Σήμερα στο ινστιτούτο') + todays.map(a=>item(a.patient_id, (a.patients&&a.patients.full_name)||'—', new Date(a.start_time).toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit',hour12:false})+' · '+(a.service_name||''), '◷', '#E1F5EE')).join('') : ''}
+    ${rec.length ? head('Πρόσφατοι') + rec.map(r=>item(r.id, r.name, r.phone, icon('user'), '#E6F1FB')).join('') : ''}
+    ${todays.length ? head('Σήμερα στο ινστιτούτο') + todays.map(a=>item(a.patient_id, (a.patients&&a.patients.full_name)||'—', new Date(a.start_time).toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit',hour12:false})+' · '+(a.service_name||''), icon('calendar'), '#E1F5EE')).join('') : ''}
   </div>`;
 }
 function updateSearchDropdown() {
@@ -15791,7 +15871,7 @@ function updateSearchDropdown() {
     dd.innerHTML = `<div style="background:var(--white);border:1px solid var(--border-2);border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,0.12);max-height:320px;overflow-y:auto">
       ${S.globalResults.map(r=>`
       <div onclick="openSearchResult('${r.type}','${r.id}')" style="padding:10px 14px;border-bottom:1px solid var(--border-2);cursor:pointer;display:flex;align-items:center;gap:10px" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background=''">
-        <div style="width:28px;height:28px;border-radius:6px;background:${r.type==='patient'?'#E6F1FB':r.type==='appointment'?'#E1F5EE':'#EEEDFE'};display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0">${r.type==='patient'?'◎':r.type==='appointment'?'◷':'⚡'}</div>
+        <div style="width:28px;height:28px;border-radius:6px;background:${r.type==='patient'?'#E6F1FB':r.type==='appointment'?'#E1F5EE':'#EEEDFE'};display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0">${r.type==='patient'?icon('user'):r.type==='appointment'?icon('calendar'):icon('zap')}</div>
         <div style="flex:1;min-width:0">
           <div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.title)}</div>
           <div style="font-size:11px;color:var(--text-2)">${esc(r.sub)}</div>
@@ -16020,7 +16100,7 @@ function openLaserConsentModal() {
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:10px;flex-wrap:wrap">
           <button class="btn btn-sm" onclick="lcClearCanvas()" style="font-size:11px">↺ Καθαρισμός</button>
           <div style="font-size:10px;color:var(--text-3)">Υπογράφοντας δηλώνετε αποδοχή των ανωτέρω · ${new Date().toLocaleDateString('el-GR')}</div>
-          <button class="btn" id="lc-save-btn" onclick="saveLaserConsent()" style="background:#C4618A;color:#fff;font-weight:700">✓ Υπογραφή & Αποθήκευση</button>
+          <button class="btn btn-primary" id="lc-save-btn" onclick="saveLaserConsent()">${icon('check')} Υπογραφή & Αποθήκευση</button>
         </div>
       </div>
     </div>`;
@@ -16127,7 +16207,7 @@ function viewLaserConsent() {
       </div>
       <img src="${c.signature_data}" style="margin-top:8px;border:1px solid var(--border);border-radius:10px;max-width:100%;background:#fff"/>
       <div style="margin-top:12px;text-align:right">
-        <button class="btn" onclick="sendLaserConsentEmail()" style="background:#0344F2;color:#fff;font-weight:700">📧 Αποστολή στον πελάτη</button>
+        <button class="btn btn-primary" onclick="sendLaserConsentEmail()">${icon('mail')} Αποστολή στον πελάτη</button>
       </div>
     </div>`;
   document.body.appendChild(ov);
@@ -17322,7 +17402,7 @@ function viewGroupConsent(groupKey) {
       </div>
       <img src="${c.signature_data}" style="margin-top:8px;border:1px solid var(--border);border-radius:10px;max-width:100%;background:#fff"/>
       <div style="margin-top:12px;text-align:right">
-        <button class="btn" onclick="sendServiceConsentEmail('${groupKey}')" style="background:#0344F2;color:#fff;font-weight:700">📧 Αποστολή στον πελάτη</button>
+        <button class="btn btn-primary" onclick="sendServiceConsentEmail('${groupKey}')">${icon('mail')} Αποστολή στον πελάτη</button>
       </div>
     </div>`;
   document.body.appendChild(ov);
