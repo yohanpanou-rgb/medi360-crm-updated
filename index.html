@@ -244,7 +244,10 @@ tr{cursor:pointer}
    να «κολλάνε» σε σχέση με ολόκληρη τη σελίδα (όχι με ένα μικρό γονικό block που φεύγει). */
 #pat-head{margin-top:-10px}
 .pat-tabs-bleed{margin:0 -24px;padding:4px 24px 0}
-@media(max-width:768px){#pat-head{margin-top:0}.pat-tabs-bleed{margin:0 -14px;padding:4px 14px 0}}
+/* Καρτέλα v2: header μίας γραμμής που «κολλάει», με bleed στα άκρα της σελίδας */
+#pat-head.pat-v2-head{margin:-10px -24px 0}
+.pat-v2-tabs{scrollbar-width:none}.pat-v2-tabs::-webkit-scrollbar{display:none}
+@media(max-width:768px){#pat-head{margin-top:0}.pat-tabs-bleed{margin:0 -14px;padding:4px 14px 0}#pat-head.pat-v2-head{margin:0 -14px;padding-left:14px!important;padding-right:14px!important}}
 @media(max-width:768px){
   .topbar-title{display:block!important;flex:1;font-size:15px}
   .mobile-only-btn{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:50%;background:var(--surface);border:1px solid var(--border);color:var(--text-2);font-size:17px;flex-shrink:0}
@@ -796,6 +799,9 @@ const TOGGLEABLE_MODULES = [
   // ℞ Ηλεκτρονική Συνταγογράφηση: default-OFF (ενεργοποιείται ρητά ανά κλινική, π.χ. Demo
   // Dermatology) — αφορά ιατρεία, όχι ινστιτούτα αισθητικής.
   {key:'prescriptions', label:'Ηλεκτρονική Συνταγογράφηση (ΗΔΙΚΑ)', defaultOff:true},
+  // Νέα καρτέλα πελάτη (UX audit P1): Επισκόπηση με επόμενο ραντεβού/εκκρεμότητες, 6 tabs,
+  // ελαφρύ header. Default-OFF — πιλοτικά στη Demo Dermatology, μετά Beauty Line.
+  {key:'patient-card-v2', label:'Νέα καρτέλα πελάτη (Επισκόπηση, 6 tabs)', defaultOff:true},
 ];
 // Υποσελίδες που ανήκουν σε ένα module αλλά δεν είναι οι ίδιες nav items
 // (π.χ. η λεπτομέρεια μιας φόρμας laser) — πρέπει να μπλοκάρονται μαζί του.
@@ -3026,7 +3032,10 @@ function renderPatientConsentsTab() {
   </div>`;
 }
 
-function renderPatientDetail() {
+// opts.tab / opts.contentOnly: χρησιμοποιούνται από την καρτέλα v2 (renderPatientDetailV2) για να
+// ξαναχρησιμοποιήσει ΑΥΤΟΥΣΙΟ το περιεχόμενο κάθε παλιού tab χωρίς αντιγραφή κώδικα.
+function renderPatientDetail(opts) {
+  opts = opts || {};
   const p = S.patientDetail;
   if (S.patientLoadError) {
     return `<div class="page"><div class="empty-state">
@@ -3037,7 +3046,8 @@ function renderPatientDetail() {
     </div></div>`;
   }
   if (!p) return '<div class="page"><div class="empty-state"><div>Φόρτωση...</div></div></div>';
-  const patTab = (S.patTab==='injectables' && !isModuleEnabled('injectables')) ? 'overview' : (S.patTab||'overview');
+  const wantTab = opts.tab || S.patTab;
+  const patTab = (wantTab==='injectables' && !isModuleEnabled('injectables')) ? 'overview' : (wantTab||'overview');
   const laserForms = (S.laserForms||[]).filter(f=>f.patient_id===p.id);
   const injectableForms = (S.injectableForms||[]).filter(f=>f.patient_id===p.id);
   const injModuleOn = isModuleEnabled('injectables');
@@ -3045,7 +3055,13 @@ function renderPatientDetail() {
   const canSeeFinancials = canSeePrices();
   const medicalFormLink = ((S.clinic&&S.clinic.integrations)||{}).gdpr_form_link || 'https://docs.google.com/forms/d/e/1FAIpQLSe5XiCNxnDOYMxgUbzlOP8G8ZDe-R3VBaJPlZeM1gthPElHiA/viewform?usp=header';
 
-  return `<div class="page">
+  // Καρτέλα v2 (module 'patient-card-v2'): νέο header/tabs/Επισκόπηση, τα παλιά tabs
+  // αποδίδονται μέσω legacy(tab) → renderPatientDetail({tab, contentOnly:true}).
+  if (!opts.contentOnly && isModuleEnabled('patient-card-v2')) {
+    return renderPatientDetailV2(p, {laserForms, injectableForms, injModuleOn, consultations, canSeeFinancials,
+      legacy: (tab) => renderPatientDetail({tab, contentOnly:true})});
+  }
+  const headHtml = `
     <!-- Το header, το banner δώρου γενεθλίων και τα tabs «παγώνουν» μαζί σαν
     ένα ενιαίο block κατά το scroll (όχι μόνο το header) — έτσι τα tabs
     παραμένουν πάντα ορατά/πατήσιμα, αντί να χάνονται κάτω από το header
@@ -3178,8 +3194,8 @@ function renderPatientDetail() {
       </div>
       <div style="position:absolute;right:0;top:0;bottom:6px;width:24px;background:linear-gradient(to right, transparent, var(--surface));pointer-events:none"></div>
     </div>
-    </div>
-    <div style="margin-top:14px">
+    </div>`;
+  const bodyHtml = `<div style="margin-top:14px">
 
     <!-- TIMELINE TAB -->
     ${patTab==='timeline'?`
@@ -3839,8 +3855,241 @@ function renderPatientDetail() {
         </div>
       </div>
     </div>`:''}
-  </div>
   </div>`;
+  if (opts.contentOnly) return bodyHtml;
+  return `<div class="page">${headHtml}${bodyHtml}</div>`;
+}
+
+// ══════════ ΚΑΡΤΕΛΑ ΠΕΛΑΤΗ v2 (module 'patient-card-v2', default OFF) ══════════
+// Έξι tabs: Επισκόπηση · Ραντεβού · Φάκελος · Πλάνο & Αγορές · Επικοινωνία · Ιστορικό.
+// Sticky μόνο header (56px) + tabs. Τα παλιά tabs (Ιατρικό, Συναινέσεις, Laser, Ενέσιμα,
+// Φωτογραφίες, Εξετάσεις, Διαγνώσεις, Consultation, Timeline, «Στοιχεία») αποδίδονται
+// αυτούσια μέσα στα νέα, μέσω ctx.legacy(tab). Καμία λειτουργία δεν αφαιρείται.
+const PAT_V2_FOLDER_TABS = ['medical','patconsents','laser','injectables','photos','exams','diagnoses'];
+const PAT_V2_TONE = { red:{bg:'#FCEBEB',c:'#A32D2D'}, amber:{bg:'#FAEEDA',c:'#854F0B'}, gray:{bg:'#E4E6ED',c:'#53586B'}, pink:{bg:'#FDF0F5',c:'#8A3B5E'} };
+function patV2NormalizeTab() {
+  // Παλιά ids (από κουμπιά μέσα στο legacy περιεχόμενο ή από loadPatientDetail(id,'diagnoses'))
+  // χαρτογραφούνται στα 6 tabs της v2.
+  const t = S.patTab || 'overview';
+  if (PAT_V2_FOLDER_TABS.includes(t)) { S.patFolderTab = t; S.patTab = 'folder'; }
+  else if (t === 'consultation') S.patTab = 'plan';
+}
+function patV2Age(dob) {
+  if (!dob) return null; const d = new Date(dob); if (isNaN(d.getTime())) return null;
+  const n = new Date(); let a = n.getFullYear()-d.getFullYear(); const m = n.getMonth()-d.getMonth();
+  if (m<0 || (m===0 && n.getDate()<d.getDate())) a--; return a>=0 && a<130 ? a : null;
+}
+// Εκκρεμότητες με ενέργεια — ό,τι αλλιώς ήταν σκόρπιο σε chips, banners και tabs.
+function patV2Pending(p) {
+  const items = [];
+  const goFolder = (sub) => `S.patTab='folder';S.patFolderTab='${sub}';render()`;
+  if (!p.gdpr_signed) items.push({icon:'⚠', label:'Χωρίς υπογεγραμμένο GDPR', action:goFolder('medical'), act:'Φόρμα', tone:'red'});
+  if (!hasMedicalHistoryData(p)) items.push({icon:'🏥', label:'Χωρίς ιατρικό ιστορικό', action:goFolder('medical'), act:'Συμπλήρωση', tone:'amber'});
+  if (!S.laserPatientConsent && (p.appointments||[]).some(a=>/laser|alexandrite/i.test(a.service_name||'') && a.status!=='cancelled')) items.push({icon:'⚡', label:'Συναίνεση Laser', action:goFolder('patconsents'), act:'Υπογραφή', tone:'red'});
+  if (!S.serviceConsentCleansing && patientNeedsServiceConsent(p,'cleansing')) items.push({icon:'✍', label:'Συναίνεση καθαρισμού', action:"openGroupConsentModal('cleansing')", act:'Υπογραφή', tone:'red'});
+  if (!S.serviceConsentPeelings && patientNeedsServiceConsent(p,'peelings')) items.push({icon:'✍', label:'Συναίνεση peelings', action:"openGroupConsentModal('peelings')", act:'Υπογραφή', tone:'red'});
+  if (!S.serviceConsentOxygen && patientNeedsServiceConsent(p,'oxygen')) items.push({icon:'✍', label:'Συναίνεση οξυγόνου/ενυδάτωσης', action:"openGroupConsentModal('oxygen')", act:'Υπογραφή', tone:'red'});
+  (S.patientPackages||[]).forEach(pkg => {
+    const used = packageUsedSessions(pkg), total = pkg.total_sessions||6;
+    if (used>=total) items.push({icon:'📦', label:`Πακέτο «${pkg.name}» ολοκληρώθηκε`, action:'openPackageModal()', act:'Πρόταση νέου', tone:'gray'});
+    else if (used===total-1) items.push({icon:'📦', label:`Πακέτο «${pkg.name}»: τελευταία συνεδρία (${used}/${total})`, action:'openPackageModal()', act:'Ανανέωση', tone:'amber'});
+  });
+  const g = S.patientBirthdayGift; const todayStr = new Date().toISOString().slice(0,10);
+  if (g && !g.redeemed_at && g.expires_at >= todayStr) items.push({icon:'🎁', label:`Δώρο γενεθλίων ενεργό έως ${new Date(g.expires_at+'T00:00:00').toLocaleDateString('el-GR')}`, action:`redeemBirthdayGift('${g.id}')`, act:'Εξαργύρωση', tone:'pink',
+    extra: (p.email&&p.gdpr_signed) ? `<button class="btn btn-sm btn-ghost" id="resend-birthday-email-btn" data-gift-id="${g.id}" style="padding:3px 8px;font-size:11px;min-height:0">📧 ${g.channel==='call'?'Αποστολή email':'Επαναποστολή'}</button>` : ''});
+  return items;
+}
+function renderPatientOverviewV2(p, ctx) {
+  const now = Date.now();
+  const appts = p.appointments||[];
+  const upcoming = appts.filter(a=>a.start_time && new Date(a.start_time).getTime()>=now && !['cancelled','no_show','completed'].includes(a.status)).sort((a,b)=>new Date(a.start_time)-new Date(b.start_time));
+  const past = appts.filter(a=>a.start_time && (a.status==='completed' || (new Date(a.start_time).getTime()<now && a.status!=='cancelled'))).sort((a,b)=>new Date(b.start_time)-new Date(a.start_time));
+  const next = upcoming[0];
+  const ther = a => (a.therapist_id && S.staffDirectory && S.staffDirectory[a.therapist_id]) || '';
+  const pending = patV2Pending(p);
+  const flags = patientFlags(p, appts);
+  const consentsOk = [S.laserPatientConsent&&'Laser', S.serviceConsentCleansing&&'Καθαρισμοί', S.serviceConsentPeelings&&'Peelings', S.serviceConsentOxygen&&'Οξυγόνο/Ενυδάτωση'].filter(Boolean);
+  const r = (S.patientReviews||[])[0];
+  const row = (k,v,strong) => `<div style="display:flex;gap:10px;padding:6px 0;border-bottom:1px solid var(--border-2)"><span style="color:var(--text-2);width:150px;flex-shrink:0">${k}</span><span style="font-weight:${strong?'700':'500'};color:${strong?'#A32D2D':'inherit'};min-width:0;overflow-wrap:anywhere">${v}</span></div>`;
+  const lbl = `font-size:11px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--text-3)`;
+  return `<div class="dash-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start">
+    <div class="card" style="grid-column:1/-1;border-left:4px solid var(--blue)">
+      <div style="padding:14px 16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        ${next ? `
+        <div style="width:48px;height:48px;border-radius:12px;background:#eef0fe;display:flex;flex-direction:column;align-items:center;justify-content:center;flex-shrink:0"><div style="font-size:18px;font-weight:700;color:var(--blue);line-height:1">${new Date(next.start_time).getDate()}</div><div style="font-size:10.5px;color:var(--blue)">${new Date(next.start_time).toLocaleDateString('el-GR',{month:'short'})}</div></div>
+        <div style="flex:1;min-width:180px"><div style="${lbl}">Επόμενο ραντεβού</div><div style="font-size:14px;font-weight:600">${esc(next.service_name||'Ραντεβού')}</div><div style="font-size:12.5px;color:var(--text-2)">${fmtDt(next.start_time)}${ther(next)?' · '+esc(ther(next)):''}${upcoming.length>1?' · +'+(upcoming.length-1)+' ακόμα':''}</div></div>
+        ${apptBadge(next.status)}
+        <button class="btn btn-ghost btn-sm" onclick="gotoCalendarDay('${next.start_time}')">Άνοιγμα στο Πρόγραμμα →</button>`
+        : `
+        <div style="flex:1;min-width:180px"><div style="${lbl}">Επόμενο ραντεβού</div><div style="font-size:14px;font-weight:600">Δεν υπάρχει προγραμματισμένο ραντεβού</div>${past[0]?`<div style="font-size:12.5px;color:var(--text-2)">Τελευταία επίσκεψη ${fmtDt(past[0].start_time)} · ${esc(past[0].service_name||'')}</div>`:''}</div>
+        <button class="btn btn-primary btn-sm" data-modal="new-appt">+ Κλείσε ραντεβού</button>`}
+      </div>
+    </div>
+    <div style="grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+      <span style="${lbl}">Εκκρεμότητες</span>
+      ${pending.length ? pending.map(it=>`<span style="display:inline-flex;align-items:center;gap:8px;padding:4px 5px 4px 10px;border-radius:10px;background:${PAT_V2_TONE[it.tone].bg};color:${PAT_V2_TONE[it.tone].c};font-size:12px;font-weight:600;max-width:100%"><span style="min-width:0">${it.icon} ${esc(it.label)}</span><button class="btn btn-sm" style="background:${PAT_V2_TONE[it.tone].c};color:#fff;padding:3px 9px;font-size:11px;min-height:0;flex-shrink:0" onclick="${it.action}">${esc(it.act)}</button>${it.extra||''}</span>`).join('') : `<span class="badge badge-green">✓ Καμία εκκρεμότητα</span>`}
+    </div>
+    <div class="card">
+      <div class="card-header"><span class="card-title">Τελευταίες επισκέψεις</span><button class="btn btn-ghost btn-sm" data-pat-tab="appointments">Όλες (${appts.length}) →</button></div>
+      ${past.length ? past.slice(0,4).map(a=>`<div style="display:flex;align-items:center;gap:10px;padding:9px 16px;border-bottom:1px solid var(--border-2);font-size:12.5px;cursor:pointer" title="Άνοιγμα στο Πρόγραμμα" onclick="gotoCalendarDay('${a.start_time}')"><div style="width:3px;align-self:stretch;border-radius:2px;background:${(STATUS_APPT[a.status]||STATUS_APPT.confirmed).c};flex-shrink:0"></div><div style="flex:1;min-width:0"><div style="font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.package_id?'📦 ':''}${esc(a.service_name||'—')}</div><div style="font-size:11.5px;color:var(--text-2)">${fmtDt(a.start_time)}${ther(a)?' · '+esc(ther(a)):''}</div></div>${ctx.canSeeFinancials&&a.price?`<span style="font-weight:600;color:#0F6E56;flex-shrink:0">${euro(a.price)}</span>`:''}${apptBadge(a.status)}</div>`).join('') : `<div style="padding:16px;font-size:12.5px;color:var(--text-2)">Καμία επίσκεψη ακόμα.</div>`}
+      <div style="padding:8px 16px;font-size:11.5px;color:var(--text-2)">${past.length} επισκέψεις · ${appts.filter(a=>a.status==='no_show').length} no-show${ctx.canSeeFinancials?' · LTV '+euro(p.ltv):''} · πελάτης από ${fmt(p.created_at)}</div>
+    </div>
+    <div class="card">
+      <div class="card-header"><span class="card-title">Κλινικά</span><button class="btn btn-ghost btn-sm" onclick="S.patTab='folder';S.patFolderTab='medical';render()">Φάκελος →</button></div>
+      <div style="padding:4px 16px 10px;font-size:12.5px">
+        ${flags.map(f=>`<div style="padding:6px 0;color:${f.color};font-weight:600">${f.icon} ${esc(f.label)}</div>`).join('')}
+        ${row('Αλλεργίες', p.allergies?esc(p.allergies):'—', !!p.allergies)}
+        ${row('Φαρμ. αγωγή / παθήσεις', p.medications?esc(p.medications):'—')}
+        ${row('Ιατρικό ιστορικό', hasMedicalHistoryData(p)?'✅ Συμπληρωμένο':'❌ Όχι')}
+        ${row('GDPR', p.gdpr_signed?'✅ Υπογεγραμμένο':'❌ Όχι')}
+        ${row('Συναινέσεις', consentsOk.length?consentsOk.map(l=>'✓ '+esc(l)).join(' · '):'—')}
+      </div>
+    </div>
+    <div class="card" style="grid-column:1/-1">
+      <div class="card-header"><span class="card-title">Σημείωση</span><span id="pat-quick-note-status" style="font-size:11px;color:var(--text-3)">αποθηκεύεται αυτόματα</span></div>
+      <div style="padding:10px 16px 14px"><textarea id="pat-quick-note" class="form-control" rows="2" placeholder="Προτιμήσεις, τι είπε στο τηλέφωνο, τι να θυμόμαστε…" onblur="savePatientQuickNote(this)">${esc(p.notes||'')}</textarea></div>
+    </div>
+    ${r ? `<div style="grid-column:1/-1;font-size:12px;color:var(--text-2)">🟢 Google review <span style="color:#D97706;letter-spacing:.5px">${reviewStars(r.star_rating)}</span>${r.review_create_time?' · '+fmt(r.review_create_time):''} · <span style="cursor:pointer;color:var(--blue)" onclick="S.patTab='comms';render()">δες στην Επικοινωνία</span></div>` : ''}
+    <details style="grid-column:1/-1">
+      <summary style="cursor:pointer;font-size:12.5px;font-weight:600;color:var(--text-2);padding:8px 0;list-style:none">▸ Στοιχεία, πακέτα, συσχετισμοί, συστάσεις</summary>
+      ${ctx.legacy('overview')}
+    </details>
+  </div>`;
+}
+function renderPatientFolderV2(p, ctx) {
+  const subs = [
+    {id:'medical', l:'Ιατρικό ιστορικό'+(hasMedicalHistoryData(p)?' ✓':'')},
+    {id:'patconsents', l:'Συναινέσεις'},
+    {id:'laser', l:`Laser (${ctx.laserForms.length})`},
+    ...(ctx.injModuleOn?[{id:'injectables', l:`Ενέσιμα (${ctx.injectableForms.length})`}]:[]),
+    {id:'photos', l:`Φωτογραφίες (${(S.patientPhotos||[]).length})`},
+    {id:'exams', l:`Εξετάσεις (${(S.patientExams||[]).length})`},
+    ...(canViewDiagnosis()?[{id:'diagnoses', l:`Διαγνώσεις (${(S.patientDiagnoses||[]).length})`}]:[]),
+  ];
+  const cur = (S.patFolderTab && subs.some(s=>s.id===S.patFolderTab)) ? S.patFolderTab : subs[0].id;
+  return `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px">${subs.map(s=>`<button class="btn btn-sm ${cur===s.id?'btn-primary':'btn-ghost'}" onclick="S.patFolderTab='${s.id}';render()">${s.l}</button>`).join('')}</div>${ctx.legacy(cur)}`;
+}
+function renderPatientPlanV2(p, ctx) {
+  const sales = p.productSales||[];
+  return `${ctx.legacy('consultation')}
+  <div class="card" style="margin-top:14px">
+    <div class="card-header"><span class="card-title">🧴 Αγορές προϊόντων (${sales.length})</span>${isModuleEnabled('product-sale')?`<button class="btn btn-ghost btn-sm" data-page="product-sale">Νέα πώληση →</button>`:''}</div>
+    ${sales.length ? sales.slice(0,30).map(s=>`<div style="display:flex;justify-content:space-between;gap:10px;padding:9px 16px;border-bottom:1px solid var(--border-2);font-size:12.5px"><span style="min-width:0">${esc(s.product_name||'—')}${s.quantity>1?' ×'+s.quantity:''}</span><span style="color:var(--text-2);white-space:nowrap">${fmt(s.created_at)}${ctx.canSeeFinancials&&s.amount!=null?' · <b style="color:#0F6E56">'+euro(s.amount)+'</b>':''}</span></div>`).join('') : `<div style="padding:14px 16px;font-size:12.5px;color:var(--text-2)">Καμία πώληση προϊόντος ακόμα.</div>`}
+  </div>`;
+}
+function renderPatientCommsV2(p, ctx) {
+  const ev = [];
+  const MAP = {confirmation_request:['📧','Αίτημα επιβεβαίωσης ραντεβού'], confirmation_received:['✅','Ο πελάτης επιβεβαίωσε το ραντεβού'], cancellation_received:['🚫','Ο πελάτης ακύρωσε το ραντεβού'], instructions:['📋','Οδηγίες θεραπείας'], rescheduled:['🔄','Το ραντεβού μεταφέρθηκε'], review_request:['⭐','Αίτημα αξιολόγησης'], booking_confirmation:['📅','Ενημέρωση κλεισίματος ραντεβού'], daily_schedule:['🗓','Καθημερινό πρόγραμμα']};
+  (S.patCommLog||[]).forEach(cl=>{ const m = MAP[cl.automation_type]||['✉', cl.automation_type||'Μήνυμα']; const manual = cl.channel==='manual'?' (χειροκίνητα)':''; ev.push({date:cl.created_at, icon:m[0], title:m[1]+manual, desc:[cl.channel&&cl.channel!=='manual'?String(cl.channel).toUpperCase():'', cl.status||'', (cl.metadata&&cl.metadata.instruction_set)||''].filter(Boolean).join(' · ')}); });
+  (S.patientBirthdayGifts||[]).forEach(g=>ev.push({date:g.sent_at||g.created_at, icon:'🎂', title:g.channel==='email'?'Email δώρου γενεθλίων':g.channel==='sms'?'SMS δώρου γενεθλίων':'Δώρο γενεθλίων (τηλεφωνική ενημέρωση)', desc:g.redeemed_at?'Εξαργυρώθηκε '+fmt(g.redeemed_at):'Εκκρεμεί εξαργύρωση'}));
+  (S.patientReviews||[]).forEach(rv=>{ const rt = reviewDisplayText(rv); ev.push({date:rv.review_create_time, icon:'⭐', title:'Google review '+reviewStars(rv.star_rating)+(rv.reviewer_display_name?' · '+rv.reviewer_display_name:''), desc:rt.text||'', url:googleReviewUrl(rv)}); });
+  ev.sort((a,b)=>new Date(b.date)-new Date(a.date));
+  return `<div class="card" style="margin-bottom:14px"><div style="padding:12px 16px;display:flex;flex-wrap:wrap;gap:8px 18px;font-size:12.5px;align-items:center">
+      <span><b>Τηλέφωνο</b> ${p.phone?`<span style="font-family:var(--mono)">${esc(p.phone)}</span> ${phoneActionsHtml(p.phone, 13)}`:'<span style="color:var(--red)">—</span>'}</span>
+      <span><b>Email</b> ${p.email?esc(p.email):'<span style="color:var(--red)">— (δεν λαμβάνει emails)</span>'}</span>
+      <span><b>GDPR</b> ${p.gdpr_signed?'✅':'<span style="color:var(--red)">❌ — οι αυτοματισμοί δεν στέλνουν</span>'}</span>
+    </div></div>
+    <div class="card"><div class="card-header"><span class="card-title">Ιστορικό επικοινωνίας (${ev.length})</span></div>
+    ${ev.length ? ev.map(e=>`<div style="display:flex;gap:12px;padding:10px 16px;border-bottom:1px solid var(--border-2);font-size:12.5px;align-items:flex-start"><span style="font-size:16px;line-height:1.2">${e.icon}</span><div style="flex:1;min-width:0"><div style="font-weight:500">${esc(e.title)}${e.url?` <a href="${esc(e.url)}" target="_blank" rel="noopener" style="color:var(--blue)">↗</a>`:''}</div>${e.desc?`<div style="font-size:11.5px;color:var(--text-2);overflow-wrap:anywhere">${esc(e.desc)}</div>`:''}</div><span style="font-family:var(--mono);font-size:11px;color:var(--text-3);white-space:nowrap">${e.date?fmtDt(e.date):'—'}</span></div>`).join('') : `<div style="padding:16px;font-size:12.5px;color:var(--text-2)">Καμία καταγεγραμμένη επικοινωνία ακόμα.</div>`}
+    </div>`;
+}
+function renderPatientDetailV2(p, ctx) {
+  patV2NormalizeTab();
+  const tab = S.patTab || 'overview';
+  const appts = p.appointments||[];
+  const formsCount = ctx.laserForms.length + ctx.injectableForms.length + (S.patientExams||[]).length + (S.patientPhotos||[]).length;
+  const commCount = (S.patCommLog||[]).length + (S.patientBirthdayGifts||[]).length + (S.patientReviews||[]).length;
+  const tabs = [
+    {id:'overview', l:'Επισκόπηση'},
+    {id:'appointments', l:'Ραντεβού', n:appts.length},
+    {id:'folder', l:'Φάκελος', n:formsCount},
+    {id:'plan', l:'Πλάνο & Αγορές', n:ctx.consultations.length+(p.productSales||[]).length},
+    {id:'comms', l:'Επικοινωνία', n:commCount},
+    {id:'timeline', l:'Ιστορικό'},
+  ];
+  const flags = patientFlags(p, appts);
+  const age = patV2Age(p.dob);
+  const body = tab==='overview' ? renderPatientOverviewV2(p, ctx)
+    : tab==='folder' ? renderPatientFolderV2(p, ctx)
+    : tab==='plan' ? renderPatientPlanV2(p, ctx)
+    : tab==='comms' ? renderPatientCommsV2(p, ctx)
+    : ctx.legacy(tab);
+  return `<div class="page">
+    <div id="pat-head" class="pat-v2-head" style="position:sticky;top:56px;z-index:46;background:var(--surface);padding:8px 24px 6px">
+      <div style="display:flex;align-items:center;gap:10px;min-height:40px">
+        <button class="btn btn-ghost btn-sm" data-page="patients" title="Πίσω στους πελάτες" style="padding:6px 9px;flex-shrink:0">←</button>
+        <div style="width:36px;height:36px;border-radius:50%;background:var(--navy);color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex-shrink:0">${initials(p.full_name)}</div>
+        <div style="min-width:0;flex:1;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <h1 class="page-title" style="font-size:16px;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%">${esc(p.full_name)}</h1>
+          ${patBadge(p.status)}
+          ${!p.gdpr_signed?'<span class="badge badge-red" title="Χωρίς υπογεγραμμένο GDPR">⚠ GDPR</span>':''}
+          ${flags.length?`<span class="badge badge-red" title="${esc(flags.map(f=>f.label).join(' · '))}">‼ ${flags.length}</span>`:''}
+        </div>
+        <button class="btn btn-primary btn-sm" data-modal="new-appt" style="flex-shrink:0">+ Ραντεβού</button>
+        <button class="btn btn-ghost btn-sm" onclick="openPatientMoreMenuV2()" title="Περισσότερες ενέργειες" style="flex-shrink:0;padding:6px 10px">⋯</button>
+      </div>
+    </div>
+    ${criticalBannerHtml(p, appts)}
+    <div style="display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;font-size:12.5px;color:var(--text-2);padding:4px 0 8px">
+      ${p.phone?`<span style="display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);color:var(--text)">${esc(p.phone)} ${phoneActionsHtml(p.phone, 13)}</span>`:'<span style="color:var(--red)">χωρίς τηλέφωνο</span>'}
+      ${p.email?`<span>✉ ${esc(p.email)}</span>`:''}
+      ${p.amka?`<span title="ΑΜΚΑ" style="font-variant-numeric:tabular-nums">ΑΜΚΑ ${esc(p.amka)}</span>`:''}
+      ${age!==null?`<span>${age} ετών</span>`:''}
+      ${p.source?`<span>📍 ${esc(p.source)}</span>`:''}
+      <label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;user-select:none"><input type="checkbox" id="pat-student-toggle" ${p.is_student?'checked':''} style="width:14px;height:14px;accent-color:var(--blue);cursor:pointer"/> Φοιτητής</label>
+    </div>
+    <div id="pat-tabs" class="pat-tabs-bleed" style="position:sticky;top:calc(56px + var(--pat-head-h,52px));z-index:45;background:var(--surface)">
+      <div style="position:absolute;right:0;top:0;bottom:1px;width:28px;background:linear-gradient(to right, transparent, var(--surface));pointer-events:none;z-index:1"></div>
+      <div class="pat-v2-tabs" style="display:flex;gap:2px;overflow-x:auto;border-bottom:1px solid var(--border-2);padding-right:24px">
+        ${tabs.map(t=>`<button class="btn" data-pat-tab="${t.id}" style="flex-shrink:0;border-radius:8px 8px 0 0;padding:9px 10px;font-size:12.5px;white-space:nowrap;background:${tab===t.id?'var(--white)':'transparent'};color:${tab===t.id?'var(--blue)':'var(--text-2)'};font-weight:${tab===t.id?'700':'500'};border-bottom:2px solid ${tab===t.id?'var(--blue)':'transparent'};margin-bottom:-1px">${t.l}${t.n!=null?`<span style="margin-left:5px;font-size:10.5px;font-weight:700;padding:1px 6px;border-radius:8px;background:${tab===t.id?'var(--blue-soft)':'var(--surface-2)'};color:${tab===t.id?'var(--blue)':'var(--text-2)'}">${t.n}</span>`:''}</button>`).join('')}
+      </div>
+    </div>
+    ${['appointments','timeline','folder','plan'].includes(tab) ? body : `<div style="margin-top:14px">${body}</div>`}
+  </div>`;
+}
+// «⋯» της καρτέλας v2: ό,τι ήταν στα κυκλικά quick actions + Επεξεργασία/Διαγραφή.
+function openPatientMoreMenuV2() {
+  const canDelete = canSee(['super_admin','clinic_admin']);
+  const div = document.createElement('div');
+  div.className = 'modal-overlay';
+  const item = (icon,label,act,extra) => `<button class="btn btn-ghost" style="justify-content:flex-start;${extra||''}" data-act="${act}">${icon} ${label}</button>`;
+  div.innerHTML = `<div class="modal" style="max-width:340px">
+    <div class="modal-header"><span class="modal-title">Ενέργειες πελάτη</span><button class="modal-close" id="pmm2-close">×</button></div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:2px;padding-top:4px;padding-bottom:12px">
+      ${item('✏','Επεξεργασία στοιχείων','edit')}
+      ${item('📦','Νέο πακέτο συνεδριών','pkg')}
+      ${item('📦','Νέο γενικό πακέτο','gpkg')}
+      ${isModuleEnabled('laser')?item('⚡','Νέο Laser Form','laser'):''}
+      ${isModuleEnabled('injectables')?item('💉','Νέα καρτέλα ενέσιμων','inj'):''}
+      ${canDelete?item('🗑','Διαγραφή πελάτη','del','color:var(--red)'):''}
+    </div>
+  </div>`;
+  document.body.appendChild(div);
+  const close = () => div.remove();
+  div.onclick = e => { if (e.target===div) close(); };
+  div.querySelector('#pmm2-close').onclick = close;
+  div.querySelectorAll('[data-act]').forEach(b => b.onclick = () => {
+    const a = b.dataset.act; close();
+    if (a==='edit') openEditPatientModal();
+    else if (a==='pkg') openPackageModal();
+    else if (a==='gpkg') openGeneralPackageModal();
+    else if (a==='laser') { S.modal='new-laser'; S.modalData={}; renderModal(); }
+    else if (a==='inj') { S.modal='new-injectable'; S.modalData={}; renderModal(); }
+    else if (a==='del') deletePatientPermanently();
+  });
+}
+// Σημείωση Επισκόπησης: αποθήκευση στο blur (patients.notes), χωρίς modal.
+async function savePatientQuickNote(el) {
+  const p = S.patientDetail; if (!p || !el) return;
+  const val = el.value;
+  if ((p.notes||'') === val) return;
+  const st = document.getElementById('pat-quick-note-status');
+  if (st) st.textContent = 'Αποθήκευση…';
+  const {error} = await sb.from('patients').update({notes: val || null}).eq('id', p.id);
+  if (error) { if (st) st.textContent = 'δεν αποθηκεύτηκε'; showToast('Σφάλμα: '+error.message, 'err'); return; }
+  p.notes = val;
+  const lp = (S.patients||[]).find(x=>x.id===p.id); if (lp) lp.notes = val;
+  if (st) st.textContent = 'Αποθηκεύτηκε ✓';
 }
 
 // ── APPOINTMENTS ──
