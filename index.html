@@ -248,6 +248,45 @@ tr{cursor:pointer}
 /* Καρτέλα v2: header μίας γραμμής που «κολλάει», με bleed στα άκρα της σελίδας */
 #pat-head.pat-v2-head{margin:-10px -24px 0}
 .pat-v2-tabs{scrollbar-width:none}.pat-v2-tabs::-webkit-scrollbar{display:none}
+/* Timeline v2 καρτέλας πελάτη: αποτύπωμα, φίλτρα, γραμμές γεγονότων ανά ημέρα */
+.tl-foot{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:10px 12px;background:var(--surface-2);border-radius:12px;margin:14px 0 10px}
+.tl-filters{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px}
+.tl-imp{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--text-2);margin-left:auto;cursor:pointer;user-select:none;white-space:nowrap}
+.tl-imp input{width:14px;height:14px;accent-color:var(--blue)}
+.tl-next{background:#FFFBEB;border:1px solid #FDE68A;border-radius:12px;padding:8px 10px 4px;margin-bottom:10px}
+.tl-month{position:sticky;top:calc(56px + var(--pat-head-h,52px) + 40px);z-index:2;background:var(--surface);font-size:11px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:var(--text-3);padding:10px 0 4px;margin-top:6px}
+.tl-day{font-size:12px;font-weight:700;color:var(--text-2);padding:8px 0 4px;margin-top:4px}
+.tl-item{background:var(--white);border:1px solid var(--border-2);border-radius:10px;margin-bottom:6px;overflow:hidden}
+.tl-row{display:grid;grid-template-columns:44px 28px minmax(0,1fr) auto 14px;align-items:center;gap:10px;padding:9px 12px;min-height:44px}
+.tl-row .tl-chev{grid-column:5}
+.tl-row.tl-exp{cursor:pointer}
+.tl-row.tl-exp:hover{background:var(--surface)}
+.tl-time{font-family:var(--mono);font-size:12px;color:var(--text-3);width:44px;flex-shrink:0;line-height:1.25;text-align:right}
+.tl-ico{width:28px;height:28px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
+.tl-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.tl-title{font-size:13.5px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tl-meta{font-size:12px;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tl-meta:empty{display:none}
+.tl-chip{font-size:11px;font-weight:600;padding:3px 9px;border-radius:99px;white-space:nowrap;flex-shrink:0}
+.tl-chev{color:var(--text-3);font-size:12px;flex-shrink:0;transition:transform .15s}
+.tl-item.open .tl-chev{transform:rotate(90deg)}
+.tl-body{display:none;padding:0 12px 10px 94px;border-top:1px dashed var(--border-2)}
+.tl-item.open .tl-body{display:block}
+.tl-desc{font-size:12.5px;color:var(--text-2);padding:8px 0 2px;overflow-wrap:anywhere}
+.tl-actions{display:flex;flex-wrap:wrap;gap:6px;padding-top:8px}
+@media(max-width:768px){
+  .tl-row{grid-template-columns:38px 28px minmax(0,1fr) 14px;gap:4px 8px;padding:9px 10px}
+  .tl-time{width:38px;font-size:11.5px;grid-row:1}
+  .tl-ico{grid-row:1}
+  .tl-main{grid-column:3;grid-row:1}
+  .tl-title,.tl-meta{white-space:normal}
+  .tl-chip{grid-column:3;grid-row:2;justify-self:start}
+  .tl-row .tl-chev{grid-column:4;grid-row:1}
+  .tl-body{padding-left:10px}
+  .tl-imp{margin-left:0;width:100%}
+  .tl-month{top:calc(56px + var(--pat-head-h,52px) + 40px)}
+}
+html[data-theme="dark"] .tl-next{background:rgba(180,83,9,.15);border-color:rgba(253,230,138,.3)}
 /* Πρόγραμμα σε κινητό: FAB «+ Ραντεβού», chips θεραπευτριών, γραμμή εργαλείων μίας σειράς */
 .cal-fab{display:none}
 .cal-chips{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}
@@ -4137,6 +4176,190 @@ function renderPatientCommsV2(p, ctx) {
     ${ev.length ? ev.map(e=>`<div style="display:flex;gap:12px;padding:10px 16px;border-bottom:1px solid var(--border-2);font-size:12.5px;align-items:flex-start"><span style="font-size:16px;line-height:1.2">${e.icon}</span><div style="flex:1;min-width:0"><div style="font-weight:500">${esc(e.title)}${e.url?` <a href="${esc(e.url)}" target="_blank" rel="noopener" style="color:var(--blue)">↗</a>`:''}</div>${e.desc?`<div style="font-size:11.5px;color:var(--text-2);overflow-wrap:anywhere">${esc(e.desc)}</div>`:''}</div><span style="font-family:var(--mono);font-size:11px;color:var(--text-3);white-space:nowrap">${e.date?fmtDt(e.date):'—'}</span></div>`).join('') : `<div style="padding:16px;font-size:12.5px;color:var(--text-2)">Καμία καταγεγραμμένη επικοινωνία ακόμα.</div>`}
     </div>`;
 }
+// ── TIMELINE v2 (UX audit P1, μέρος της καρτέλας v2) ──
+// «Τι έγινε → πότε → ποιος → τι ακολουθεί»: αποτύπωμα πελάτη πάνω-πάνω, «Επόμενα»
+// καρφιτσωμένα, γεγονότα ανά ημέρα με ώρα/εικονίδιο/actor/ποσό/κατάσταση και quick
+// actions ανά τύπο. Μόνο ό,τι ήδη φορτώνει η καρτέλα — καμία νέα ερώτηση στη βάση.
+const TL_CAT = {
+  visit:    {c:'#0344F2', bg:'#E8EEFE', l:'Επισκέψεις'},
+  clinical: {c:'#534AB7', bg:'#EEEDFE', l:'Κλινικά'},
+  comm:     {c:'#0F6E56', bg:'#E1F5EE', l:'Επικοινωνία'},
+  purchase: {c:'#B45309', bg:'#FEF3C7', l:'Αγορές'},
+  system:   {c:'#5B6472', bg:'#EEF1F5', l:'Σύστημα'},
+};
+// Ξανά το ίδιο ραντεβού: ίδιος πελάτης, ίδια υπηρεσία (και θεραπεύτρια αν υπάρχει), νέα ώρα.
+async function rebookSameAppointment(apptId) {
+  const p = S.patientDetail; if (!p) return;
+  const a = (p.appointments||[]).find(x=>x.id===apptId); if (!a) return;
+  const therName = (a.therapist_id && S.staffDirectory && S.staffDirectory[a.therapist_id]) || null;
+  await openNewApptAt(null, therName, null, {});
+  const ps = document.getElementById('a-patient-search'), pid = document.getElementById('a-patient-id');
+  if (ps && pid) { ps.value = p.full_name||''; pid.value = p.id; if (window._apptLoadPatientPackages) _apptLoadPatientPackages(p.id); }
+  const svcSel = document.getElementById('a-service'), svcSearch = document.getElementById('a-service-search');
+  const opt = svcSel && a.service_name && Array.from(svcSel.options).find(o=>o.value===a.service_name);
+  if (svcSel && opt) { svcSel.value = a.service_name; if (svcSearch) svcSearch.value = opt.textContent; svcSel.dispatchEvent(new Event('change')); }
+  else if (svcSel && a.service_name) {
+    // Υπηρεσία που δεν υπάρχει (πια) στον κατάλογο: ελεύθερο κείμενο με το ίδιο όνομα.
+    svcSel.value = '__custom__'; svcSel.dispatchEvent(new Event('change'));
+    const c = document.getElementById('a-service-custom'); if (c) c.value = a.service_name;
+    if (svcSearch) svcSearch.value = '';
+  }
+  const pr = document.getElementById('a-price'); if (pr && a.price!=null && canSeePrices()) pr.value = a.price;
+  // Το openNewApptAt εστιάζει στον πελάτη (ήταν κενός τη στιγμή του ελέγχου) και ανοίγει τη λίστα
+  // αποτελεσμάτων — εδώ ο πελάτης είναι δεδομένος, οπότε κλείνουμε τη λίστα και πάμε στην ώρα.
+  setTimeout(()=>{ const res = document.getElementById('a-patient-results'); if (res) res.style.display='none'; const t = document.getElementById('a-time'); if (t) t.focus(); }, 120);
+}
+function patTimelineEvents(p, ctx) {
+  const ev = [];
+  const now = Date.now();
+  const canFin = ctx.canSeeFinancials;
+  const ther = a => (a.therapist_id && S.staffDirectory && S.staffDirectory[a.therapist_id]) || '';
+  const byName = id => (id && S.staffDirectory && S.staffDirectory[id]) || '';
+  const q = s => String(s||'').replace(/'/g,"\\'");
+  // Σύστημα: εγγραφή, GDPR, ιστορικό
+  ev.push({id:'reg', date:p.created_at, cat:'system', icon:'👤', title:'Εγγραφή πελάτη', actor:p.source?('πηγή: '+p.source):'', important:true});
+  if (p.gdpr_signed) ev.push({id:'gdpr', date:p.gdpr_signed_at||p.created_at, cat:'system', icon:'✓', title:'GDPR υπογεγραμμένο', actor:'ο πελάτης', important:true,
+    actions:[{l:'Προβολή φόρμας', on:'viewGdprConsent()'}]});
+  if (hasMedicalHistoryData(p)) ev.push({id:'mh', date:p.medical_history_completed_at||p.created_at, cat:'clinical', icon:'🏥', title:'Ιατρικό ιστορικό συμπληρώθηκε', actor:'ο πελάτης', important:false,
+    actions:[{l:'Άνοιγμα', on:"S.patTab='folder';S.patFolderTab='medical';render()"}]});
+  // Επισκέψεις
+  (p.appointments||[]).forEach(a=>{
+    if (!a.start_time) return;
+    const isFuture = new Date(a.start_time).getTime() >= now && !['cancelled','no_show','completed'].includes(a.status);
+    const photos = (S.patientPhotos||[]).filter(ph=>ph.appointment_id===a.id).length;
+    const branchName = a.branch_id ? (((S.clinicBranches||[]).find(b=>b.id===a.branch_id)||{}).name) : null;
+    const actions = [{l:'Άνοιγμα στο Πρόγραμμα', on:`gotoCalendarDay('${a.start_time}')`}];
+    if (isFuture && a.status==='booked') actions.push({l:'✓ Επιβεβαίωση', on:`manualConfirmAppt('${a.id}')`});
+    if (!isFuture && a.status!=='cancelled') actions.push({l:'Ξανά ίδιο', on:`rebookSameAppointment('${a.id}')`});
+    if (photos || (!isFuture && a.status==='completed')) actions.push({l:`📷 Φωτογραφίες${photos?' ('+photos+')':''}`, on:`S.patTab='folder';S.patFolderTab='photos';S.patPhotoApptFilter='${a.id}';render()`});
+    ev.push({id:'a'+a.id, date:a.start_time, cat:'visit', icon:a.package_id?'📦':'◷', title:a.service_name||'Ραντεβού', actor:ther(a), amount:(canFin&&a.price)?euro(a.price):'',
+      status:a.status, future:isFuture, important:true,
+      desc:[branchName?'🏢 '+branchName:'', a.created_by&&byName(a.created_by)?'καταχώρηση: '+byName(a.created_by):'', a.notes||''].filter(Boolean).join(' · '), actions});
+  });
+  // Κλινικά: φωτογραφίες, laser, ενέσιμα, consultation, εξετάσεις, διαγνώσεις, συνταγές
+  (S.patientPhotos||[]).forEach(ph=>{
+    const la = ph.appointment_id ? (p.appointments||[]).find(a=>a.id===ph.appointment_id) : null;
+    ev.push({id:'ph'+ph.id, date:ph.taken_at, cat:'clinical', icon:'📷', title:'Φωτογραφία', actor:la?(ther(la)||''):'', desc:la?('Ραντεβού: '+(la.service_name||'—')):'', important:false,
+      actions:[{l:'Προβολή', on:`S.patTab='folder';S.patFolderTab='photos';${la?`S.patPhotoApptFilter='${la.id}';`:''}render()`}]});
+  });
+  ctx.laserForms.forEach(f=>ev.push({id:'lf'+f.id, date:f.created_at, cat:'clinical', icon:'⚡', title:'Laser Form — Συνεδρία #'+(f.session_number||1), actor:byName(f.created_by), desc:(f.body_parts||[]).slice(0,4).join(', '), important:true,
+    actions:[{l:'Άνοιγμα', on:`loadLaserForm('${f.id}')`}]}));
+  ctx.injectableForms.forEach(f=>(f.sessions||[]).forEach((s,i)=>{
+    const materials = [...new Set((s.points||[]).map(pt=>pt.material).filter(Boolean))];
+    ev.push({id:'inj'+f.id+'-'+i, date:s.date||f.created_at, cat:'clinical', icon:'💉', title:'Ενέσιμη θεραπεία — '+(s.points||[]).length+' σημεία', actor:byName(s.by||f.created_by), desc:materials.slice(0,3).join(', '), important:true,
+      actions:[{l:'Άνοιγμα', on:`loadInjectableForm('${f.id}')`}]});
+  }));
+  ctx.consultations.forEach(c=>ev.push({id:'c'+c.id, date:c.signed_at||c.created_at, cat:'clinical', icon:'📝', title:'Consultation συμπληρώθηκε', actor:'ο πελάτης', important:true,
+    actions:[{l:'Άνοιγμα', on:"S.patTab='plan';render()"}]}));
+  (S.patientExams||[]).forEach(ex=>ev.push({id:'ex'+ex.id, date:ex.exam_date?(ex.exam_date+'T12:00:00'):ex.created_at, cat:'clinical', icon:'🩺', title:'Εξέταση: '+(ex.file_name||'αρχείο'), important:true,
+    actions:[...(ex.url?[{l:'Άνοιγμα αρχείου', href:ex.url}]:[]), {l:'Όλες οι εξετάσεις', on:"S.patTab='folder';S.patFolderTab='exams';render()"}]}));
+  (S.patientDiagnoses||[]).forEach(d=>ev.push({id:'dx'+d.id, date:d.created_at, cat:'clinical', icon:'🩺', title:'Διάγνωση: '+((d.diagnosis||[]).slice(0,2).join(', ')||'—'), actor:(d.profiles&&d.profiles.full_name)||'', important:true,
+    actions:[{l:'Άνοιγμα', on:"S.patTab='folder';S.patFolderTab='diagnoses';render()"}]}));
+  (S.patientPrescriptions||[]).forEach(r=>ev.push({id:'rx'+r.id, date:r.issued_at||r.created_at, cat:'clinical', icon:'℞', title:(r.kind==='exams'?'Παραπεμπτικό — ':'Συνταγή — ')+rxItemsSummary(r), actor:(r.profiles&&r.profiles.full_name)||'', desc:r.status||'', important:true,
+    actions:[{l:'Άνοιγμα', on:`openPrescriptionModal({prescriptionId:'${r.id}'})`}]}));
+  // Αγορές: προϊόντα, πακέτα
+  (p.productSales||[]).forEach(s=>ev.push({id:'ps'+s.id, date:s.created_at, cat:'purchase', icon:'🧴', title:(s.product_name||'Προϊόν')+(s.quantity>1?' ×'+s.quantity:''), actor:byName(s.sold_by||s.created_by), amount:(canFin&&s.amount!=null)?euro(s.amount):'', important:true}));
+  [...(S.patientPackages||[]), ...(S.patientGeneralPackages||[])].forEach(pk=>ev.push({id:'pk'+pk.id, date:pk.purchased_at||pk.created_at, cat:'purchase', icon:'📦', title:'Πακέτο «'+(pk.name||'—')+'»', desc:(pk.total_sessions?pk.total_sessions+' συνεδρίες':''), amount:(canFin&&pk.price)?euro(pk.price):'', important:true,
+    actions:[{l:'Πακέτα', on:"S.patTab='plan';render()"}]}));
+  // Επικοινωνία
+  const CM = {confirmation_request:['📧','Αίτημα επιβεβαίωσης ραντεβού',false], confirmation_received:['✅','Ο πελάτης επιβεβαίωσε το ραντεβού',true], cancellation_received:['🚫','Ο πελάτης ακύρωσε το ραντεβού',true], instructions:['📋','Οδηγίες θεραπείας',false], rescheduled:['🔄','Το ραντεβού μεταφέρθηκε',true], review_request:['⭐','Αίτημα αξιολόγησης',false], booking_confirmation:['📅','Ενημέρωση κλεισίματος ραντεβού',false], daily_schedule:['🗓','Καθημερινό πρόγραμμα',false], birthday:['🎂','Ευχές γενεθλίων',false], nameday:['🎉','Ευχές ονομαστικής εορτής',false]};
+  (S.patCommLog||[]).forEach(cl=>{
+    const m = CM[cl.automation_type] || ['✉', cl.automation_type||'Μήνυμα', false];
+    const manual = cl.channel==='manual';
+    const byClient = ['confirmation_received','cancellation_received'].includes(cl.automation_type) && !manual;
+    const actor = byClient ? 'ο πελάτης' : manual ? ('γραμματεία'+((cl.metadata&&cl.metadata.by)?' · '+cl.metadata.by:'')) : 'αυτόματο'+(cl.channel?' · '+String(cl.channel).toUpperCase():'');
+    const meta = cl.metadata||{};
+    const desc = cl.automation_type==='rescheduled' && meta.from_start_time && meta.to_start_time ? `${fmtDt(meta.from_start_time)} → ${fmtDt(meta.to_start_time)}` : [meta.instruction_set||'', cl.status&&cl.status!=='sent'?cl.status:''].filter(Boolean).join(' · ');
+    ev.push({id:'cl'+cl.id, date:cl.created_at, cat:'comm', icon:m[0], title:m[1], actor, desc, important:m[2]||manual});
+  });
+  (S.patientBirthdayGifts||[]).forEach(g=>ev.push({id:'bg'+g.id, date:g.sent_at||g.created_at, cat:'comm', icon:'🎂', title:g.channel==='email'?'Email δώρου γενεθλίων':g.channel==='sms'?'SMS δώρου γενεθλίων':'Δώρο γενεθλίων (τηλεφωνικά)', actor:g.channel==='call'?'γραμματεία':'αυτόματο', desc:g.redeemed_at?'Εξαργυρώθηκε '+fmt(g.redeemed_at):'Εκκρεμεί εξαργύρωση', important:!!g.redeemed_at}));
+  (S.patientReviews||[]).forEach(rv=>{ const rt = reviewDisplayText(rv); ev.push({id:'rv'+rv.id, date:rv.review_create_time, cat:'comm', icon:'⭐', title:'Google review '+reviewStars(rv.star_rating), actor:'ο πελάτης', desc:rt.text||'', important:true,
+    actions:googleReviewUrl(rv)?[{l:'Άνοιγμα στο Google', href:googleReviewUrl(rv)}]:[]}); });
+  return ev.filter(e=>e.date && !isNaN(new Date(e.date)));
+}
+// Αποτύπωμα πελάτη: ποιος είναι αυτός ο πελάτης για εμάς, σε μία γραμμή, από ό,τι ήδη ξέρουμε.
+function patFootprint(p, ctx) {
+  const now = Date.now();
+  const appts = p.appointments||[];
+  const visits = appts.filter(a=>a.start_time && (a.status==='completed' || (new Date(a.start_time).getTime()<now && !['cancelled','no_show'].includes(a.status)))).sort((a,b)=>new Date(a.start_time)-new Date(b.start_time));
+  const noShows = appts.filter(a=>a.status==='no_show').length;
+  const cancels = appts.filter(a=>a.status==='cancelled').length;
+  let freq = '';
+  if (visits.length >= 3) {
+    const days = (new Date(visits[visits.length-1].start_time) - new Date(visits[0].start_time)) / 86400000 / (visits.length-1);
+    freq = days >= 45 ? 'κάθε ~'+Math.round(days/30)+' μήνες' : 'κάθε ~'+Math.max(1,Math.round(days/7))+' εβδ.';
+  }
+  const counts = {}; visits.forEach(a=>{ const k=(a.service_name||'').trim(); if (k) counts[k]=(counts[k]||0)+1; });
+  const top = Object.entries(counts).sort((a,b)=>b[1]-a[1])[0];
+  const lastComm = [...(S.patCommLog||[]).map(c=>c.created_at), ...(S.patientBirthdayGifts||[]).map(g=>g.sent_at||g.created_at)].filter(Boolean).sort().pop();
+  const first = visits[0] ? visits[0].start_time : p.created_at;
+  const chip = (t, strong) => `<span style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:99px;background:${strong?'#FCEBEB':'var(--white)'};border:1px solid ${strong?'#F5C2C2':'var(--border-2)'};font-size:12px;color:${strong?'#A32D2D':'var(--text)'};white-space:nowrap">${t}</span>`;
+  return `<div class="tl-foot">
+    <span style="font-size:11px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--text-3);margin-right:4px">Αποτύπωμα</span>
+    ${chip('πελάτης από '+new Date(first).toLocaleDateString('el-GR',{month:'numeric',year:'numeric'}))}
+    ${chip('<b>'+visits.length+'</b> επισκέψεις')}
+    ${noShows?chip(noShows+' no-show', true):''}
+    ${cancels?chip(cancels+' ακυρώσεις'):''}
+    ${freq?chip(freq):''}
+    ${top?chip(esc(top[0])+' '+Math.round(top[1]/visits.length*100)+'%'):''}
+    ${ctx.canSeeFinancials?chip('LTV <b>'+euro(p.ltv)+'</b>'):''}
+    ${lastComm?chip('τελευταία επικοινωνία '+fmt(lastComm)):''}
+  </div>`;
+}
+function renderPatientTimelineV2(p, ctx) {
+  const all = patTimelineEvents(p, ctx);
+  const filter = S.patTimelineFilter||'all';
+  const onlyImp = !!S.patTimelineImportant;
+  const limit = S.patTimelineLimit || 40;
+  const FILTERS = [{k:'all',l:'Όλα'},{k:'visit',l:'Επισκέψεις'},{k:'clinical',l:'Κλινικά'},{k:'comm',l:'Επικοινωνία'},{k:'purchase',l:'Αγορές'}];
+  const upcoming = all.filter(e=>e.future).sort((a,b)=>new Date(a.date)-new Date(b.date));
+  let past = all.filter(e=>!e.future).sort((a,b)=>new Date(b.date)-new Date(a.date));
+  if (filter!=='all') past = past.filter(e=>e.cat===filter);
+  if (onlyImp) past = past.filter(e=>e.important);
+  const shown = past.slice(0, limit);
+  const today = new Date().toDateString(), yest = new Date(Date.now()-86400000).toDateString();
+  const dayLabel = d => { const ds=d.toDateString(); const base=d.toLocaleDateString('el-GR',{weekday:'short',day:'numeric',month:'short'}); return ds===today?'Σήμερα · '+base:ds===yest?'Χθες · '+base:base+(d.getFullYear()!==new Date().getFullYear()?' '+d.getFullYear():''); };
+  const timeOf = d => d.toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit',hour12:false});
+  const row = (e, showDate) => {
+    const cat = TL_CAT[e.cat]||TL_CAT.system;
+    const st = e.status && STATUS_APPT[e.status];
+    const d = new Date(e.date);
+    const acts = (e.actions||[]).map(a=>a.href?`<a class="btn btn-ghost btn-sm" href="${esc(a.href)}" target="_blank" rel="noopener">${a.l}</a>`:`<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();${a.on}">${a.l}</button>`).join('');
+    const expandable = !!(e.desc || acts);
+    const head = `<div class="tl-row ${expandable?'tl-exp':''}" ${expandable?`onclick="this.parentElement.classList.toggle('open')"`:''}>
+        <span class="tl-time">${showDate?fmt(e.date).slice(0,5)+'<br>':''}${timeOf(d)}</span>
+        <span class="tl-ico" style="background:${cat.bg};color:${cat.c}">${e.icon}</span>
+        <span class="tl-main">
+          <span class="tl-title">${esc(e.title)}</span>
+          <span class="tl-meta">${[e.actor?esc(e.actor):'', e.amount?'<b style="color:#0F6E56">'+e.amount+'</b>':''].filter(Boolean).join(' · ')}</span>
+        </span>
+        ${st?`<span class="tl-chip" style="background:${st.bg};color:${st.c}">${st.l}</span>`:''}
+        ${expandable?'<span class="tl-chev">▸</span>':''}
+      </div>`;
+    const body = expandable ? `<div class="tl-body">${e.desc?`<div class="tl-desc">${esc(e.desc)}</div>`:''}${acts?`<div class="tl-actions">${acts}</div>`:''}</div>` : '';
+    return `<div class="tl-item">${head}${body}</div>`;
+  };
+  // Ομαδοποίηση ανά ημέρα, με κεφαλίδα μήνα όταν αλλάζει ο μήνας
+  let lastDay = '', lastMonth = '', out = '';
+  shown.forEach(e=>{
+    const d = new Date(e.date);
+    const mk = d.getFullYear()+'-'+d.getMonth();
+    if (mk!==lastMonth) { lastMonth = mk; if (d.toDateString()!==today && d.toDateString()!==yest) out += `<div class="tl-month">${d.toLocaleDateString('el-GR',{month:'long',year:'numeric'})}</div>`; }
+    if (d.toDateString()!==lastDay) { lastDay = d.toDateString(); out += `<div class="tl-day">${dayLabel(d)}</div>`; }
+    out += row(e, false);
+  });
+  return `${patFootprint(p, ctx)}
+  <div class="tl-filters">
+    ${FILTERS.map(f=>`<button class="cal-chip ${filter===f.k?'on':''}" onclick="S.patTimelineFilter='${f.k}';S.patTimelineLimit=0;render()">${f.l}</button>`).join('')}
+    <label class="tl-imp"><input type="checkbox" ${onlyImp?'checked':''} onchange="S.patTimelineImportant=this.checked;S.patTimelineLimit=0;render()"/> μόνο σημαντικά</label>
+  </div>
+  ${upcoming.length && (filter==='all'||filter==='visit') ? `<div class="tl-next">
+    <div class="tl-day" style="color:#B45309;margin-top:0">Επόμενα · ${upcoming.length}</div>
+    ${upcoming.map(e=>row(e, true)).join('')}
+  </div>` : ''}
+  ${shown.length ? out : `<div class="empty-state" style="padding:30px"><div class="empty-icon">📅</div><div>Δεν υπάρχουν γεγονότα${onlyImp?' — δοκίμασε χωρίς «μόνο σημαντικά»':''}</div></div>`}
+  ${past.length > shown.length ? `<div style="text-align:center;padding:12px 0 4px"><button class="btn btn-ghost btn-sm" onclick="S.patTimelineLimit=${limit+40};render()">Δείξε περισσότερα (${past.length-shown.length} ακόμα)</button></div>` : ''}`;
+}
 function renderPatientDetailV2(p, ctx) {
   patV2NormalizeTab();
   const tab = S.patTab || 'overview';
@@ -4157,6 +4380,7 @@ function renderPatientDetailV2(p, ctx) {
     : tab==='folder' ? renderPatientFolderV2(p, ctx)
     : tab==='plan' ? renderPatientPlanV2(p, ctx)
     : tab==='comms' ? renderPatientCommsV2(p, ctx)
+    : tab==='timeline' ? renderPatientTimelineV2(p, ctx)
     : ctx.legacy(tab);
   return `<div class="page">
     <div id="pat-head" class="pat-v2-head" style="position:sticky;top:56px;z-index:46;background:var(--surface);padding:8px 24px 6px">
