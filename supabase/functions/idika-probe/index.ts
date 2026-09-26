@@ -65,7 +65,7 @@ Deno.serve(async (req) => {
     const pass = String(body.password || Deno.env.get('IDIKA_PASS') || '');
     const mode = String(body.mode || 'headers'); // 'headers' | 'me' | 'path'
     const path = String(body.path || '/api/v1/me');
-    BODY_LIMIT = body.full ? 400 * 1024 : 400;
+    BODY_LIMIT = body.full ? Math.min(Number(body.limit) || 400 * 1024, 8 * 1024 * 1024) : 400;
     const results: ProbeResult[] = [];
 
     if (mode === 'headers') {

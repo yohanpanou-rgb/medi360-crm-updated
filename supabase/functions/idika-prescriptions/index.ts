@@ -36,16 +36,32 @@ const BASE = (Deno.env.get('IDIKA_BASE') || 'https://testeps.e-prescription.gr/d
 const KEY_HEADER = Deno.env.get('IDIKA_KEY_HEADER') || 'api-key';
 const ENV_LABEL = BASE.includes('testeps') || BASE.includes('test.') ? 'uat' : 'production';
 
+// Διαπιστευτήρια: πρώτα env secrets, αλλιώς Supabase Vault μέσω της rpc
+// public.get_integration_secret (εκτελέσιμη ΜΟΝΟ από service_role). Έτσι ρυθμίζονται
+// χωρίς πρόσβαση στο dashboard, χωρίς να περνούν ποτέ από frontend ή κώδικα.
+const SECRET_NAMES = ['IDIKA_API_KEY', 'IDIKA_USER', 'IDIKA_PASS'] as const;
+const secretCache: Record<string, string> = {};
+async function loadSecrets(admin: any) {
+  for (const n of SECRET_NAMES) {
+    if (secretCache[n]) continue;
+    const env = Deno.env.get(n);
+    if (env) { secretCache[n] = env; continue; }
+    try {
+      const { data } = await admin.rpc('get_integration_secret', { p_name: n });
+      if (data) secretCache[n] = String(data);
+    } catch (_) { /* χωρίς vault → μένει μη ρυθμισμένο */ }
+  }
+}
 function configured() {
-  return !!(Deno.env.get('IDIKA_API_KEY') && Deno.env.get('IDIKA_USER') && Deno.env.get('IDIKA_PASS'));
+  return SECRET_NAMES.every(n => !!secretCache[n]);
 }
 
 // Κλήση προς το API Ιατρών: Basic auth (χρήστης ΗΣ) + application key στο header.
 async function idikaFetch(path: string, init: RequestInit = {}) {
   const headers: Record<string, string> = {
     Accept: 'application/xml, application/json;q=0.9, */*;q=0.5',
-    Authorization: 'Basic ' + btoa(`${Deno.env.get('IDIKA_USER')}:${Deno.env.get('IDIKA_PASS')}`),
-    [KEY_HEADER]: Deno.env.get('IDIKA_API_KEY') || '',
+    Authorization: 'Basic ' + btoa(`${secretCache.IDIKA_USER}:${secretCache.IDIKA_PASS}`),
+    [KEY_HEADER]: secretCache.IDIKA_API_KEY || '',
     ...(init.headers as Record<string, string> || {}),
   };
   const ctrl = new AbortController();
@@ -162,9 +178,11 @@ Deno.serve(async (req: Request) => {
       if (!cid) return json({ error: 'Δεν βρέθηκε κλινική' }, 400);
     }
 
+    await loadSecrets(admin);
+
     // ── status ──
     if (action === 'status') {
-      return json({ ok: true, configured: configured(), env: ENV_LABEL, base: BASE, key_header: KEY_HEADER, user: Deno.env.get('IDIKA_USER') ? 'set' : 'missing' });
+      return json({ ok: true, configured: configured(), env: ENV_LABEL, base: BASE, key_header: KEY_HEADER, user: secretCache.IDIKA_USER ? 'set' : 'missing' });
     }
 
     // ── test: /api/v1/me (login + «ενεργή σύνδεση» 24ώρου) ──
