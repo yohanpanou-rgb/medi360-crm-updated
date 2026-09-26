@@ -2799,7 +2799,8 @@ function renderPatientDiagnosesTab() {
         <div style="font-size:13px;font-weight:700">${fmt(e.created_at)}</div>
         <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
           <div style="font-size:11.5px;color:var(--text-2);display:inline-flex;align-items:center;gap:5px;background:var(--surface-2);border-radius:9px;padding:3px 9px" title="Ποιος έκανε τη διάγνωση">🩺 Διάγνωση από: <b style="color:var(--text)">${esc(e.profiles&&e.profiles.full_name||'άγνωστο')}</b></div>
-          ${rxOn?`<button class="btn btn-sm btn-primary" style="padding:3px 10px;font-size:11.5px" onclick="openPrescriptionModal({examId:'${e.id}'})" title="Νέα ηλεκτρονική συνταγή με τις διαγνώσεις και τα φάρμακα αυτής της εξέτασης">℞ Συνταγή</button>`:''}
+          ${rxOn?`<button class="btn btn-sm btn-primary" style="padding:3px 10px;font-size:11.5px" onclick="openPrescriptionModal({examId:'${e.id}'})" title="Νέα ηλεκτρονική συνταγή με τις διαγνώσεις και τα φάρμακα αυτής της εξέτασης">℞ Συνταγή</button>
+          <button class="btn btn-sm" style="padding:3px 10px;font-size:11.5px;background:#0F6E56;color:#fff;font-weight:600" onclick="openPrescriptionModal({examId:'${e.id}', kind:'exams'})" title="Νέο παραπεμπτικό εξετάσεων με τις διαγνώσεις αυτής της εξέτασης">🧪 Παραπεμπτικό</button>`:''}
         </div>
       </div>
       <div style="font-size:12px;color:var(--text-2);margin-bottom:4px">Διάγνωση</div>
@@ -7245,6 +7246,12 @@ const RX_STATUS = {
 };
 function rxBadge(status) { const s = RX_STATUS[status]||{l:status||'—',cls:'badge-gray'}; return `<span class="badge ${s.cls}">${esc(s.l)}</span>`; }
 const rxDoctorName = (r) => (r && r.profiles && r.profiles.full_name) || (r && r.doctor_id && S.staffDirectory && S.staffDirectory[r.doctor_id]) || '—';
+// Είδος: συνταγή φαρμάκων ή παραπεμπτικό εξετάσεων (ίδια οντότητα, ίδιος κύκλος ζωής).
+const RX_KIND = { medicines:{l:'Συνταγή φαρμάκων', short:'℞ Φάρμακα', icon:'℞'}, exams:{l:'Παραπεμπτικό εξετάσεων', short:'🧪 Εξετάσεις', icon:'🧪'} };
+const rxKind = (r) => RX_KIND[(r&&r.kind)||'medicines'] || RX_KIND.medicines;
+const rxItemsSummary = (r) => (r.kind==='exams') ? `${(r.examinations||[]).length} ${(r.examinations||[]).length===1?'εξέταση':'εξετάσεις'}` : `${(r.medicines||[]).length} ${(r.medicines||[]).length===1?'σκεύασμα':'σκευάσματα'}`;
+// Λόγοι παραπομπής (αντιστοιχούν στους «τύπους συνταγογράφησης» της ΗΔΙΚΑ — relation types).
+const RX_REFERRAL_REASONS = [['diagnosis','Διάγνωση / διερεύνηση'],['followup','Παρακολούθηση γνωστής πάθησης'],['preventive','Προληπτικός έλεγχος'],['preop','Προεγχειρητικός έλεγχος']];
 
 // Κατάσταση σύνδεσης ΗΔΙΚΑ (secrets ορισμένα; περιβάλλον;) — μία φορά ανά session.
 async function ensureEprescStatus(force) {
@@ -7269,11 +7276,13 @@ function renderPrescriptions() {
   if (!canViewDiagnosis()) return `<div class="page"><div class="empty-state"><div class="empty-icon">🔒</div><div>Δεν έχεις πρόσβαση στη Συνταγογράφηση</div></div></div>`;
   const cid = clinicId();
   if (!cid && isSuperAdmin()) return `<div class="page"><div class="empty-state"><div class="empty-icon">⊞</div><div style="font-size:14px;font-weight:500;margin-bottom:8px">Επίλεξε κλινική</div><div>Χρησιμοποίησε τον επιλογέα στα αριστερά</div></div></div>`;
-  const all = S.prescriptions||[];
+  const kindF = S.rxKind||'all';
+  const all = (S.prescriptions||[]).filter(r => kindF==='all' || (r.kind||'medicines')===kindF);
   const f = S.rxFilter||'all';
   const list = f==='all' ? all : all.filter(r=>r.status===f);
   const cnt = k => all.filter(r=>r.status===k).length;
   const chip = (key,label) => `<button class="btn btn-sm ${f===key?'btn-primary':'btn-ghost'}" onclick="setRxFilter('${key}')">${label}</button>`;
+  const kchip = (key,label) => `<button class="btn btn-sm" style="border-radius:0;padding:5px 12px;font-size:12px;background:${kindF===key?'var(--blue)':'transparent'};color:${kindF===key?'#fff':'var(--text-2)'};border:none" onclick="S.rxKind='${key}';render()">${label}</button>`;
   const st = S.eprescStatus||{};
   return `<div class="page">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px">
@@ -7290,19 +7299,21 @@ function renderPrescriptions() {
       <div class="stat-card"><div style="font-size:11px;color:var(--text-2)">Εκδόθηκαν</div><div style="font-size:24px;font-weight:700;color:var(--green-dark)">${cnt('issued')}</div></div>
       <div class="stat-card"><div style="font-size:11px;color:var(--text-2)">Σφάλματα / Ακυρώσεις</div><div style="font-size:24px;font-weight:700;color:var(--red-dark)">${cnt('error')+cnt('cancelled')}</div></div>
     </div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
-      ${chip('all','Όλες ('+all.length+')')}${chip('draft','Πρόχειρες ('+cnt('draft')+')')}${chip('sent','Εστάλησαν ('+cnt('sent')+')')}${chip('issued','Εκδόθηκαν ('+cnt('issued')+')')}${chip('error','Σφάλματα ('+cnt('error')+')')}${chip('cancelled','Ακυρωμένες ('+cnt('cancelled')+')')}
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;align-items:center">
+      <div style="display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden">${kchip('all','Όλα')}${kchip('medicines','℞ Φάρμακα')}${kchip('exams','🧪 Εξετάσεις')}</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">${chip('all','Όλες ('+all.length+')')}${chip('draft','Πρόχειρες ('+cnt('draft')+')')}${chip('sent','Εστάλησαν ('+cnt('sent')+')')}${chip('issued','Εκδόθηκαν ('+cnt('issued')+')')}${chip('error','Σφάλματα ('+cnt('error')+')')}${chip('cancelled','Ακυρωμένες ('+cnt('cancelled')+')')}</div>
     </div>
     <div class="card">
-      ${!list.length ? `<div class="empty-state"><div class="empty-icon">℞</div><div>Καμία συνταγή${f!=='all'?' σε αυτή την κατάσταση':''}. Ξεκίνα από μια Ιατρική Εξέταση (καρτέλα ασθενή → Διαγνώσεις → «℞ Συνταγή») ή με «+ Νέα συνταγή».</div></div>` : `
+      ${!list.length ? `<div class="empty-state"><div class="empty-icon">℞</div><div>Τίποτα${f!=='all'?' σε αυτή την κατάσταση':''}. Ξεκίνα από μια Ιατρική Εξέταση (καρτέλα ασθενή → Διαγνώσεις → «℞ Συνταγή» ή «🧪 Παραπεμπτικό»).</div></div>` : `
       <div style="overflow-x:auto"><table class="table">
-        <thead><tr><th>Ημ/νία</th><th>Ασθενής</th><th>Ιατρός</th><th>Διαγνώσεις</th><th>Σκευάσματα</th><th>Κατάσταση</th><th>Barcode ΗΣ</th><th></th></tr></thead>
+        <thead><tr><th>Ημ/νία</th><th>Είδος</th><th>Ασθενής</th><th>Ιατρός</th><th>Διαγνώσεις</th><th>Περιεχόμενο</th><th>Κατάσταση</th><th>Barcode ΗΣ</th><th></th></tr></thead>
         <tbody>${list.map(r=>`<tr>
           <td style="white-space:nowrap">${fmtDt(r.created_at)}</td>
+          <td style="white-space:nowrap" title="${esc(rxKind(r).l)}">${rxKind(r).short}</td>
           <td><span style="font-weight:600;color:var(--blue);cursor:pointer" onclick="loadPatientDetail('${r.patient_id}','diagnoses')">${esc(r.patients&&r.patients.full_name||'—')}</span>${r.patients&&r.patients.amka?'':'<div style="font-size:10.5px;color:var(--red)">χωρίς ΑΜΚΑ</div>'}</td>
           <td>${esc(rxDoctorName(r))}</td>
           <td>${(r.diagnoses||[]).map(d=>`<span class="badge badge-navy" style="margin:1px" title="${esc(d.name||'')}">${esc(d.icd10||d.name||'?')}</span>`).join('')||'—'}</td>
-          <td>${(r.medicines||[]).length} ${(r.medicines||[]).length===1?'σκεύασμα':'σκευάσματα'}</td>
+          <td>${rxItemsSummary(r)}</td>
           <td>${rxBadge(r.status)}${r.error_message?`<div style="font-size:10.5px;color:var(--red);max-width:220px" title="${esc(r.error_message)}">${esc(r.error_message.length>60?r.error_message.slice(0,60)+'…':r.error_message)}</div>`:''}</td>
           <td style="font-family:var(--mono);font-size:12px">${esc(r.idika_barcode||'—')}</td>
           <td style="white-space:nowrap">${rxRowActions(r)}</td>
@@ -7331,18 +7342,18 @@ function renderPatientPrescriptionsBlock() {
   return `<div class="card" style="margin-bottom:14px">
     <div class="card-header" style="flex-wrap:wrap;gap:8px">
       <div><span class="card-title">℞ Ηλεκτρονικές Συνταγές</span><div style="font-size:11px;color:var(--text-2);margin-top:2px">${p.amka?'ΑΜΚΑ: '+esc(String(p.amka).replace(/^(\d{6})\d{5}$/,'$1•••••')):'<span style="color:var(--red)">Ο ασθενής δεν έχει ΑΜΚΑ — απαιτείται για συνταγή</span>'}</div></div>
-      <div style="display:flex;gap:6px;align-items:center">${eprescStatusChip()}<button class="btn btn-primary btn-sm" onclick="openPrescriptionModal({})">+ Νέα συνταγή</button></div>
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">${eprescStatusChip()}<button class="btn btn-primary btn-sm" onclick="openPrescriptionModal({})">+ Συνταγή</button><button class="btn btn-sm" style="background:#0F6E56;color:#fff;font-weight:600" onclick="openPrescriptionModal({kind:'exams'})">+ Παραπεμπτικό</button></div>
     </div>
     ${list.length?`<div style="padding:0 16px 12px">${list.map(r=>`
       <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border-2);flex-wrap:wrap">
         <div style="font-size:12.5px">
-          <b>${fmtDt(r.created_at)}</b> · ${esc(rxDoctorName(r))}
-          <div style="margin-top:3px">${(r.diagnoses||[]).map(d=>`<span class="badge badge-navy" style="margin:1px">${esc(d.icd10||'')} ${esc(d.name||'')}</span>`).join('')} <span style="color:var(--text-2)">· ${(r.medicines||[]).length} σκευάσματα</span></div>
+          <b>${rxKind(r).icon} ${fmtDt(r.created_at)}</b> · ${esc(rxDoctorName(r))}
+          <div style="margin-top:3px">${(r.diagnoses||[]).map(d=>`<span class="badge badge-navy" style="margin:1px">${esc(d.icd10||'')} ${esc(d.name||'')}</span>`).join('')} <span style="color:var(--text-2)">· ${rxItemsSummary(r)}</span></div>
           ${r.error_message?`<div style="font-size:11px;color:var(--red);margin-top:2px">${esc(r.error_message)}</div>`:''}
         </div>
         <div style="display:flex;gap:6px;align-items:center">${rxBadge(r.status)} ${rxRowActions(r)}</div>
       </div>`).join('')}</div>`
-    : `<div style="padding:12px 16px;font-size:12px;color:var(--text-2)">Καμία συνταγή ακόμα. Πάτησε «℞ Συνταγή» σε μια διάγνωση παρακάτω ή «+ Νέα συνταγή».</div>`}
+    : `<div style="padding:12px 16px;font-size:12px;color:var(--text-2)">Καμία συνταγή ή παραπεμπτικό ακόμα. Πάτησε «℞ Συνταγή» ή «🧪 Παραπεμπτικό» σε μια διάγνωση παρακάτω.</div>`}
   </div>`;
 }
 
@@ -7357,22 +7368,26 @@ async function openPrescriptionModal(opts) {
     if (!row) { const {data} = await sb.from('prescriptions').select('*, patients(full_name,amka)').eq('id',opts.prescriptionId).maybeSingle(); row = data; }
     if (!row) return alert('Η συνταγή δεν βρέθηκε.');
     const pt = row.patients || (S.patientDetail&&S.patientDetail.id===row.patient_id ? S.patientDetail : null);
-    d = {id:row.id, patient_id:row.patient_id, patient_name:(pt&&pt.full_name)||'', patient_amka:(pt&&pt.amka)||'', exam_id:row.exam_id, doctor_id:row.doctor_id,
-         diagnoses:JSON.parse(JSON.stringify(row.diagnoses||[])), medicines:JSON.parse(JSON.stringify(row.medicines||[])), notes:row.notes||'', status:row.status, readOnly:!!opts.readOnly};
+    d = {id:row.id, kind:row.kind||'medicines', patient_id:row.patient_id, patient_name:(pt&&pt.full_name)||'', patient_amka:(pt&&pt.amka)||'', exam_id:row.exam_id, doctor_id:row.doctor_id,
+         diagnoses:JSON.parse(JSON.stringify(row.diagnoses||[])), medicines:JSON.parse(JSON.stringify(row.medicines||[])),
+         examinations:JSON.parse(JSON.stringify(row.examinations||[])), referral_reason:row.referral_reason||'',
+         notes:row.notes||'', status:row.status, readOnly:!!opts.readOnly};
   } else {
     const pd = S.patientDetail;
-    if (!pd || S.page!=='patient-detail') { alert('Άνοιξε πρώτα την καρτέλα του ασθενή (Διαγνώσεις) για να δημιουργήσεις συνταγή.'); return; }
+    const kind = opts.kind==='exams' ? 'exams' : 'medicines';
+    if (!pd || S.page!=='patient-detail') { alert('Άνοιξε πρώτα την καρτέλα του ασθενή (Διαγνώσεις) για να δημιουργήσεις '+(kind==='exams'?'παραπεμπτικό.':'συνταγή.')); return; }
     const exam = opts.examId ? (S.patientDiagnoses||[]).find(e=>e.id===opts.examId) : null;
     const icd = (exam&&exam.diagnosis_icd10)||{};
     const codes = (exam&&exam.medication_codes)||{};
     const clinicCodes = (S.clinic&&S.clinic.settings&&S.clinic.settings.exam_medicine_codes)||{};
-    d = {id:null, patient_id:pd.id, patient_name:pd.full_name, patient_amka:pd.amka||'', exam_id:exam?exam.id:null, doctor_id:(S.user&&S.user.id)||null,
+    d = {id:null, kind, patient_id:pd.id, patient_name:pd.full_name, patient_amka:pd.amka||'', exam_id:exam?exam.id:null, doctor_id:(S.user&&S.user.id)||null,
          diagnoses:(exam?(exam.diagnosis||[]):[]).map(n=>({name:n, icd10:icd[n]||''})),
-         // Μόνο τα σκευάσματα που έχουν κωδικό (τα καλλυντικά δεν συνταγογραφούνται ποτέ).
-         medicines:(exam?(exam.medications||[]):[]).filter(n=>codes[n]||clinicCodes[n]).map(n=>({name:n, code:codes[n]||clinicCodes[n]||'', quantity:1, dosage:'', days:''})),
+         // Μόνο τα σκευάσματα που έχουν κωδικό (τα καλλυντικά δεν συνταγογραφούνται ποτέ). Στο παραπεμπτικό δεν υπάρχουν σκευάσματα.
+         medicines:(kind==='exams'?[]:(exam?(exam.medications||[]):[]).filter(n=>codes[n]||clinicCodes[n]).map(n=>({name:n, code:codes[n]||clinicCodes[n]||'', quantity:1, dosage:'', days:''}))),
+         examinations:[], referral_reason:(kind==='exams'?'diagnosis':''),
          notes:'', status:'draft', readOnly:false};
     if (!d.diagnoses.length) d.diagnoses.push({name:'', icd10:''});
-    if (!d.medicines.length) d.medicines.push({name:'', code:'', quantity:1, dosage:'', days:''});
+    if (kind==='medicines' && !d.medicines.length) d.medicines.push({name:'', code:'', quantity:1, dosage:'', days:''});
   }
   if (!S.rxDoctors || S.rxDoctorsClinic!==cid) {
     const {data:docs} = await sb.from('profiles').select('id,full_name,role,doctor_amka,prescriber_code,can_view_diagnosis').eq('clinic_id',cid).in('role',['clinic_admin','therapist']).order('full_name');
@@ -7388,11 +7403,52 @@ function rxSyncFromDom() {
   d.doctor_id = (document.getElementById('rx-doctor')||{}).value || null;
   d.notes = (document.getElementById('rx-notes')||{}).value || '';
   d.diagnoses = q('#rx-diag-rows [data-row]').map(row=>({name:row.querySelector('[data-f=name]').value.trim(), icd10:row.querySelector('[data-f=icd10]').value.trim().toUpperCase()}));
-  d.medicines = q('#rx-med-rows [data-row]').map(row=>({name:row.querySelector('[data-f=name]').value.trim(), code:row.querySelector('[data-f=code]').value.trim(), quantity:parseInt(row.querySelector('[data-f=quantity]').value,10)||1, dosage:row.querySelector('[data-f=dosage]').value.trim(), days:row.querySelector('[data-f=days]').value.trim()}));
+  if (d.kind==='exams') {
+    d.referral_reason = (document.getElementById('rx-reason')||{}).value || '';
+    d.rxExamQuery = (document.getElementById('rx-exam-q')||{}).value || '';
+  } else {
+    d.medicines = q('#rx-med-rows [data-row]').map(row=>({name:row.querySelector('[data-f=name]').value.trim(), code:row.querySelector('[data-f=code]').value.trim(), quantity:parseInt(row.querySelector('[data-f=quantity]').value,10)||1, dosage:row.querySelector('[data-f=dosage]').value.trim(), days:row.querySelector('[data-f=days]').value.trim()}));
+  }
 }
 function rxAddRow(kind) { rxSyncFromDom(); if (kind==='diag') S.rxDraft.diagnoses.push({name:'',icd10:''}); else S.rxDraft.medicines.push({name:'',code:'',quantity:1,dosage:'',days:''}); renderRxModal(); }
 function rxRemoveRow(kind, i) { rxSyncFromDom(); (kind==='diag'?S.rxDraft.diagnoses:S.rxDraft.medicines).splice(i,1); renderRxModal(); }
 function closeRxModal() { const o = document.getElementById('rx-overlay'); if (o) o.remove(); S.rxDraft = null; }
+
+// ── Παραπεμπτικό: αναζήτηση εξετάσεων στη λίστα της ΗΔΙΚΑ (πίνακας idika_examinations, συγχρονισμένος από τα masterdata) ──
+let rxExamSearchTimer = null;
+function rxExamSearchInput(el) {
+  const q = (el.value||'').trim();
+  if (S.rxDraft) S.rxDraft.rxExamQuery = el.value||'';
+  clearTimeout(rxExamSearchTimer);
+  const box = document.getElementById('rx-exam-results');
+  if (q.length < 2) { if (box) box.innerHTML = ''; return; }
+  rxExamSearchTimer = setTimeout(() => rxSearchExams(q), 220);
+}
+async function rxSearchExams(q) {
+  const box = document.getElementById('rx-exam-results'); if (!box) return;
+  box.innerHTML = '<div style="padding:8px 10px;font-size:12px;color:var(--text-2)">Αναζήτηση…</div>';
+  // RPC search_idika_examinations: αναζήτηση χωρίς τόνους/πεζά-κεφαλαία (unaccent), όλες οι λέξεις πρέπει να ταιριάζουν.
+  const {data, error} = await sb.rpc('search_idika_examinations', {p_q: q, p_limit: 12});
+  if (error) { box.innerHTML = `<div style="padding:8px 10px;font-size:12px;color:var(--red)">Σφάλμα: ${esc(error.message)}</div>`; return; }
+  if (!data || !data.length) {
+    const {count} = await sb.from('idika_examinations').select('id', {count:'exact', head:true});
+    box.innerHTML = `<div style="padding:8px 10px;font-size:12px;color:var(--text-2)">${count?'Καμία εξέταση για «'+esc(q)+'».':'Η λίστα εξετάσεων της ΗΔΙΚΑ δεν έχει συγχρονιστεί ακόμα (Ρυθμίσεις → Ενσωματώσεις → ΗΔΙΚΑ → «Συγχρονισμός εξετάσεων»).'}</div>`;
+    return;
+  }
+  const chosen = new Set(((S.rxDraft&&S.rxDraft.examinations)||[]).map(x=>String(x.id)));
+  box.innerHTML = data.map(x=>`<div onclick='rxAddExam(${JSON.stringify({id:x.id, code:x.code||'', name:x.description||'', group:x.group_name||''}).replace(/'/g,'&#39;')})' style="padding:7px 10px;font-size:12.5px;cursor:pointer;border-bottom:1px solid var(--border-2);display:flex;gap:8px;align-items:baseline;${chosen.has(String(x.id))?'opacity:.45':''}" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background=''">
+      <span style="font-family:var(--mono);font-size:11px;color:var(--text-2);min-width:52px">${esc(x.code||x.id)}</span><span style="flex:1">${esc(x.description||'')}</span>${x.group_name?`<span style="font-size:10.5px;color:var(--text-2)">${esc(x.group_name)}</span>`:''}
+    </div>`).join('');
+}
+function rxAddExam(x) {
+  rxSyncFromDom();
+  const d = S.rxDraft; if (!d) return;
+  if (!(d.examinations||[]).some(e=>String(e.id)===String(x.id))) d.examinations.push(x);
+  d.rxExamQuery = '';
+  renderRxModal();
+  const inp = document.getElementById('rx-exam-q'); if (inp) inp.focus();
+}
+function rxRemoveExam(i) { rxSyncFromDom(); S.rxDraft.examinations.splice(i,1); renderRxModal(); }
 function renderRxModal() {
   const d = S.rxDraft; if (!d) return;
   const ro = d.readOnly;
@@ -7403,12 +7459,47 @@ function renderRxModal() {
   const doc = (S.rxDoctors||[]).find(x=>x.id===d.doctor_id);
   const docWarn = d.doctor_id && doc && !(doc.doctor_amka||'').replace(/\D/g,'').length ? `<div style="font-size:11px;color:var(--red);margin-top:4px">Ο ιατρός δεν έχει ΑΜΚΑ συνταγογράφου (Προσωπικό & Υπηρεσίες → Επεξεργασία χρήστη → Στοιχεία Συνταγογράφου).</div>` : '';
   const dis = ro ? 'disabled' : '';
+  const isExams = d.kind==='exams';
   const icdSugg = Object.entries((S.clinic&&S.clinic.settings&&S.clinic.settings.exam_diagnosis_icd10)||{});
   const medSugg = Object.entries((S.clinic&&S.clinic.settings&&S.clinic.settings.exam_medicine_codes)||{});
+  const exams = d.examinations||[];
+  const examsBlock = `
+        <div class="form-group">
+          <label class="form-label">Λόγος παραπομπής</label>
+          <select class="form-control" id="rx-reason" ${dis}>
+            <option value="">— επίλεξε —</option>
+            ${RX_REFERRAL_REASONS.map(([k,l])=>`<option value="${k}" ${k===d.referral_reason?'selected':''}>${esc(l)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Εξετάσεις (λίστα ΗΔΙΚΑ) — ${exams.length} επιλεγμένες</label>
+          <div id="rx-exam-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:${exams.length?'8px':'0'}">${exams.map((x,i)=>`
+            <span class="badge badge-navy" style="display:inline-flex;align-items:center;gap:6px;padding:5px 8px;font-size:12px;white-space:normal;text-align:left" title="${esc(x.group||'')}"><span style="font-family:var(--mono);font-size:10.5px;opacity:.8">${esc(x.code||x.id)}</span>${esc(x.name||'')}${ro?'':`<button onclick="rxRemoveExam(${i})" title="Αφαίρεση" style="background:none;border:none;color:inherit;cursor:pointer;font-size:14px;line-height:1;padding:0">×</button>`}</span>`).join('')}</div>
+          ${ro?'':`<input class="form-control" id="rx-exam-q" placeholder="Αναζήτηση εξέτασης (π.χ. γενική αίματος, TSH, καλλιέργεια)…" value="${esc(d.rxExamQuery||'')}" oninput="rxExamSearchInput(this)" autocomplete="off"/>
+          <div id="rx-exam-results" style="border:1px solid var(--border);border-radius:8px;margin-top:4px;max-height:220px;overflow:auto;${(d.rxExamQuery||'').trim().length<2?'display:none;':''}"></div>
+          <div style="font-size:11px;color:var(--text-2);margin-top:4px">Οι εξετάσεις προέρχονται από τη λίστα (masterdata) της ΗΔΙΚΑ. Πληκτρολόγησε ≥2 χαρακτήρες και πάτησε στην εξέταση για να προστεθεί.</div>`}
+        </div>`;
+  const medsBlock = `
+        <div class="form-group">
+          <label class="form-label">Σκευάσματα (κωδικός ΕΟΦ / barcode)</label>
+          <datalist id="rx-med-list">${medSugg.map(([n,c])=>`<option value="${esc(c)}">${esc(n)}</option>`).join('')}</datalist>
+          <div style="display:grid;grid-template-columns:1fr 120px 60px 1fr 60px 32px;gap:6px;font-size:10.5px;color:var(--text-2);margin-bottom:3px"><span>Σκεύασμα</span><span>Κωδικός</span><span>Ποσ.</span><span>Δοσολογία</span><span>Ημέρες</span><span></span></div>
+          <div id="rx-med-rows">${d.medicines.map((m,i)=>`
+            <div data-row style="display:grid;grid-template-columns:1fr 120px 60px 1fr 60px 32px;gap:6px;margin-bottom:6px">
+              <input class="form-control" data-f="name" placeholder="Εμπορική ονομασία" value="${esc(m.name)}" ${dis}/>
+              <input class="form-control" data-f="code" list="rx-med-list" placeholder="ΕΟΦ" value="${esc(m.code)}" style="font-family:var(--mono)" ${dis}/>
+              <input class="form-control" data-f="quantity" type="number" min="1" value="${esc(m.quantity||1)}" ${dis}/>
+              <input class="form-control" data-f="dosage" placeholder="π.χ. 1×2 ημερησίως" value="${esc(m.dosage||'')}" ${dis}/>
+              <input class="form-control" data-f="days" type="number" min="1" placeholder="ημ." value="${esc(m.days||'')}" ${dis}/>
+              ${ro?'<span></span>':`<button class="btn btn-ghost btn-sm" onclick="rxRemoveRow('med',${i})" title="Αφαίρεση" style="color:var(--red)">×</button>`}
+            </div>`).join('')}</div>
+          ${ro?'':`<button class="btn btn-ghost btn-sm" onclick="rxAddRow('med')">+ Σκεύασμα</button>`}
+          <div style="font-size:11px;color:var(--text-2);margin-top:4px">Οι κωδικοί ΕΟΦ/ICD-10 προτείνονται από τις λίστες της κλινικής (Ρυθμίσεις → Ιατρική Εξέταση). Καλλυντικά/προϊόντα φροντίδας δεν συνταγογραφούνται.</div>
+        </div>`;
   ov.innerHTML = `
     <div style="background:var(--white);border-radius:16px;max-width:760px;width:100%;max-height:92vh;display:flex;flex-direction:column;box-shadow:var(--shadow-lg)">
       <div style="padding:16px 20px 0;display:flex;justify-content:space-between;align-items:center">
-        <div style="font-size:15px;font-weight:700">℞ ${d.id?(ro?'Συνταγή':'Επεξεργασία συνταγής'):'Νέα ηλεκτρονική συνταγή'} — ${esc(d.patient_name)}</div>
+        <div style="font-size:15px;font-weight:700">${isExams?'🧪':'℞'} ${d.id?(ro?(isExams?'Παραπεμπτικό':'Συνταγή'):(isExams?'Επεξεργασία παραπεμπτικού':'Επεξεργασία συνταγής')):(isExams?'Νέο παραπεμπτικό εξετάσεων':'Νέα ηλεκτρονική συνταγή')} — ${esc(d.patient_name)}</div>
         <button onclick="closeRxModal()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-2)">×</button>
       </div>
       <div style="padding:14px 20px;overflow:auto;flex:1">
@@ -7435,24 +7526,9 @@ function renderRxModal() {
             </div>`).join('')}</div>
           ${ro?'':`<button class="btn btn-ghost btn-sm" onclick="rxAddRow('diag')">+ Διάγνωση</button>`}
         </div>
+        ${isExams?examsBlock:medsBlock}
         <div class="form-group">
-          <label class="form-label">Σκευάσματα (κωδικός ΕΟΦ / barcode)</label>
-          <datalist id="rx-med-list">${medSugg.map(([n,c])=>`<option value="${esc(c)}">${esc(n)}</option>`).join('')}</datalist>
-          <div style="display:grid;grid-template-columns:1fr 120px 60px 1fr 60px 32px;gap:6px;font-size:10.5px;color:var(--text-2);margin-bottom:3px"><span>Σκεύασμα</span><span>Κωδικός</span><span>Ποσ.</span><span>Δοσολογία</span><span>Ημέρες</span><span></span></div>
-          <div id="rx-med-rows">${d.medicines.map((m,i)=>`
-            <div data-row style="display:grid;grid-template-columns:1fr 120px 60px 1fr 60px 32px;gap:6px;margin-bottom:6px">
-              <input class="form-control" data-f="name" placeholder="Εμπορική ονομασία" value="${esc(m.name)}" ${dis}/>
-              <input class="form-control" data-f="code" list="rx-med-list" placeholder="ΕΟΦ" value="${esc(m.code)}" style="font-family:var(--mono)" ${dis}/>
-              <input class="form-control" data-f="quantity" type="number" min="1" value="${esc(m.quantity||1)}" ${dis}/>
-              <input class="form-control" data-f="dosage" placeholder="π.χ. 1×2 ημερησίως" value="${esc(m.dosage||'')}" ${dis}/>
-              <input class="form-control" data-f="days" type="number" min="1" placeholder="ημ." value="${esc(m.days||'')}" ${dis}/>
-              ${ro?'<span></span>':`<button class="btn btn-ghost btn-sm" onclick="rxRemoveRow('med',${i})" title="Αφαίρεση" style="color:var(--red)">×</button>`}
-            </div>`).join('')}</div>
-          ${ro?'':`<button class="btn btn-ghost btn-sm" onclick="rxAddRow('med')">+ Σκεύασμα</button>`}
-          <div style="font-size:11px;color:var(--text-2);margin-top:4px">Οι κωδικοί ΕΟΦ/ICD-10 προτείνονται από τις λίστες της κλινικής (Ρυθμίσεις → Ιατρική Εξέταση). Καλλυντικά/προϊόντα φροντίδας δεν συνταγογραφούνται.</div>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Σχόλια προς φαρμακοποιό (προαιρετικά)</label>
+          <label class="form-label">${isExams?'Σχόλια προς το εργαστήριο / κλινικές πληροφορίες (προαιρετικά)':'Σχόλια προς φαρμακοποιό (προαιρετικά)'}</label>
           <textarea class="form-control" id="rx-notes" rows="2" ${dis}>${esc(d.notes||'')}</textarea>
         </div>
         <div id="rx-modal-msg" style="font-size:12px"></div>
@@ -7464,18 +7540,24 @@ function renderRxModal() {
       </div>
     </div>`;
   document.body.appendChild(ov);
+  // Μετά από re-render (π.χ. προσθήκη εξέτασης) ξαναδείχνουμε τα αποτελέσματα της τρέχουσας αναζήτησης.
+  if (isExams && !ro && (d.rxExamQuery||'').trim().length >= 2) rxSearchExams(d.rxExamQuery.trim());
 }
 async function savePrescriptionDraft(thenSend) {
   rxSyncFromDom();
   const d = S.rxDraft; if (!d) return;
   const msg = document.getElementById('rx-modal-msg');
+  const isExams = d.kind==='exams';
   d.diagnoses = d.diagnoses.filter(x=>x.name||x.icd10);
-  d.medicines = d.medicines.filter(x=>x.name||x.code);
+  d.medicines = isExams ? [] : d.medicines.filter(x=>x.name||x.code);
   if (!d.diagnoses.length) { if (msg) msg.innerHTML = '<span style="color:var(--red)">Πρόσθεσε τουλάχιστον μία διάγνωση.</span>'; return; }
-  if (d.diagnoses.length > 10) { if (msg) msg.innerHTML = '<span style="color:var(--red)">Μέγιστο 10 διαγνώσεις ανά συνταγή.</span>'; return; }
-  if (!d.medicines.length) { if (msg) msg.innerHTML = '<span style="color:var(--red)">Πρόσθεσε τουλάχιστον ένα σκεύασμα.</span>'; return; }
-  const row = { clinic_id: clinicId(), patient_id: d.patient_id, exam_id: d.exam_id||null, doctor_id: d.doctor_id||null,
-    diagnoses: d.diagnoses, medicines: d.medicines, notes: d.notes||null };
+  if (d.diagnoses.length > 10) { if (msg) msg.innerHTML = '<span style="color:var(--red)">Μέγιστο 10 διαγνώσεις ανά '+(isExams?'παραπεμπτικό':'συνταγή')+'.</span>'; return; }
+  if (isExams) {
+    if (!d.referral_reason) { if (msg) msg.innerHTML = '<span style="color:var(--red)">Επίλεξε λόγο παραπομπής.</span>'; return; }
+    if (!(d.examinations||[]).length) { if (msg) msg.innerHTML = '<span style="color:var(--red)">Πρόσθεσε τουλάχιστον μία εξέταση από τη λίστα της ΗΔΙΚΑ.</span>'; return; }
+  } else if (!d.medicines.length) { if (msg) msg.innerHTML = '<span style="color:var(--red)">Πρόσθεσε τουλάχιστον ένα σκεύασμα.</span>'; return; }
+  const row = { clinic_id: clinicId(), patient_id: d.patient_id, exam_id: d.exam_id||null, doctor_id: d.doctor_id||null, kind: d.kind||'medicines',
+    diagnoses: d.diagnoses, medicines: d.medicines, examinations: isExams ? (d.examinations||[]) : [], referral_reason: isExams ? d.referral_reason : null, notes: d.notes||null };
   let id = d.id;
   if (id) {
     const {error} = await sb.from('prescriptions').update(row).eq('id', id);
@@ -7506,7 +7588,8 @@ async function sendPrescription(id) {
   await refreshPrescriptions();
 }
 async function cancelPrescription(id) {
-  if (!confirm('Ακύρωση αυτής της συνταγής;')) return;
+  const rr = (S.prescriptions||[]).find(x=>x.id===id) || (S.patientPrescriptions||[]).find(x=>x.id===id);
+  if (!confirm(rr&&rr.kind==='exams' ? 'Ακύρωση αυτού του παραπεμπτικού;' : 'Ακύρωση αυτής της συνταγής;')) return;
   const {error} = await sb.from('prescriptions').update({status:'cancelled', cancelled_at:new Date().toISOString()}).eq('id', id);
   if (error) return alert('Σφάλμα: '+error.message);
   await refreshPrescriptions();
@@ -7550,6 +7633,10 @@ function showPrescriptionPreviewModal(data) {
 // ── Ρυθμίσεις → Ενσωματώσεις: κάρτα ΗΔΙΚΑ ──
 function renderEprescSettingsCard() {
   const st = S.eprescStatus||{};
+  const md = st.masterdata||{};
+  // last_sync = τελευταίες εγγραφές του idika_sync_log (dataset, finished_at, rows, ok)
+  const syncLog = Array.isArray(md.last_sync) ? md.last_sync : [];
+  const lastSyncOf = ds => { const x = syncLog.find(l=>l.dataset===ds && l.ok && l.finished_at); return x ? fmtDt(x.finished_at) : 'ποτέ'; };
   return `<div class="card">
     <div class="card-header">
       <div>
@@ -7566,8 +7653,35 @@ function renderEprescSettingsCard() {
         <button class="btn btn-ghost btn-sm" onclick="ensureEprescStatus(true).then(()=>render())">↻ Ανανέωση κατάστασης</button>
       </div>
       <div id="epresc-test-result" style="margin-top:10px;font-size:12px"></div>
+      <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+        <div style="font-weight:600;margin-bottom:4px">Λίστες ΗΔΙΚΑ (masterdata)</div>
+        <div style="color:var(--text-2);margin-bottom:8px">Χρησιμοποιούνται για την αναζήτηση εξετάσεων στα παραπεμπτικά και για τους κωδικούς ICD-10. Κατεβαίνουν από το API Ιατρών και αποθηκεύονται τοπικά· ο συγχρονισμός διαρκεί ~1–2 λεπτά.</div>
+        <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:8px">
+          <span>🧪 Εξετάσεις: <b>${Number(md.examinations||0).toLocaleString('el-GR')}</b> <span style="color:var(--text-2);font-size:11px">(συγχρ.: ${lastSyncOf('examinations')})</span></span>
+          <span>🏷 ICD-10: <b>${Number(md.icd10s||0).toLocaleString('el-GR')}</b> <span style="color:var(--text-2);font-size:11px">(συγχρ.: ${lastSyncOf('icd10s')})</span></span>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-ghost btn-sm" ${st.configured?'':'disabled title="Απαιτείται σύνδεση ΗΔΙΚΑ"'} onclick="syncIdikaMasterdata('examinations')">⟳ Συγχρονισμός εξετάσεων</button>
+          <button class="btn btn-ghost btn-sm" ${st.configured?'':'disabled title="Απαιτείται σύνδεση ΗΔΙΚΑ"'} onclick="syncIdikaMasterdata('icd10s')">⟳ Συγχρονισμός ICD-10</button>
+        </div>
+        <div id="epresc-sync-result" style="margin-top:8px;font-size:12px"></div>
+      </div>
     </div>
   </div>`;
+}
+async function syncIdikaMasterdata(dataset) {
+  const el = document.getElementById('epresc-sync-result');
+  const label = dataset==='icd10s' ? 'ICD-10' : 'εξετάσεων';
+  if (el) el.innerHTML = `<span style="color:var(--text-2)">Συγχρονισμός ${esc(label)} σε εξέλιξη… (μπορεί να πάρει 1–2 λεπτά, μην κλείσεις τη σελίδα)</span>`;
+  try {
+    const {data, error} = await sb.functions.invoke('idika-prescriptions', {body:{action:'sync_masterdata', dataset, clinic_id: clinicId()}});
+    if (error) throw new Error(error.message||'Σφάλμα σύνδεσης');
+    if (data && data.error) throw new Error(data.error);
+    if (el) el.innerHTML = `<span style="color:#0F6E56">✓ Συγχρονίστηκαν ${Number(data.rows||0).toLocaleString('el-GR')} εγγραφές ${esc(label)}${data.pages?' ('+data.pages+' σελίδες)':''}.</span>`;
+    await ensureEprescStatus(true); render();
+    const el2 = document.getElementById('epresc-sync-result');
+    if (el2) el2.innerHTML = `<span style="color:#0F6E56">✓ Συγχρονίστηκαν ${Number(data.rows||0).toLocaleString('el-GR')} εγγραφές ${esc(label)}.</span>`;
+  } catch(e) { if (el) el.innerHTML = `<span style="color:var(--red)">Σφάλμα συγχρονισμού: ${esc(e.message||e)}</span>`; }
 }
 async function testEprescConnection(targetId) {
   const el = document.getElementById(targetId);
