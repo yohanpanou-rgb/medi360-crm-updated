@@ -28,6 +28,10 @@ const HEADER_CANDIDATES = ['apikey', 'api-key', 'api_key', 'x-api-key', 'x-apike
 
 type ProbeResult = { label: string; header: string | null; auth: boolean; status: number | string; ms: number; body: string };
 
+// Αποτέλεσμα 26/09/2026 (UAT): το gateway (IBM) θέλει Basic auth χρήστη ΗΣ και το API
+// διαβάζει το application key από το header `api-key`. Με 'apikey'/'x-api-key' κ.λπ. → 604.
+let BODY_LIMIT = 400; // mode 'path' με full:true → έως 400 KB (για σελίδες Wiki / masterdata)
+
 async function probe(url: string, headerName: string | null, apiKey: string, user: string, pass: string, label: string): Promise<ProbeResult> {
   const headers: Record<string, string> = { Accept: 'application/xml, application/json;q=0.9, */*;q=0.5' };
   if (headerName) headers[headerName] = apiKey;
@@ -39,8 +43,9 @@ async function probe(url: string, headerName: string | null, apiKey: string, use
     const timer = setTimeout(() => ctrl.abort(), 12000);
     const r = await fetch(url, { headers, signal: ctrl.signal });
     clearTimeout(timer);
-    const text = (await r.text()).replace(/\s+/g, ' ').trim();
-    return { label, header: headerName, auth, status: r.status, ms: Date.now() - t0, body: text.slice(0, 400) };
+    const raw = await r.text();
+    const text = BODY_LIMIT > 400 ? raw : raw.replace(/\s+/g, ' ').trim();
+    return { label, header: headerName, auth, status: r.status, ms: Date.now() - t0, body: text.slice(0, BODY_LIMIT) };
   } catch (e) {
     return { label, header: headerName, auth, status: 'ERR', ms: Date.now() - t0, body: (e instanceof Error ? e.message : String(e)).slice(0, 300) };
   }
@@ -60,6 +65,7 @@ Deno.serve(async (req) => {
     const pass = String(body.password || Deno.env.get('IDIKA_PASS') || '');
     const mode = String(body.mode || 'headers'); // 'headers' | 'me' | 'path'
     const path = String(body.path || '/api/v1/me');
+    BODY_LIMIT = body.full ? 400 * 1024 : 400;
     const results: ProbeResult[] = [];
 
     if (mode === 'headers') {
@@ -71,7 +77,7 @@ Deno.serve(async (req) => {
       }
     } else if (mode === 'me' || mode === 'path') {
       // Πλήρης κλήση με το header που δίνεται (ή apikey) και Basic auth.
-      const name = String(body.header || 'apikey');
+      const name = String(body.header || 'api-key');
       results.push(await probe(base + path, name, apiKey, user, pass, mode));
     }
 

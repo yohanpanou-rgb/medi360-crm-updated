@@ -19,7 +19,7 @@
 //   IDIKA_USER      δοκιμαστικός χρήστης ΗΣ (medi360docapi)
 //   IDIKA_PASS      κωδικός του
 //   IDIKA_BASE      (προαιρετικό) default https://testeps.e-prescription.gr/docapiv2
-//   IDIKA_KEY_HEADER(προαιρετικό) όνομα header για το api key, default 'apikey'
+//   IDIKA_KEY_HEADER(προαιρετικό) όνομα header για το api key, default 'api-key'
 //
 // Auth κλήσης: JWT χρήστη (super_admin/clinic_admin, ή therapist με can_view_diagnosis)
 // ή x-cron-secret = BIRTHDAY_CRON_SECRET (+ body.clinic_id) για δοκιμές.
@@ -31,7 +31,9 @@ const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } });
 
 const BASE = (Deno.env.get('IDIKA_BASE') || 'https://testeps.e-prescription.gr/docapiv2').replace(/\/$/, '');
-const KEY_HEADER = Deno.env.get('IDIKA_KEY_HEADER') || 'apikey';
+// Επιβεβαιωμένο εμπειρικά 26/09/2026 στο UAT: το application key διαβάζεται από το header
+// `api-key` (τα 'apikey', 'x-api-key' κ.λπ. επιστρέφουν 604 «You must provide a valid api key»).
+const KEY_HEADER = Deno.env.get('IDIKA_KEY_HEADER') || 'api-key';
 const ENV_LABEL = BASE.includes('testeps') || BASE.includes('test.') ? 'uat' : 'production';
 
 function configured() {
