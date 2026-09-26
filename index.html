@@ -224,7 +224,41 @@ tr{cursor:pointer}
 .badge-amber{background:var(--amber-soft);color:var(--amber-dark)}
 .badge-navy{background:var(--surface-2);color:var(--navy)}
 .badge-gray{background:var(--surface-2);color:var(--text-2)}
-.app-build-info{position:fixed;bottom:6px;right:10px;font-size:10px;color:var(--text-3);font-family:monospace;pointer-events:none;z-index:5;opacity:.7}
+/* Η ένδειξη έκδοσης δεν «επιπλέει» πια πάνω σε πίνακες/κουμπιά κάτω δεξιά — εμφανίζεται
+   στις Ρυθμίσεις → Λογαριασμός (βλ. renderSettings). Το στοιχείο μένει στο DOM για το build info. */
+.app-build-info{display:none}
+/* Toast: σύντομο μήνυμα επιτυχίας/πληροφορίας αντί για alert() που διακόπτει τη ροή */
+#m-toast-wrap{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:12000;display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none;max-width:calc(100vw - 32px)}
+.m-toast{background:var(--navy);color:#fff;font-size:13px;font-weight:500;padding:10px 16px;border-radius:10px;box-shadow:var(--shadow-lg);display:flex;align-items:center;gap:8px;animation:mToastIn .18s ease;max-width:100%}
+.m-toast.ok{background:#0F6E56}.m-toast.err{background:#A32D2D}.m-toast.warn{background:#854F0B}
+.m-toast.out{opacity:0;transform:translateY(6px);transition:.25s}
+@keyframes mToastIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+/* Ελάχιστο μέγεθος κειμένου: ό,τι είχε οριστεί inline κάτω από 11px ανεβαίνει στα 11px
+   (desktop) — labels, υπόμνημα, ώρες Προγράμματος, μετα-πληροφορίες. Σε κινητό, τα 10.5/11px
+   γίνονται 12px. Additive κανόνας που δεν αγγίζει τα επιμέρους templates. */
+[style*="font-size:8px"],[style*="font-size:9px"],[style*="font-size:9.5px"],[style*="font-size:10px"]{font-size:11px!important}
+@media(max-width:768px){[style*="font-size:10.5px"],[style*="font-size:11px"]{font-size:12px!important}}
+/* Topbar σε κινητό: ο τίτλος σελίδας μένει ορατός· η αναζήτηση ανοίγει με το εικονίδιο ⌕ */
+.mobile-only-btn,.mobile-search-close{display:none}
+/* Καρτέλα ασθενή: το wrapper είναι display:contents ώστε header (#pat-head) και tabs (#pat-tabs)
+   να «κολλάνε» σε σχέση με ολόκληρη τη σελίδα (όχι με ένα μικρό γονικό block που φεύγει). */
+#pat-head{margin-top:-10px}
+.pat-tabs-bleed{margin:0 -24px;padding:4px 24px 0}
+@media(max-width:768px){#pat-head{margin-top:0}.pat-tabs-bleed{margin:0 -14px;padding:4px 14px 0}}
+@media(max-width:768px){
+  .topbar-title{display:block!important;flex:1;font-size:15px}
+  .mobile-only-btn{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:50%;background:var(--surface);border:1px solid var(--border);color:var(--text-2);font-size:17px;flex-shrink:0}
+  .topbar:not(.search-open) #global-search-wrap{display:none!important}
+  .topbar.search-open .topbar-title,.topbar.search-open .mobile-only-btn,.topbar.search-open .theme-toggle,.topbar.search-open #crm-assistant-btn,.topbar.search-open #voice-agent-btn{display:none!important}
+  .topbar.search-open .mobile-search-close{display:inline-flex;align-items:center;background:none;border:none;color:var(--text-2);font-size:13px;padding:6px 4px;flex-shrink:0}
+  /* Κάρτα ραντεβού (λίστα): οι πληροφορίες πελάτη παίρνουν ολόκληρη την πρώτη γραμμή, τα
+     υπόλοιπα (ημ/νία, ποσό, κατάσταση) τη δεύτερη — τέλος η επικάλυψη υπηρεσίας/ημερομηνίας. */
+  .appt-card{gap:6px 10px;padding:10px 12px;align-items:center}
+  .appt-card>div:nth-child(2){flex:0 0 calc(100% - 14px)!important;min-width:0}
+  .appt-card>div:nth-child(2)>div{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .appt-card>div:first-child{align-self:stretch}
+  .appt-card select[data-appt-status]{margin-left:auto}
+}
 summary::-webkit-details-marker{display:none}
 
 /* BUTTONS */
@@ -734,7 +768,10 @@ const euro = v => '€'+(v||0).toLocaleString('el-GR');
 
 const ROLES = {super_admin:'Super Admin',clinic_admin:'Διαχειριστής',therapist:'Θεραπευτής',receptionist:'Γραμματεία'};
 const STATUS_PAT = {active:{bg:'#E1F5EE',c:'#0F6E56',l:'Ενεργός'},vip:{bg:'#EEEDFE',c:'#3C3489',l:'VIP'},lead:{bg:'#E6F1FB',c:'#185FA5',l:'Lead'},inactive:{bg:'#FCEBEB',c:'#A32D2D',l:'Ανενεργός'}};
-const STATUS_APPT = {booked:{bg:'#FAEEDA',c:'#D97706',l:'Κλεισμένο'},confirmed:{bg:'#E1F5EE',c:'#0F6E56',l:'Επιβεβαιωμένο'},in_progress:{bg:'#E6F1FB',c:'#185FA5',l:'Σε εξέλιξη'},completed:{bg:'#E1F5EE',c:'#0F6E56',l:'Ολοκληρώθηκε'},cancelled:{bg:'#FCEBEB',c:'#A32D2D',l:'Ακυρώθηκε'},no_show:{bg:'#FCEBEB',c:'#A32D2D',l:'No Show'},rescheduled:{bg:'#CFFAFE',c:'#0891B2',l:'Μεταφέρθηκε'}};
+// Χρώματα κατάστασης ΕΝΙΑΙΑ με το Πρόγραμμα (globalApptColor / υπόμνημα): Κλεισμένο
+// πορτοκαλί, Επιβεβαιωμένο μπλε, Σε εξέλιξη μωβ, Ολοκληρώθηκε πράσινο, Ακυρώθηκε/No-show
+// κόκκινο. Πριν, «Επιβεβαιωμένο» και «Ολοκληρώθηκε» είχαν το ίδιο πράσινο στις λίστες.
+const STATUS_APPT = {booked:{bg:'#FAEEDA',c:'#D97706',l:'Κλεισμένο'},confirmed:{bg:'#E6F1FB',c:'#185FA5',l:'Επιβεβαιωμένο'},in_progress:{bg:'#EDE9FE',c:'#5B21B6',l:'Σε εξέλιξη'},completed:{bg:'#E1F5EE',c:'#0F6E56',l:'Ολοκληρώθηκε'},cancelled:{bg:'#FCEBEB',c:'#A32D2D',l:'Ακυρώθηκε'},no_show:{bg:'#FCEBEB',c:'#A32D2D',l:'No Show'},rescheduled:{bg:'#CFFAFE',c:'#0891B2',l:'Μεταφέρθηκε'}};
 const PIPELINE_STAGES = ['new_lead','contacted','interested','offer_sent','won','lost'];
 const STAGE_LABELS = {new_lead:'Νέο Lead',contacted:'Επαφή',interested:'Ενδιαφέρον',offer_sent:'Προσφορά',won:'✓ Κλείσιμο',lost:'✗ Απώλεια'};
 
@@ -869,6 +906,46 @@ const isSuperAdmin = () => (S.profile&&S.profile.role) === 'super_admin';
 const panicActive = () => !!(S.clinic && S.clinic.settings && S.clinic.settings.panic_hidden);
 const clinicId = () => S.selectedClinicId;
 const canSee = (roles) => roles.includes((S.profile&&S.profile.role));
+// Ποσά (τιμές ραντεβού, LTV): manager & admin πάντα· η γραμματεία ΜΟΝΟ αν η κλινική το
+// επιτρέπει (Ρυθμίσεις → Κλινική → «Ορατότητα ποσών»). Default: κρυμμένα.
+const canSeePrices = () => canSee(['super_admin','clinic_admin']) || (canSee(['receptionist']) && !!(S.clinic&&S.clinic.settings&&S.clinic.settings.receptionist_sees_prices));
+// Toast: μήνυμα επιτυχίας/πληροφορίας που δεν διακόπτει τη ροή (αντί για alert()).
+// kind: 'ok' | 'info' | 'warn' | 'err'. Εξαφανίζεται μόνο του σε ~3″.
+function showToast(msg, kind) {
+  try {
+    let wrap = document.getElementById('m-toast-wrap');
+    if (!wrap) { wrap = document.createElement('div'); wrap.id = 'm-toast-wrap'; document.body.appendChild(wrap); }
+    const t = document.createElement('div');
+    t.className = 'm-toast ' + (kind||'ok');
+    t.textContent = msg;
+    wrap.appendChild(t);
+    setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 300); }, kind==='err' ? 5000 : 3000);
+  } catch(e) { alert(msg); }
+}
+// Αποθήκευση ενός/λίγων πεδίων στα settings της κλινικής (merge), με toast.
+async function saveClinicSettingPatch(patch, okMsg) {
+  const settings = Object.assign({}, (S.clinic&&S.clinic.settings)||{}, patch);
+  const {error} = await sb.from('clinics').update({settings}).eq('id', clinicId());
+  if (error) { showToast('Σφάλμα: ' + error.message, 'err'); return false; }
+  if (S.clinic) S.clinic.settings = settings;
+  showToast(okMsg || 'Αποθηκεύτηκε', 'ok');
+  return true;
+}
+// Καρτέλα ασθενή: δύο «παγωμένα» επίπεδα (header και tabs). Το ύψος του header αλλάζει
+// (μεγάλα ονόματα, κινητό), οπότε η θέση των tabs υπολογίζεται μετά το render.
+function syncPatStickyOffsets() {
+  const h = document.getElementById('pat-head'), t = document.getElementById('pat-tabs');
+  if (h && t) t.style.setProperty('--pat-head-h', h.offsetHeight + 'px');
+}
+// Αναφορές: γρήγορα διαστήματα (Σήμερα / Εβδομάδα / Μήνας)
+function setReportPreset(kind) {
+  const now = new Date(); const d = x => x.toISOString().slice(0,10);
+  let from = new Date(now);
+  if (kind==='week') { const day=(now.getDay()+6)%7; from.setDate(now.getDate()-day); }
+  else if (kind==='month') from = new Date(now.getFullYear(), now.getMonth(), 1);
+  S.reportRange = {from: d(from), to: d(now)};
+  loadPageData();
+}
 // Ποιος βλέπει διαγνώσεις/φάρμακα ιατρικών εξετάσεων — Super Admin/Manager πάντα,
 // Θεραπευτής μόνο με ρητή άδεια (profiles.can_view_diagnosis), γιατί ο ρόλος
 // "Θεραπευτής" καλύπτει εξίσου γιατρούς και αισθητικούς. Η ίδια λογική επιβάλλεται
@@ -1809,6 +1886,7 @@ function render() {
     );
   if (S.modal) renderModal();
   bindEvents();
+  if (S.page==='patient-detail') syncPatStickyOffsets();
 
   // Επαναφορά focus/cursor στο ίδιο input μετά το re-render
   if (_actId) {
@@ -1972,9 +2050,10 @@ function renderShell(content) {
     </div>
   </aside>
   <div class="main ${collapsed?'expanded':''}" id="main">
-    <header class="topbar">
+    <header class="topbar ${S.mobileSearchOpen?'search-open':''}">
       <button class="hamburger" id="hamburger"><span></span><span></span><span></span></button>
-      <span class="topbar-title">${PAGE_TITLES[S.page]||'medi360'}</span>
+      <span class="topbar-title">${S.page==='patient-detail'&&S.patientDetail?esc(S.patientDetail.full_name):(PAGE_TITLES[S.page]||'medi360')}</span>
+      <button class="mobile-only-btn" id="mobile-search-btn" title="Αναζήτηση" onclick="S.mobileSearchOpen=true;render();setTimeout(()=>{const i=document.getElementById('global-search');if(i)i.focus();},60)">⌕</button>
       <button class="theme-toggle" id="theme-toggle" title="Εναλλαγή θέματος">${document.documentElement.getAttribute('data-theme')==='dark'?'☀️':'🌙'}</button>
       <!-- Global Search -->
       <div id="global-search-wrap" style="flex:1;max-width:320px;margin:0 16px;position:relative">
@@ -1988,6 +2067,7 @@ function renderShell(content) {
         </div>
         <div id="search-dropdown" class="search-dropdown-box"></div>
       </div>
+      <button class="mobile-search-close" onclick="S.mobileSearchOpen=false;S.globalSearch='';S.globalResults=[];render()">Κλείσιμο</button>
       <!-- AI Βοηθός «Ρώτα το CRM» (module ai-assistant, μόνο διαχειριστές) -->
       ${(cid && isModuleEnabled('ai-assistant'))?`<button id="crm-assistant-btn" title="Ρώτα το CRM — στατιστικά με απλές ερωτήσεις" onclick="toggleCrmAssistant()" style="width:36px;height:36px;border-radius:50%;background:${S.assistantOpen?'var(--navy)':'#EEEDFE'};color:${S.assistantOpen?'#fff':'#3C3489'};border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;transition:.2s">💬</button>`:''}
       <!-- Voice Agent Button (module voice-agent) -->
@@ -2288,7 +2368,7 @@ function renderDashboard() {
     <!-- Σημερινό Πρόγραμμα + Γενέθλια -->
     <div class="dash-grid" style="display:grid;grid-template-columns:2fr 1fr;gap:14px;margin-bottom:16px">
       <div class="card">
-        <div class="card-header"><span class="card-title">📅 Σημερινό Πρόγραμμα</span>
+        <div class="card-header"><span class="card-title">📅 Σημερινό Πρόγραμμα <span class="badge" style="background:#eef0fe;color:var(--blue);margin-left:6px">${todaySchedule.length} ραντεβού</span></span>
           <button class="btn btn-ghost btn-sm" data-page="calendar">Άνοιγμα →</button>
         </div>
         <div style="max-height:290px;overflow-y:auto">
@@ -2373,39 +2453,12 @@ function renderDashboard() {
       </div>`).join('')}
     </div>
 
+    <!-- Η δεύτερη λίστα «Σήμερα» αφαιρέθηκε: ήταν διπλότυπη του «Σημερινού Προγράμματος»
+    παραπάνω (ίδια δεδομένα, χωρίς θεραπεύτρια) και κόστιζε μία ολόκληρη οθόνη σε κινητό. -->
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px" class="dash-grid">
 
-      <!-- Today's schedule -->
-      <div class="card">
-        <div class="card-header">
-          <span class="card-title">📅 Σήμερα</span>
-          <div style="display:flex;align-items:center;gap:8px">
-            <span class="badge" style="background:#eef0fe;color:var(--blue)">${todayApts.length} ραντεβού</span>
-            <button class="btn btn-ghost btn-sm" data-page="calendar">Πρόγραμμα →</button>
-          </div>
-        </div>
-        <div style="max-height:320px;overflow-y:auto">
-          ${todayApts.length?todayApts.sort((a,b)=>new Date(a.start_time)-new Date(b.start_time)).map(a=>{
-            const isPast = new Date(a.start_time)<now;
-            const c = (STATUS_APPT[a.status]||STATUS_APPT.confirmed);
-            return `<div style="display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--border-2);${isPast?'opacity:0.6':''}">
-              <div style="width:4px;align-self:stretch;border-radius:2px;background:${c.c};flex-shrink:0"></div>
-              <div style="font-family:var(--mono);font-size:12px;font-weight:500;color:var(--blue);flex-shrink:0;min-width:42px">${new Date(a.start_time).toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'})}</div>
-              <div style="flex:1;min-width:0;cursor:pointer" ${a.patient_id?`data-patient="${a.patient_id}"`:''}> 
-                <div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.patients&&a.patients.full_name||'—')}</div>
-                <div style="font-size:11px;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.service_name||'')}</div>
-              </div>
-              ${apptBadge(a.status)}
-            </div>`;
-          }).join(''):`<div style="padding:40px;text-align:center;color:var(--text-2);font-size:12px">
-            <div style="font-size:24px;margin-bottom:8px">🎉</div>
-            Δεν υπάρχουν ραντεβού σήμερα
-          </div>`}
-        </div>
-      </div>
-
       <!-- Upcoming + Next apt -->
-      <div style="display:flex;flex-direction:column;gap:16px">
+      <div style="display:contents">
         ${nextApt?`<div class="card" style="padding:16px;border-left:4px solid var(--blue)">
           <div style="font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Επόμενο Ραντεβού</div>
           <div style="display:flex;align-items:center;gap:12px">
@@ -2594,7 +2647,7 @@ function renderPatients() {
           <th class="hide-mobile" data-sort="gdpr_signed" style="cursor:pointer;user-select:none">GDPR${sortArrow('gdpr_signed')}</th>
           <th class="hide-mobile" data-sort="medical_history" style="cursor:pointer;user-select:none">Ιατρ. Ιστ.${sortArrow('medical_history')}</th>
           <th class="hide-mobile" data-sort="consult" style="cursor:pointer;user-select:none">Consultation${sortArrow('consult')}</th>
-          ${canSee(['super_admin','clinic_admin'])?`<th class="hide-mobile" data-sort="ltv" style="cursor:pointer;user-select:none">LTV${sortArrow('ltv')}</th>`:''}
+          ${canSeePrices()?`<th class="hide-mobile" data-sort="ltv" style="cursor:pointer;user-select:none">LTV${sortArrow('ltv')}</th>`:''}
           <th></th>
         </tr></thead>
         <tbody>${filtered.length?filtered.map(p=>{
@@ -2606,7 +2659,7 @@ function renderPatients() {
               ${(S.nextApptByPatient||{})[p.id]?`<div style="font-size:10.5px;color:var(--blue);font-weight:600" title="Επόμενο ραντεβού">→ ${new Date(S.nextApptByPatient[p.id]).toLocaleDateString('el-GR',{day:'numeric',month:'numeric'})}, ${new Date(S.nextApptByPatient[p.id]).toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'})}</div>`:''}
               <div class="mobile-pt-indicators">
                 <span style="font-size:10px;padding:1px 6px;border-radius:6px;background:${p.gdpr_signed?'#E1F5EE':'#FCEBEB'};color:${p.gdpr_signed?'#0F6E56':'#A32D2D'}">${p.gdpr_signed?'✅ GDPR':'❌ GDPR'}</span>
-                ${canSee(['super_admin','clinic_admin'])?`<span style="font-size:10px;padding:1px 6px;border-radius:6px;background:var(--surface);color:#0F6E56;font-weight:500">LTV ${euro(p.ltv)}</span>`:''}
+                ${canSeePrices()?`<span style="font-size:10px;padding:1px 6px;border-radius:6px;background:var(--surface);color:#0F6E56;font-weight:500">LTV ${euro(p.ltv)}</span>`:''}
               </div>
             </div>
           </div></td>
@@ -2615,7 +2668,7 @@ function renderPatients() {
           <td class="hide-mobile">${p.gdpr_signed?'✅':'❌'}</td>
           <td class="hide-mobile">${hasMedicalHistoryData(p)?'<span style="color:#0F6E56;font-weight:600" title="Έχει συμπληρώσει ιατρικό ιστορικό">✓</span>':'<span style="color:var(--text-3)">—</span>'}</td>
           <td class="hide-mobile">${consultDate?`<span style="color:#185FA5;font-weight:500;font-size:12px">${new Date(consultDate).toLocaleDateString('el-GR',{day:'2-digit',month:'2-digit',year:'numeric'})}</span>`:'<span style="color:var(--text-3)">—</span>'}</td>
-          ${canSee(['super_admin','clinic_admin'])?`<td class="hide-mobile" style="font-weight:500;color:#0F6E56">${euro(p.ltv)}</td>`:''}
+          ${canSeePrices()?`<td class="hide-mobile" style="font-weight:500;color:#0F6E56">${euro(p.ltv)}</td>`:''}
           <td style="width:1%"><button class="btn btn-ghost btn-xs" data-patient="${p.id}" title="Άνοιγμα" style="padding:4px 9px;font-size:15px;color:var(--text-2)">›</button></td>
         </tr>`;
         }).join(''):`<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">◎</div><div>Δεν βρέθηκαν ασθενείς</div></div></td></tr>`}
@@ -2989,7 +3042,7 @@ function renderPatientDetail() {
   const injectableForms = (S.injectableForms||[]).filter(f=>f.patient_id===p.id);
   const injModuleOn = isModuleEnabled('injectables');
   const consultations = (S.patConsultations||[]);
-  const canSeeFinancials = canSee(['super_admin','clinic_admin']);
+  const canSeeFinancials = canSeePrices();
   const medicalFormLink = ((S.clinic&&S.clinic.integrations)||{}).gdpr_form_link || 'https://docs.google.com/forms/d/e/1FAIpQLSe5XiCNxnDOYMxgUbzlOP8G8ZDe-R3VBaJPlZeM1gthPElHiA/viewform?usp=header';
 
   return `<div class="page">
@@ -2997,14 +3050,17 @@ function renderPatientDetail() {
     ένα ενιαίο block κατά το scroll (όχι μόνο το header) — έτσι τα tabs
     παραμένουν πάντα ορατά/πατήσιμα, αντί να χάνονται κάτω από το header
     μόλις ο χρήστης κατεβεί λίγο στο περιεχόμενο μιας καρτέλας. -->
-    <div class="pat-sticky-head" style="position:sticky;top:56px;z-index:45;background:var(--surface);margin-left:-24px;margin-right:-24px;margin-top:-24px;padding:14px 24px 0">
+    <!-- Sticky σε ΔΥΟ επίπεδα (header #pat-head και tabs #pat-tabs), όχι ολόκληρο το block:
+    οι quick actions, οι συναινέσεις και το banner δώρου κυλούν κανονικά. Σε κινητό το
+    παγωμένο ύψος πέφτει από ~230px σε ~105px. Βλ. syncPatStickyOffsets(). -->
+    <div class="pat-sticky-head" style="display:contents">
     ${criticalBannerHtml(p, p.appointments)}
     <!-- Header: συνδυαστική κατεύθυνση — gradient ταυτότητα (όπως ήδη έχουν τα Laser/
     Ενέσιμα Forms, εδώ γενικευμένη σε navy→blue ως ταυτότητα όλου του CRM) + «επιπλέουσα»
     κάρτα quick actions πάνω στην άκρη της + κάρτα κατάστασης/συναινέσεων από κάτω.
     Τίποτα δεν κρύβεται — η Διαγραφή μετακόμισε σε «⋯ Περισσότερα» μαζί με την
     Επεξεργασία, ώστε οι 4 καθημερινές ενέργειες να μην ανταγωνίζονται μια σπάνια. -->
-    <div style="background:linear-gradient(135deg,#1a1f3a,#2B3BF0 78%);border-radius:14px;padding:11px 14px 26px">
+    <div id="pat-head" style="background:linear-gradient(135deg,#1a1f3a,#2B3BF0 78%);border-radius:14px;padding:11px 14px 26px;position:sticky;top:56px;z-index:46">
       <div style="display:flex;align-items:center;gap:10px">
         <button class="btn btn-sm" data-page="patients" style="background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);padding:4px 10px;min-height:30px">← Πίσω</button>
         <div style="width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#fff;flex-shrink:0">${initials(p.full_name)}</div>
@@ -3104,7 +3160,7 @@ function renderPatientDetail() {
     <!-- Tabs: μία γραμμή που κυλάει οριζόντια (αντί να σπάνε σε 2-3 σειρές) —
     όλα τα tabs παραμένουν, απλά δεν καταλαμβάνουν μόνιμα ύψος στην οθόνη.
     Σειρά κατά συχνότητα χρήσης· το Timeline τελευταίο. -->
-    <div style="position:relative">
+    <div id="pat-tabs" class="pat-tabs-bleed" style="position:sticky;top:calc(56px + var(--pat-head-h,62px));z-index:45;background:var(--surface)">
       <div style="display:flex;gap:16px;overflow-x:auto;padding-bottom:6px;border-bottom:1px solid var(--border-2)">
         ${[
           {id:'overview',l:'Στοιχεία'},
@@ -3280,7 +3336,11 @@ function renderPatientDetail() {
               ['Laser Forms', laserForms.length],
               ['Consultations', consultations.length],
               ...(canSeeFinancials?[['Σύνολο Εσόδων', euro((p.appointments||[]).filter(a=>a.price).reduce((s,a)=>s+(a.price||0),0))]]:[]),
-              ['Τελευταία Επίσκεψη', fmtDt((p.appointments||[])[(p.appointments||[]).length-1]&&(p.appointments||[])[(p.appointments||[]).length-1].start_time)],
+              // Τελευταία επίσκεψη = το πιο πρόσφατο ραντεβού που ΕΓΙΝΕ (ολοκληρωμένο, ή
+              // παρελθοντικό μη ακυρωμένο) — όχι το τελευταίο στοιχείο του πίνακα, που
+              // μπορεί να είναι μελλοντικό κλεισμένο ραντεβού.
+              ['Τελευταία Επίσκεψη', (()=>{ const now=Date.now(); const past=(p.appointments||[]).filter(a=>a.start_time && (a.status==='completed' || (new Date(a.start_time).getTime()<now && !['cancelled','no_show'].includes(a.status)))).sort((a,b)=>new Date(b.start_time)-new Date(a.start_time)); return past[0] ? fmtDt(past[0].start_time) : '—'; })()],
+              ['Επόμενο Ραντεβού', (()=>{ const now=Date.now(); const next=(p.appointments||[]).filter(a=>a.start_time && new Date(a.start_time).getTime()>=now && !['cancelled','no_show','completed'].includes(a.status)).sort((a,b)=>new Date(a.start_time)-new Date(b.start_time)); return next[0] ? fmtDt(next[0].start_time) : '—'; })()],
             ].map(([k,v])=>`
             <div style="display:flex;justify-content:space-between;gap:8px;padding:6px 10px;background:var(--bg-2,#F7F8FC);border-radius:8px;font-size:12px">
               <span style="color:var(--text-2)">${k}</span><span style="font-weight:600">${esc(String(v||'—'))}</span>
@@ -3835,7 +3895,7 @@ function renderAppointments() {
             }</div>`:''}
           </div>
           <div style="font-size:12px;color:var(--text-2);white-space:nowrap;flex-shrink:0">${fmtDt(a.start_time)}</div>
-          ${(!a.is_internal&&canSee(['super_admin','clinic_admin'])&&a.price)?`<div style="font-size:13px;font-weight:500;color:#0F6E56;flex-shrink:0">${euro(a.price)}</div>`:''}
+          ${(!a.is_internal&&canSeePrices()&&a.price)?`<div style="font-size:13px;font-weight:500;color:#0F6E56;flex-shrink:0">${euro(a.price)}</div>`:''}
           ${apptBadge(a.status)}
           <select data-appt-status="${a.id}" style="font-size:11px;padding:3px 6px;border-radius:6px;border:1px solid var(--border);background:transparent;cursor:pointer;font-family:var(--font)">
             ${Object.entries(STATUS_APPT).map(([k,v])=>`<option value="${k}" ${a.status===k?'selected':''}>${v.l}</option>`).join('')}
@@ -4421,7 +4481,7 @@ function renderCalendar() {
   const branchFilter = (S.calBranchFilter && branches.some(b=>b.id===S.calBranchFilter)) ? S.calBranchFilter : 'all';
   const appts = (S.appointments||[]).filter(a => !hideCancelled || (a.status!=='cancelled' && a.status!=='no_show'))
     .filter(a => branchFilter==='all' || a.branch_id===branchFilter);
-  const canSeeFinancials = canSee(['super_admin','clinic_admin']);
+  const canSeeFinancials = canSeePrices();
 
   // Date navigation helpers
   const dateStr = calDate.toLocaleDateString('el-GR',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
@@ -6141,7 +6201,7 @@ async function resendApptAutomation(aid, action) {
     if (r.no_email) alert('⚠️ Ο πελάτης δεν έχει email — καταγράφηκε για τηλεφωνική ενημέρωση.');
     else if (r.no_set) alert('⚠️ Η υπηρεσία δεν έχει αντιστοιχισμένο σετ οδηγιών (SMS & Αυτοματισμοί → Οδηγίες Ραντεβού).');
     else if (r.errors) alert('✗ Η αποστολή απέτυχε — δες το ιστορικό.');
-    else alert('✓ Εστάλη.');
+    else showToast('✓ Εστάλη.', 'ok');
     loadApptAutomationInfo(aid);
   } catch(e) {
     alert('Σφάλμα: '+(e.message||e)+'\n\nΈλεγξε ότι η Edge Function appointment-automations είναι ενεργή.');
@@ -7723,6 +7783,12 @@ function renderReports() {
           </select>
         </div>`:''}
         <button class="btn btn-primary" id="report-refresh">🔄 Ενημέρωση</button>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+          <span style="font-size:11.5px;color:var(--text-2)">Γρήγορα:</span>
+          <button class="btn btn-ghost btn-sm" onclick="setReportPreset('today')">Σήμερα</button>
+          <button class="btn btn-ghost btn-sm" onclick="setReportPreset('week')">Εβδομάδα</button>
+          <button class="btn btn-ghost btn-sm" onclick="setReportPreset('month')">Μήνας</button>
+        </div>
       </div>
     </div>
 
@@ -8191,7 +8257,7 @@ async function savePackage(patientId) {
         const {data:rd, error:rerr} = await sb.functions.invoke('issue-receipt', {body:{package_id:newPkg.id, amount, payment_method}});
         if (rerr) throw new Error(await extractInvokeErrorMessage(rerr));
         if (rd && rd.error) throw new Error(rd.error);
-        alert('✓ Απόδειξη: '+(rd&&rd.receipt_mark?('εκδόθηκε #'+rd.receipt_mark):'εκδόθηκε'));
+        showToast('✓ Απόδειξη: '+(rd&&rd.receipt_mark?('εκδόθηκε #'+rd.receipt_mark):'εκδόθηκε'), 'ok');
       } catch(e) { alert('✗ Η έκδοση απόδειξης απέτυχε: '+(e.message||e)); }
     } else {
       alert('Δεν εκδόθηκε απόδειξη — συμπλήρωσε τιμή πακέτου πάνω από 0€.');
@@ -9649,6 +9715,18 @@ function renderSettings() {
         </div>
       </div>
 
+      <!-- ΟΡΑΤΟΤΗΤΑ ΠΟΣΩΝ ΓΙΑ ΤΗ ΓΡΑΜΜΑΤΕΙΑ (default: κρυμμένα) -->
+      <div class="card">
+        <div class="card-header"><span class="card-title">€ Ορατότητα ποσών</span></div>
+        <div style="padding:16px">
+          <div style="font-size:12px;color:var(--text-2);margin-bottom:12px">Οι τιμές ραντεβού και το LTV πελάτη φαίνονται πάντα σε διαχειριστές. Εδώ επιλέγεις αν θα τα βλέπει και η <b>Γραμματεία</b> (λίστες ραντεβού και πελατών, καρτέλα, Πρόγραμμα, φόρμα νέου ραντεβού). Τα έσοδα στο Dashboard και οι Αναφορές παραμένουν μόνο για διαχειριστές.</div>
+          <label style="display:flex;align-items:center;gap:10px;font-size:13px;cursor:pointer">
+            <span class="tglsw"><input type="checkbox" id="recep-prices-toggle" ${(c&&c.settings&&c.settings.receptionist_sees_prices)?'checked':''} onchange="saveClinicSettingPatch({receptionist_sees_prices:this.checked}, this.checked?'Η Γραμματεία βλέπει πλέον ποσά':'Τα ποσά κρύβονται από τη Γραμματεία').then(ok=>{ if(!ok) this.checked=!this.checked; })"/><span class="tglsw-track"></span></span>
+            Η Γραμματεία βλέπει τιμές ραντεβού και LTV
+          </label>
+        </div>
+      </div>
+
       <div class="card">
         <div class="card-header"><span class="card-title">🎨 Branding</span></div>
         <div style="padding:16px">
@@ -10129,6 +10207,7 @@ function renderSettings() {
         <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border-2);font-size:13px">
           <span style="color:var(--text-2)">${k}</span><span style="font-weight:500">${esc(v||'—')}</span>
         </div>`).join('')}
+        <div style="display:flex;justify-content:space-between;padding:8px 0;font-size:12px;color:var(--text-3)"><span>Έκδοση εφαρμογής</span><span style="font-family:var(--mono)">v${APP_VERSION} · ${BUILD_TIME}</span></div>
         <button class="btn btn-danger" style="margin-top:16px;width:100%;justify-content:center" id="settings-logout">Αποσύνδεση</button>
       </div>
     </div>`:''}
@@ -10290,7 +10369,7 @@ function modalNewAppt() {
           <div class="form-group"><label class="form-label">Διάρκεια (λεπτά)</label><input class="form-control" id="a-duration" type="number" value="60"/></div>
           <!-- Τιμή: ορατή ΜΟΝΟ σε clinic manager/admin. Το input μένει στο DOM
                (κρυφό) ώστε η τιμή καταλόγου να αποθηκεύεται κανονικά στο ταμείο. -->
-          <div class="form-group" id="a-price-wrap" style="${(canSee(['super_admin','clinic_admin'])&&!internal)?'':'display:none'}"><label class="form-label">Τιμή (€)</label><input class="form-control" id="a-price" type="number" placeholder="0"/></div>
+          <div class="form-group" id="a-price-wrap" style="${(canSeePrices()&&!internal)?'':'display:none'}"><label class="form-label">Τιμή (€)</label><input class="form-control" id="a-price" type="number" placeholder="0"/></div>
         </div>
       </div>
 
@@ -11450,7 +11529,7 @@ function bindEvents() {
       const id = el.dataset.apptCal;
       const a = (S.appointments||[]).find(x=>x.id===id||x.id==id);
       if (!a) return;
-      const canFin = canSee(['super_admin','clinic_admin']);
+      const canFin = canSeePrices();
       const canReceipt = canSee(['super_admin','clinic_admin','receptionist']);
       const c = globalApptColor(a);
       const start = new Date(a.start_time);
@@ -11623,7 +11702,7 @@ function bindEvents() {
         }
         if (statusEl) statusEl.style.display='none';
         if (S.patientDetail && S.patientDetail.id===a.patient_id) await loadPatientDetail(a.patient_id, 'photos');
-        alert('✓ Οι φωτογραφίες αποθηκεύτηκαν στην καρτέλα του πελάτη.');
+        showToast('✓ Οι φωτογραφίες αποθηκεύτηκαν στην καρτέλα του πελάτη.', 'ok');
       });
       // Οριστική διαγραφή ραντεβού — μόνο super_admin/clinic_admin (ίδιο gate
       // με την RLS delete policy στη βάση). Ξεχωριστό από «Ακυρώθηκε»: η
@@ -12942,7 +13021,7 @@ function bindEvents() {
       const {data, error} = await sb.functions.invoke('birthday-emails', {body:{patient_id: patientId}});
       if (error) throw new Error(await extractInvokeErrorMessage(error));
       if (data && data.error) throw new Error(data.error);
-      alert('✓ Το email στάλθηκε.');
+      showToast('✓ Το email στάλθηκε.', 'ok');
       await loadPatientDetail(patientId);
     } catch(e) {
       alert('✗ Αποτυχία αποστολής: '+(e.message||e));
@@ -13219,7 +13298,7 @@ function bindModalEvents() {
     set('a-patient-wrap', !on);
     set('a-internal-title-wrap', on);
     set('a-service-wrap', !on);
-    set('a-price-wrap', !on && canSee(['super_admin','clinic_admin']));
+    set('a-price-wrap', !on && canSeePrices());
   });
 
   // Patient search for appointment — dropdown με το focus, live αναζήτηση, δημιουργία νέου ασθενή
@@ -13544,6 +13623,7 @@ function bindModalEvents() {
       sb.functions.invoke('appointment-automations', { body: { action: 'send_booking_confirmation', appointment_id: newAppt.id } }).catch(() => {});
     }
     closeModal(); await loadPageData();
+    showToast(isInternal ? '✓ Το εσωτερικό ραντεβού καταχωρήθηκε' : '✓ Το ραντεβού καταχωρήθηκε', 'ok');
   });
 
   // Save lead (νέο ή επεξεργασία υπάρχοντος — ίδιο μοτίβο με save-clinic)
@@ -14210,7 +14290,7 @@ async function deletePatientPermanently() {
   const {error: delErr} = await sb.rpc('delete_patient_completely', {p_patient_id: p.id});
   if (delErr) { alert('Σφάλμα: '+delErr.message+'\n\nΔεν διαγράφηκε τίποτα.'); return; }
 
-  alert('✓ Ο ασθενής διαγράφηκε οριστικά.');
+  showToast('✓ Ο ασθενής διαγράφηκε οριστικά.', 'ok');
   S.page = 'patients'; S.patientDetail = null;
   await loadPageData(); render();
 }
@@ -14330,7 +14410,7 @@ async function resendConsultationToPatient(consultId) {
   });
   const errMsg = error ? await extractInvokeErrorMessage(error) : ((data&&data.error)||'');
   if (errMsg) { alert('⚠ Δεν στάλθηκε: '+errMsg); return; }
-  alert('✓ Στάλθηκε ξανά στον/στην '+p.full_name);
+  showToast('✓ Στάλθηκε ξανά στον/στην '+p.full_name, 'ok');
 }
 
 // ── PASTE & IMPORT (Skincare Plan από πλήρες email text) ──
@@ -15213,7 +15293,7 @@ async function sendLaserConsentEmail() {
     });
     if (error) throw new Error(await extractInvokeErrorMessage(error));
     if (data && data.error) throw new Error(data.error);
-    alert('✓ Η συναίνεση στάλθηκε στο ' + to);
+    showToast('✓ Η συναίνεση στάλθηκε στο ' + to, 'ok');
   } catch(e) {
     alert('Σφάλμα αποστολής: ' + (e.message||e) + '\n\nΈλεγξε ότι η Edge Function send-consent-email είναι ενεργή.');
   }
@@ -15276,7 +15356,7 @@ async function sendServiceConsentEmail(groupKey) {
     });
     if (error) throw new Error(await extractInvokeErrorMessage(error));
     if (data && data.error) throw new Error(data.error);
-    alert('✓ Η συναίνεση στάλθηκε στο ' + to);
+    showToast('✓ Η συναίνεση στάλθηκε στο ' + to, 'ok');
   } catch(e) {
     alert('Σφάλμα αποστολής: ' + (e.message||e) + '\n\nΈλεγξε ότι η Edge Function send-consent-email είναι ενημερωμένη (θέλει redeploy για τα PDF υπηρεσιών).');
   }
