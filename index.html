@@ -247,6 +247,20 @@ tr{cursor:pointer}
 /* Καρτέλα v2: header μίας γραμμής που «κολλάει», με bleed στα άκρα της σελίδας */
 #pat-head.pat-v2-head{margin:-10px -24px 0}
 .pat-v2-tabs{scrollbar-width:none}.pat-v2-tabs::-webkit-scrollbar{display:none}
+/* Πρόγραμμα σε κινητό: FAB «+ Ραντεβού», chips θεραπευτριών, γραμμή εργαλείων μίας σειράς */
+.cal-fab{display:none}
+.cal-chips{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}
+.cal-chips::-webkit-scrollbar{display:none}
+.cal-chip{flex:0 0 auto;border-radius:99px;padding:6px 12px;font-size:12.5px;font-weight:600;background:var(--white);color:var(--text-2);border:1px solid var(--border);white-space:nowrap;font-family:var(--font)}
+.cal-chip.on{background:var(--blue);color:#fff;border-color:var(--blue)}
+.cal-chip small{font-weight:600;opacity:.75;margin-left:4px}
+.cal-seg{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--white)}
+.cal-seg button{border-radius:0;font-size:12px;padding:6px 10px;background:transparent;color:var(--text-2);font-family:var(--font);min-height:34px}
+.cal-seg button+button{border-left:1px solid var(--border)}
+.cal-seg button.on{background:var(--blue);color:#fff}
+@media(max-width:768px){
+  .cal-fab{display:flex;position:fixed;right:16px;bottom:calc(18px + env(safe-area-inset-bottom,0px));width:54px;height:54px;border-radius:50%;background:var(--blue);color:#fff;font-size:28px;line-height:1;align-items:center;justify-content:center;box-shadow:0 8px 24px rgba(3,68,242,.35);z-index:60;border:none}
+}
 @media(max-width:768px){#pat-head{margin-top:0}.pat-tabs-bleed{margin:0 -14px;padding:4px 14px 0}#pat-head.pat-v2-head{margin:0 -14px;padding-left:14px!important;padding-right:14px!important}}
 @media(max-width:768px){
   .topbar-title{display:block!important;flex:1;font-size:15px}
@@ -1750,6 +1764,60 @@ function calColorMode() {
   return S.calColor;
 }
 function setCalColorMode(v) { S.calColor = v; try { localStorage.setItem('calColor', v); } catch(e) {} render(); }
+// Υπόμνημα Προγράμματος — κοινό για το desktop <details> και το «⚙» sheet του κινητού.
+// inline=true: το toggle ακυρωμένων δουλεύει με onclick (το sheet ζει εκτός #app, δεν το
+// πιάνει το binding του bindEvents).
+function calLegendHtml(calColor, hideCancelled, inline) {
+  const toggleAttr = inline
+    ? `onclick="S.calHideCancelled=!S.calHideCancelled;render();openCalOptionsSheet()"`
+    : 'data-cal-hide-cancelled';
+  return `<div style="display:flex;gap:10px;flex-wrap:wrap;flex-shrink:0;font-size:11px;margin-top:8px">
+      ${calColor==='service'
+        ? serviceCategoryLegend().map(([c,bg,l])=>`
+      <div style="display:flex;align-items:center;gap:4px">
+        <div style="width:10px;height:10px;border-radius:2px;background:${bg};border-left:3px solid ${c}"></div>
+        <span style="color:var(--text-2)">${esc(l)}</span>
+      </div>`).join('') + `<span style="color:var(--text-3)">· ◌ κλεισμένο · ▶ σε εξέλιξη · ✓ ολοκληρώθηκε</span>`
+        : [['#D97706','#FAEEDA','Κλεισμένο'],['#2B3BF0','#E6F1FB','Επιβεβαιωμένο'],['#7C3AED','#EDE9FE','Σε εξέλιξη'],['#1D9E75','#E1F5EE','Ολοκληρώθηκε']].map(([c,bg,l])=>`
+      <div style="display:flex;align-items:center;gap:4px">
+        <div style="width:10px;height:10px;border-radius:2px;background:${bg};border-left:3px solid ${c}"></div>
+        <span style="color:var(--text-2)">${l}</span>
+      </div>`).join('')}
+      <div ${toggleAttr} style="display:flex;align-items:center;gap:4px;cursor:pointer;opacity:${hideCancelled?'0.5':'1'}" title="${hideCancelled?'Δείξε ξανά τα ακυρωμένα/no-show στο πρόγραμμα':'Πάτησε για απόκρυψη ακυρωμένων/no-show από το πρόγραμμα'}">
+        <div style="width:10px;height:10px;border-radius:2px;background:#FEE2E2;border-left:3px solid #DC2626"></div>
+        <span style="color:var(--text-2);text-decoration:${hideCancelled?'line-through':'none'}">Ακυρώθηκε/No Show</span>
+        <span style="font-size:9px">${hideCancelled?'🚫':'👁'}</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:4px"><span style="font-size:13px;font-weight:700;color:#D97706">⚠</span><span style="color:var(--text-2)">Χωρίς Συναίνεση</span></div>
+      <div style="display:flex;align-items:center;gap:4px"><span style="color:#D85A30">⚠</span><span style="color:var(--text-2)">Χωρίς GDPR</span></div>
+      <div style="display:flex;align-items:center;gap:4px"><span style="color:#534AB7">★</span><span style="color:var(--text-2)">VIP</span></div>
+    </div>`;
+}
+// «⚙» του Προγράμματος σε κινητό: όσα δεν χωρούν στη γραμμή εργαλείων χωρίς να σπρώχνουν
+// το πλέγμα κάτω από τη μέση της οθόνης. Ζει εκτός #app, οπότε επιβιώνει του render().
+function openCalOptionsSheet() {
+  const old = document.getElementById('cal-opts-sheet'); if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'cal-opts-sheet'; ov.className = 'modal-overlay';
+  const calMode = S.calMode||'therapist', calColor = calColorMode(), hide = !!S.calHideCancelled, branches = S.clinicBranches||[];
+  const seg = (items) => `<div class="cal-seg">${items.map(i=>`<button class="${i.on?'on':''}" onclick="${i.act}">${i.l}</button>`).join('')}</div>`;
+  const re = 'render();openCalOptionsSheet()';
+  ov.innerHTML = `<div class="modal" style="max-width:440px">
+    <div class="modal-header"><span class="modal-title">Επιλογές Προγράμματος</span><button class="modal-close" id="cos-close">×</button></div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:14px">
+      <div><div class="form-label">Στήλες</div>${seg([{l:'Θεραπευτές',on:calMode==='therapist',act:`S.calMode='therapist';S.calStaffFilter='all';${re}`},{l:'Δωμάτια',on:calMode==='room',act:`S.calMode='room';S.calStaffFilter='all';${re}`}])}</div>
+      <div><div class="form-label">Χρώμα καρτών</div>${seg([{l:'Κατάσταση',on:calColor==='status',act:`setCalColorMode('status');openCalOptionsSheet()`},{l:'Υπηρεσία',on:calColor==='service',act:`setCalColorMode('service');openCalOptionsSheet()`}])}</div>
+      <label style="display:flex;align-items:center;gap:10px;font-size:13px;cursor:pointer"><span class="tglsw"><input type="checkbox" ${hide?'checked':''} onchange="S.calHideCancelled=this.checked;render()"/><span class="tglsw-track"></span></span>Απόκρυψη ακυρωμένων / no-show</label>
+      ${branches.length>1?`<div><div class="form-label">Υποκατάστημα</div><select class="form-control" onchange="S.calBranchFilter=this.value;render()"><option value="all">🏢 Όλα τα υποκαταστήματα</option>${branches.map(b=>`<option value="${esc(b.id)}" ${S.calBranchFilter===b.id?'selected':''}>${esc(b.name)}</option>`).join('')}</select></div>`:''}
+      <div><div class="form-label">Υπόμνημα</div>${calLegendHtml(calColor, hide, true)}</div>
+      <button class="btn btn-ghost" onclick="printDaySchedule()">🖨 Εκτύπωση ημερήσιου προγράμματος</button>
+    </div>
+  </div>`;
+  document.body.appendChild(ov);
+  const close = () => ov.remove();
+  ov.onclick = e => { if (e.target===ov) close(); };
+  ov.querySelector('#cos-close').onclick = close;
+}
 function roomName(id) { const r = (S.clinicRooms||[]).find(x=>x.id===id); return r ? r.name : ''; }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1969,7 +2037,8 @@ function renderShell(content) {
   const NAV = [
     {page:'dashboard',icon:'◉',label:'Dashboard',roles:['super_admin','clinic_admin','therapist','receptionist']},
     {page:'patients',icon:'◎',label:'Ασθενείς',roles:['super_admin','clinic_admin','therapist','receptionist']},
-    {page:'appointments',icon:'◷',label:'Ραντεβού',roles:['super_admin','clinic_admin','therapist','receptionist']},
+    // «Ραντεβού» (επίπεδη λίστα) ενώθηκε με το «Πρόγραμμα» ως προβολή «Λίστα» (UX audit P1).
+    // Η σελίδα appointments παραμένει προσβάσιμη (παλιοί σύνδεσμοι), απλώς όχι στο μενού.
     {page:'calendar',icon:'⊟',label:'Πρόγραμμα',roles:['super_admin','clinic_admin','therapist','receptionist']},
     {page:'sms',icon:'✉',label:'SMS & Auto.',roles:['super_admin','clinic_admin']},
     {page:'laser',icon:'⚡',label:'Laser Forms',roles:['super_admin','clinic_admin','therapist']},
@@ -2237,7 +2306,7 @@ function renderDashboard() {
   const dashGdprRate = activePatientsForGdpr.length ? Math.round((gdprSignedCount/activePatientsForGdpr.length)*100) : null;
   const alertChips = [
     todayMissingConsentCount>0 && {label:`${todayMissingConsentCount} σήμερα χωρίς συναίνεση`, color:'#A32D2D', bg:'#FCEBEB',
-      onclick:"S.page='appointments';S.apptDateFilter=new Date().toLocaleDateString('sv-SE');S.filter='all';render();"},
+      onclick:"S.calView='list';S.calDate=new Date().toLocaleDateString('sv-SE');S.apptListAll=false;S.apptStatusFilter='all';S.page='calendar';loadPageData();"},
     dashGdprRate!==null && dashGdprRate<80 && {label:`GDPR συμμόρφωση ${dashGdprRate}%`, color:'#854F0B', bg:'#FAEEDA', onclick:"S.page='consents';render();"},
     vipInactive.length>0 && {label:`${vipInactive.length} VIP ανενεργοί`, color:'#5B21B6', bg:'#EEE9FC',
       onclick:"document.getElementById('vip-inactive-list').classList.remove('vip-hidden');document.getElementById('vip-inactive-list').scrollIntoView({behavior:'smooth',block:'center'});"},
@@ -4109,26 +4178,40 @@ function apptMissingConsent(a) {
   const duplicateHasIt = !!(siblingIds && [...siblingIds].some(id => id!==a.patient_id && set.has(id)));
   return {grp, duplicateHasIt};
 }
-function renderAppointments() {
+// opts.embedded: η ίδια λίστα ως προβολή «Λίστα» μέσα στο Πρόγραμμα (UX audit P1 — ενοποίηση
+// «Ραντεβού» + «Πρόγραμμα»). Εκεί το φίλτρο ημέρας έρχεται από την ημερομηνία του ημερολογίου
+// (S.apptDateFilter συγχρονίζεται στη renderCalendar) και το φίλτρο κατάστασης είναι δικό της
+// (S.apptStatusFilter) ώστε να μη μπερδεύεται με το S.filter άλλων σελίδων.
+function renderAppointments(opts) {
+  opts = opts || {};
+  const embedded = !!opts.embedded;
   const cid = clinicId();
   if (!cid) return '<div class="page"><div class="empty-state"><div class="empty-icon">⊞</div><div>Επίλεξε κλινική</div></div></div>';
   const todayStr = new Date().toLocaleDateString('sv-SE'); // YYYY-MM-DD σε τοπική ώρα
   const dateFilter = S.apptDateFilter||'';
-  let filtered = S.filter==='all'?S.appointments:S.appointments.filter(a=>a.status===S.filter);
+  const statusF = embedded ? (S.apptStatusFilter||'all') : S.filter;
+  let filtered = statusF==='all'?S.appointments:S.appointments.filter(a=>a.status===statusF);
   if (dateFilter) filtered = filtered.filter(a=>a.start_time && new Date(a.start_time).toLocaleDateString('sv-SE')===dateFilter);
-  return `<div class="page">
+  if (embedded) filtered = [...filtered].sort((a,b)=>new Date(a.start_time)-new Date(b.start_time));
+  const headerHtml = `
     <div class="page-header">
       <div><h1 class="page-title">Ραντεβού</h1><p class="page-sub">${S.appointments.length} συνολικά</p></div>
       <button class="btn btn-primary" data-modal="new-appt">+ Νέο Ραντεβού</button>
-    </div>
+    </div>`;
+  const body = `
     <div class="filter-tabs" style="margin-bottom:12px">
-      ${['all',...Object.keys(STATUS_APPT)].map(f=>`<button class="filter-tab ${S.filter===f?'active':''}" data-filter="${f}">${f==='all'?`Όλα (${S.appointments.length})`:(STATUS_APPT[f]&&STATUS_APPT[f].l)||f}</button>`).join('')}
+      ${['all',...Object.keys(STATUS_APPT)].map(f=>`<button class="filter-tab ${statusF===f?'active':''}" ${embedded?`onclick="S.apptStatusFilter='${f}';render()"`:`data-filter="${f}"`}>${f==='all'?`Όλα (${(dateFilter?S.appointments.filter(a=>a.start_time && new Date(a.start_time).toLocaleDateString('sv-SE')===dateFilter):S.appointments).length})`:(STATUS_APPT[f]&&STATUS_APPT[f].l)||f}</button>`).join('')}
     </div>
+    ${embedded ? `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+      <button class="cal-chip ${!S.apptListAll?'on':''}" onclick="S.apptListAll=false;render()">Μόνο η επιλεγμένη ημέρα</button>
+      <button class="cal-chip ${S.apptListAll?'on':''}" onclick="S.apptListAll=true;render()">Όλες οι ημέρες (±60 ημ.)</button>
+    </div>` : `
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap">
       <button class="btn btn-ghost btn-sm" id="appt-date-today" style="${dateFilter===todayStr?'background:var(--blue-soft);border-color:var(--blue)':''}">📅 Σήμερα</button>
       <input type="date" id="appt-date-input" class="form-control" style="width:auto;padding:6px 10px;font-size:12px" value="${dateFilter}"/>
       ${dateFilter?`<button class="btn btn-ghost btn-sm" id="appt-date-clear">✕ Όλες οι ημέρες</button>`:''}
-    </div>
+    </div>`}
     <div style="display:flex;flex-direction:column;gap:8px">
       ${filtered.length?filtered.map(a=>{
         const st=STATUS_APPT[a.status]||STATUS_APPT.confirmed;
@@ -4150,9 +4233,10 @@ function renderAppointments() {
             ${Object.entries(STATUS_APPT).map(([k,v])=>`<option value="${k}" ${a.status===k?'selected':''}>${v.l}</option>`).join('')}
           </select>
         </div>`;
-      }).join(''):`<div class="empty-state"><div class="empty-icon">◷</div><div>Δεν βρέθηκαν ραντεβού</div></div>`}
-    </div>
-  </div>`;
+      }).join(''):`<div class="empty-state"><div class="empty-icon">◷</div><div>Δεν βρέθηκαν ραντεβού${embedded&&!S.apptListAll?' αυτή την ημέρα':''}</div>${embedded&&!S.apptListAll?`<button class="btn btn-ghost btn-sm" style="margin-top:10px" onclick="S.apptListAll=true;render()">Δείξε όλες τις ημέρες</button>`:''}</div>`}
+    </div>`;
+  if (embedded) return body;
+  return `<div class="page">${headerHtml}${body}</div>`;
 }
 
 // ── PIPELINE ──
@@ -4923,6 +5007,47 @@ function renderCalendar() {
   // όλες τις στήλες όπως πριν (ίδια συμπεριφορά με desktop).
   const staffFilter = (S.calStaffFilter && cols.some(c=>c.id===S.calStaffFilter)) ? S.calStaffFilter : 'all';
   const visibleCols = staffFilter==='all' ? cols : cols.filter(c=>c.id===staffFilter);
+  // Ραντεβού μιας στήλης (θεραπεύτριας ή δωματίου) — κοινό για το πλέγμα ημέρας και τα
+  // chips θεραπευτριών του κινητού.
+  const colApptsOf = (col) => calMode==='therapist'
+    ? dayAppts.filter(a=>{
+        const t = apptTherapist(a);
+        return col.id==='unassigned'
+          ? (!t || !therapistColIds.has('t:'+canonTherapist(t)))
+          : ('t:'+canonTherapist(t))===col.id;
+      })
+    : dayAppts.filter(a=>roomMap[a.id]===col.id);
+  // Προβολή «Λίστα» (πρώην σελίδα Ραντεβού): η ημέρα του ημερολογίου γίνεται το φίλτρο ημέρας,
+  // εκτός αν ο χρήστης ζήτησε «Όλες οι ημέρες».
+  if (calView==='list') S.apptDateFilter = S.apptListAll ? '' : calDateStr;
+
+  // Agenda (κινητό αντί για εβδομαδιαίο πλέγμα): 7 ημέρες ως λίστες, μόνο με τα ραντεβού
+  // που υπάρχουν — χωρίς κενά κελιά και οριζόντιο scroll.
+  const renderAgendaView = () => {
+    const days = []; for (let i=0;i<7;i++) { const d = new Date(weekStart); d.setDate(weekStart.getDate()+i); days.push(d); }
+    const todayKey = localDateStr(new Date());
+    return `<div style="display:flex;flex-direction:column;gap:10px">${days.map(d=>{
+      const ds = localDateStr(d);
+      const list = appts.filter(a=>localDateStr(new Date(a.start_time))===ds).sort((a,b)=>new Date(a.start_time)-new Date(b.start_time));
+      return `<div class="card">
+        <div style="padding:8px 12px;display:flex;justify-content:space-between;align-items:center;background:${ds===todayKey?'var(--blue-soft)':'var(--surface)'};cursor:pointer" data-cal-day="${d.toISOString()}" title="Άνοιγμα ημέρας">
+          <b style="font-size:12.5px;color:${ds===todayKey?'var(--blue)':'var(--navy)'}">${d.toLocaleDateString('el-GR',{weekday:'long',day:'numeric',month:'short'})}</b>
+          <span style="font-size:11.5px;color:var(--text-2)">${list.length?list.length+' ραντεβού':'—'}</span>
+        </div>
+        ${list.map(a=>{
+          const c = apptColor(a);
+          const name = a.is_internal ? ('🔒 '+(a.internal_title||'Εσωτερικό')) : (a.patients&&a.patients.full_name||'—');
+          const t = apptTherapist(a)||'';
+          return `<div data-appt-cal="${a.id}" style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-top:1px solid var(--border-2);font-size:12.5px;cursor:pointer">
+            <span style="font-family:var(--mono);font-size:12px;color:var(--blue);font-weight:700;flex-shrink:0;width:42px">${new Date(a.start_time).toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'})}</span>
+            <span style="width:3px;align-self:stretch;border-radius:2px;background:${c.border};flex-shrink:0"></span>
+            <div style="flex:1;min-width:0"><div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(name)}</div><div style="font-size:11.5px;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.service_name||'')}${t?' · '+esc(t):''}</div></div>
+            ${apptBadge(a.status)}
+          </div>`;
+        }).join('')}
+      </div>`;
+    }).join('')}</div>`;
+  };
 
   const renderDayView = () => {
     return `
@@ -4937,14 +5062,7 @@ function renderCalendar() {
       </div>
       <!-- Staff columns -->
       ${visibleCols.map(col=>{
-        const colAppts = calMode==='therapist'
-          ? dayAppts.filter(a=>{
-              const t = apptTherapist(a);
-              return col.id==='unassigned'
-                ? (!t || !therapistColIds.has('t:'+canonTherapist(t)))
-                : ('t:'+canonTherapist(t))===col.id;
-            })
-          : dayAppts.filter(a=>roomMap[a.id]===col.id);
+        const colAppts = colApptsOf(col);
         const overlapPack = packOverlaps(colAppts);
         // Ωράριο εργασίας αυτού του ατόμου σήμερα (μόνο σε στήλες θεραπευτή) —
         // χρησιμοποιείται για να «αχνώσουν» οπτικά οι ώρες εκτός ωραρίου.
@@ -5099,6 +5217,32 @@ function renderCalendar() {
     <!-- Tooltip -->
     <div id="cal-tooltip" style="display:none;position:fixed;top:0;left:0;z-index:1000;background:var(--navy);color:#fff;padding:10px 14px;border-radius:10px;font-size:12px;line-height:1.6;pointer-events:none;max-width:240px;box-shadow:var(--shadow-lg)"></div>
 
+    ${isMobileVp ? `
+    <!-- Toolbar ΚΙΝΗΤΟΥ (UX audit P1): μία γραμμή ημερομηνίας, επιλογή προβολής, chips
+    θεραπευτριών. Οι δευτερεύουσες επιλογές (δωμάτια, χρώμα, υπόμνημα, ακυρωμένα,
+    υποκατάστημα, εκτύπωση) στο «⚙» sheet — το πλέγμα ξεκινά πολύ πιο ψηλά στην οθόνη. -->
+    <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+      <button class="btn btn-ghost btn-sm" data-cal-nav="-1" style="padding:6px 10px">‹</button>
+      <span class="cal-date-label" style="flex:1;text-align:center;font-size:13px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${calView==='week'
+        ? `${weekStart.toLocaleDateString('el-GR',{day:'numeric',month:'short'})} – ${new Date(weekStart.getTime()+6*86400000).toLocaleDateString('el-GR',{day:'numeric',month:'short'})}`
+        : (calView==='list' && S.apptListAll) ? 'Όλα τα ραντεβού' : calDate.toLocaleDateString('el-GR',{weekday:'short',day:'numeric',month:'short',year:'numeric'})}</span>
+      <button class="btn btn-ghost btn-sm" data-cal-nav="1" style="padding:6px 10px">›</button>
+      <button class="btn btn-ghost btn-sm" data-cal-today>Σήμερα</button>
+      <button class="btn btn-ghost btn-sm" onclick="openCalOptionsSheet()" title="Επιλογές προγράμματος" style="padding:6px 10px">⚙</button>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;flex-wrap:wrap">
+      <div class="cal-seg">
+        <button class="${calView==='day'?'on':''}" data-cal-view="day">Ημέρα</button>
+        <button class="${calView==='week'?'on':''}" data-cal-view="week">Agenda</button>
+        <button class="${calView==='list'?'on':''}" data-cal-view="list">Λίστα</button>
+      </div>
+      ${calMode==='room'?`<span style="font-size:11.5px;color:var(--text-2)">🚪 Δωμάτια</span>`:''}${calColor==='service'?`<span style="font-size:11.5px;color:var(--text-2)">🎨 Υπηρεσία</span>`:''}${hideCancelled?`<span style="font-size:11.5px;color:var(--text-2)">🚫 χωρίς ακυρωμένα</span>`:''}
+    </div>
+    ${calView==='day'?`<div class="cal-chips" style="flex-shrink:0">
+      <button class="cal-chip ${staffFilter==='all'?'on':''}" onclick="S.calStaffFilter='all';render()">Όλες<small>${dayAppts.length}</small></button>
+      ${cols.map(c=>`<button class="cal-chip ${staffFilter===c.id?'on':''}" onclick="S.calStaffFilter='${esc(c.id)}';render()">${esc(c.id==='unassigned'?(calMode==='therapist'?'Χωρίς ανάθεση':'Χωρίς δωμάτιο'):(calMode==='therapist'?c.full_name.split(' ')[0]:c.full_name))}<small>${colApptsOf(c).length}</small></button>`).join('')}
+    </div>`:''}
+    ` : `
     <!-- Toolbar -->
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex-shrink:0">
       <!-- Date nav: μαζεμένα σε μία μονάδα ώστε να μη σπάνε το ένα από το άλλο
@@ -5107,8 +5251,9 @@ function renderCalendar() {
       πριν καν φανεί το ίδιο το πρόγραμμα). -->
       <div style="display:flex;align-items:center;gap:6px">
         <button class="btn btn-ghost btn-sm" data-cal-nav="-1">‹</button>
-        <span class="cal-date-label" style="font-size:13px;font-weight:500;min-width:200px;text-align:center">${calView==='day'?dateStr:
-          `${weekStart.toLocaleDateString('el-GR',{day:'numeric',month:'short'})} – ${new Date(weekStart.getTime()+6*86400000).toLocaleDateString('el-GR',{day:'numeric',month:'short',year:'numeric'})}`
+        <span class="cal-date-label" style="font-size:13px;font-weight:500;min-width:200px;text-align:center">${calView==='week'
+          ? `${weekStart.toLocaleDateString('el-GR',{day:'numeric',month:'short'})} – ${new Date(weekStart.getTime()+6*86400000).toLocaleDateString('el-GR',{day:'numeric',month:'short',year:'numeric'})}`
+          : (calView==='list' && S.apptListAll) ? 'Όλα τα ραντεβού (±60 ημέρες)' : dateStr
         }</span>
         <button class="btn btn-ghost btn-sm" data-cal-nav="1">›</button>
       </div>
@@ -5119,10 +5264,11 @@ function renderCalendar() {
 
       <div style="flex:1"></div>
 
-      <!-- View mode -->
+      <!-- View mode: Ημέρα · Εβδομάδα · Λίστα (η πρώην σελίδα «Ραντεβού») -->
       <div style="display:flex;border:1px solid var(--border);border-radius:8px;overflow:hidden">
         <button class="btn btn-sm" style="border-radius:0;background:${calView==='day'?'var(--blue)':'transparent'};color:${calView==='day'?'#fff':'var(--text-2)'}" data-cal-view="day">Ημέρα</button>
         <button class="btn btn-sm" style="border-radius:0;background:${calView==='week'?'var(--blue)':'transparent'};color:${calView==='week'?'#fff':'var(--text-2)'};border-left:1px solid var(--border)" data-cal-view="week">Εβδομάδα</button>
+        <button class="btn btn-sm" style="border-radius:0;background:${calView==='list'?'var(--blue)':'transparent'};color:${calView==='list'?'#fff':'var(--text-2)'};border-left:1px solid var(--border)" data-cal-view="list">Λίστα</button>
       </div>
 
       <!-- Column mode -->
@@ -5150,39 +5296,20 @@ function renderCalendar() {
       <button class="btn btn-primary btn-sm" data-modal="new-appt">+ Ραντεβού</button>
     </div>
 
-    <!-- Legend — το «Ακυρώθηκε/No Show» είναι clickable, μαζεύει/απομαζεύει τα
-    ακυρωμένα από το πρόγραμμα (πιο διακριτικό από ξεχωριστό κουμπί στη γραμμή
-    εργαλείων). Σε κινητό είναι μαζεμένο πίσω από ένα toggle ώστε να μη
-    «τρώει» χώρο πριν καν φανεί το ίδιο το πρόγραμμα. -->
-    <details ${isMobileVp?'':'open'} style="flex-shrink:0">
-      <summary style="cursor:pointer;font-size:11px;color:var(--text-2);list-style:none;user-select:none;display:flex;align-items:center;gap:4px;width:fit-content">🎨 Υπόμνημα <span style="font-size:9px">▾</span></summary>
-    <div style="display:flex;gap:10px;flex-wrap:wrap;flex-shrink:0;font-size:11px;margin-top:8px">
-      ${calColor==='service'
-        ? serviceCategoryLegend().map(([c,bg,l])=>`
-      <div style="display:flex;align-items:center;gap:4px">
-        <div style="width:10px;height:10px;border-radius:2px;background:${bg};border-left:3px solid ${c}"></div>
-        <span style="color:var(--text-2)">${esc(l)}</span>
-      </div>`).join('') + `<span style="color:var(--text-3)">· ◌ κλεισμένο · ▶ σε εξέλιξη · ✓ ολοκληρώθηκε</span>`
-        : [['#D97706','#FAEEDA','Κλεισμένο'],['#2B3BF0','#E6F1FB','Επιβεβαιωμένο'],['#7C3AED','#EDE9FE','Σε εξέλιξη'],['#1D9E75','#E1F5EE','Ολοκληρώθηκε']].map(([c,bg,l])=>`
-      <div style="display:flex;align-items:center;gap:4px">
-        <div style="width:10px;height:10px;border-radius:2px;background:${bg};border-left:3px solid ${c}"></div>
-        <span style="color:var(--text-2)">${l}</span>
-      </div>`).join('')}
-      <div data-cal-hide-cancelled style="display:flex;align-items:center;gap:4px;cursor:pointer;opacity:${hideCancelled?'0.5':'1'}" title="${hideCancelled?'Δείξε ξανά τα ακυρωμένα/no-show στο πρόγραμμα':'Πάτησε για απόκρυψη ακυρωμένων/no-show από το πρόγραμμα'}">
-        <div style="width:10px;height:10px;border-radius:2px;background:#FEE2E2;border-left:3px solid #DC2626"></div>
-        <span style="color:var(--text-2);text-decoration:${hideCancelled?'line-through':'none'}">Ακυρώθηκε/No Show</span>
-        <span style="font-size:9px">${hideCancelled?'🚫':'👁'}</span>
-      </div>
-      <div style="display:flex;align-items:center;gap:4px"><span style="font-size:13px;font-weight:700;color:#D97706">⚠</span><span style="color:var(--text-2)">Χωρίς Συναίνεση</span></div>
-      <div style="display:flex;align-items:center;gap:4px"><span style="color:#D85A30">⚠</span><span style="color:var(--text-2)">Χωρίς GDPR</span></div>
-      <div style="display:flex;align-items:center;gap:4px"><span style="color:#534AB7">★</span><span style="color:var(--text-2)">VIP</span></div>
-    </div>
+    <!-- Legend — κλειστό by default (popover-style): μαθαίνεται τη δεύτερη μέρα και μετά
+    δεν χρειάζεται να τρώει μόνιμα μια γραμμή. Το «Ακυρώθηκε/No Show» είναι clickable
+    και κρύβει/δείχνει τα ακυρωμένα. -->
+    <details style="flex-shrink:0">
+      <summary style="cursor:pointer;font-size:11px;color:var(--text-2);list-style:none;user-select:none;display:flex;align-items:center;gap:4px;width:fit-content">🎨 Υπόμνημα <span style="font-size:9px">▾</span>${hideCancelled?'<span style="margin-left:6px;color:var(--text-3)">· ακυρωμένα κρυμμένα</span>':''}</summary>
+    ${calLegendHtml(calColor, hideCancelled, false)}
     </details>
+    `}
 
-    <!-- Calendar grid -->
+    <!-- Calendar grid / Agenda (κινητό) / Λίστα -->
     <div id="cal-scroller" style="flex:1;overflow:auto">
-      ${calView==='day' ? renderDayView() : renderWeekView()}
+      ${calView==='list' ? renderAppointments({embedded:true}) : calView==='day' ? renderDayView() : (isMobileVp ? renderAgendaView() : renderWeekView())}
     </div>
+    <button class="cal-fab" data-modal="new-appt" title="Νέο ραντεβού" aria-label="Νέο ραντεβού">+</button>
 
     <!-- Appointment detail panel -->
     <div id="appt-detail-panel" style="display:none;position:fixed;right:20px;top:80px;bottom:20px;width:320px;overflow-y:auto;background:var(--white);border-radius:14px;box-shadow:var(--shadow-lg);border:1px solid var(--border-2);z-index:500;padding:20px">
